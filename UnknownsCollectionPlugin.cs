@@ -39,7 +39,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "0.1.0";
+    public const string PluginVersion = "1.0.0.2";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
@@ -120,18 +120,57 @@ public class UnknownsCollectionPlugin : BasePlugin
     public static class VersionDisplayPatch
     {
         private const string LinkId = "unknownsCollectionVersion";
+        // Shared with the other DaUnknown mods - keep this string identical everywhere. Clicking any
+        // mod's name flips the same flag, so the "Modded by DaUnknown" credit appears at most once.
+        private const string CreditKey = "TORMods.DaUnknownCreditVisible";
+
+        private static bool CreditVisible() =>
+            AppDomain.CurrentDomain.GetData(CreditKey) is bool b && b;
 
         public static void Postfix(PingTracker __instance)
         {
             if (__instance == null || __instance.text == null) return;
             string text = __instance.text.text;
-            if (string.IsNullOrEmpty(text) || text.Contains(LinkId)) return;
+            if (string.IsNullOrEmpty(text)) return;
 
-            string line = $"<link=\"{LinkId}\"><color=#1FB8FF>Unknown's Collection</color> v{VersionDisplay.Format(Version)}</link>";
-            int nl = text.IndexOf('\n');
-            text = nl >= 0
-                ? text.Substring(0, nl + 1) + line + "\n" + text.Substring(nl + 1)
-                : text + "\n" + line;
+            // Click the mod name to toggle the shared credit line. PingTracker.text is a world-space
+            // TextMeshPro (no canvas), so the link raycast needs the rendering camera.
+            if (Input.GetMouseButtonDown(0))
+            {
+                Camera cam = Camera.main;
+                var canvas = __instance.text.canvas;
+                if (canvas != null)
+                    cam = canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null
+                        : (canvas.worldCamera != null ? canvas.worldCamera : Camera.main);
+                int link = TMPro.TMP_TextUtilities.FindIntersectingLink(__instance.text, Input.mousePosition, cam);
+                if (link != -1 && __instance.text.textInfo.linkInfo[link].GetLinkID() == LinkId)
+                    AppDomain.CurrentDomain.SetData(CreditKey, !CreditVisible());
+            }
+
+            // Insert our version line once (guarded so it doesn't stack per frame).
+            if (!text.Contains(LinkId))
+            {
+                string line = $"<link=\"{LinkId}\"><color=#1FB8FF>Unknown's Collection</color> v{VersionDisplay.Format(Version)}</link>";
+                int nl = text.IndexOf('\n');
+                text = nl >= 0
+                    ? text.Substring(0, nl + 1) + line + "\n" + text.Substring(nl + 1)
+                    : text + "\n" + line;
+            }
+
+            // Insert the shared credit under TOR's "Design by Bavari" line - but only if no other mod
+            // already added it this frame, so "Modded by DaUnknown" appears at most once.
+            if (CreditVisible() && !text.Contains("DaUnknown"))
+            {
+                string credit = "\n<size=70%>Modded by <color=#FCCE03FF>DaUnknown</color></size>";
+                int anchor = text.IndexOf("Bavari");
+                if (anchor >= 0)
+                {
+                    int lineEnd = text.IndexOf('\n', anchor);
+                    text = lineEnd >= 0 ? text.Substring(0, lineEnd) + credit + text.Substring(lineEnd) : text + credit;
+                }
+                else text += credit;
+            }
+
             __instance.text.text = text;
         }
     }

@@ -13,6 +13,12 @@
         <AssemblyName>UnknownsCollection</AssemblyName>
     </PropertyGroup>
 
+    <!-- Embedded audio: logical name "UnknownsCollection.Resources.tesla_warning.raw" (RootNamespace
+         = AssemblyName). Headerless 2-channel signed 32-bit PCM LE @ 48 kHz; loaded by TeslaSound. -->
+    <ItemGroup>
+        <EmbeddedResource Include="Resources\tesla_warning.raw" />
+    </ItemGroup>
+
     <ItemGroup>
         <PackageReference Include="AmongUs.GameLibs.Steam" Version="2024.10.29" />
         <PackageReference Include="BepInEx.IL2CPP.MSBuild" Version="2.1.0-rc.1" />

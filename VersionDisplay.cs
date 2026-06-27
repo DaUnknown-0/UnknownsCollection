@@ -19,10 +19,10 @@ namespace UnknownsCollection {
         // Shared across ALL DaUnknown mods - keep this string identical everywhere.
         public const string ShowTestVersionsKey = "TORMods.ShowTestVersions";
 
-        // Default true: a test build wants to advertise its test number unless explicitly hidden.
+        // Default FALSE: test builds are opt-in - the test-version suffix only shows when explicitly enabled.
         public static bool ShowTestVersions() {
-            try { return !(AppDomain.CurrentDomain.GetData(ShowTestVersionsKey) is bool b) || b; }
-            catch { return true; }
+            try { return AppDomain.CurrentDomain.GetData(ShowTestVersionsKey) is bool b && b; }
+            catch { return false; }
         }
 
         public static void SetShowTestVersions(bool value) {

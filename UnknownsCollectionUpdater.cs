@@ -218,10 +218,13 @@ namespace UnknownsCollection {
         [HideFromIl2Cpp]
         public bool HasChannelRelease(bool stable) => LatestInChannel(stable) != null;
 
+        // Only downloads if it is REALLY a different version than the running build (channel switch may
+        // be an up- or downgrade; skip if we're already on it).
         [HideFromIl2Cpp]
         public void TriggerChannelSwitch(bool stable) {
             var r = LatestInChannel(stable);
-            if (r != null) StartDownloadRelease(r, managerMode: true);
+            if (r != null && SemCompare(r.Version, UnknownsCollectionPlugin.Version) != 0)
+                StartDownloadRelease(r, managerMode: true);
         }
 
         // ---- Mod Manager callbacks ----

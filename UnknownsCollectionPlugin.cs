@@ -77,6 +77,10 @@ public class UnknownsCollectionPlugin : BasePlugin
         // the PingTracker version line below).
         harmony.PatchAll(typeof(UnknownsCollectionPlugin).Assembly);
 
+        // Self-updater: checks GitHub releases and offers an in-game update (channel-aware: follows the
+        // shared test-versions toggle). Must exist before registration so the repo fields resolve.
+        AddComponent<UnknownsCollectionUpdater>();
+
         // Register in the shared Mod Manager registry (cross-plugin, via AppDomain - no hard reference
         // to Useful TOR Stuff). Mirrors how ForceImpostorMod registers itself.
         RegisterInModManager(enabled);
@@ -91,9 +95,8 @@ public class UnknownsCollectionPlugin : BasePlugin
                 { "Guid", PluginGuid },
                 { "Name", PluginName },
                 { "Version", Version },
-                // No GitHub updater wired yet -> leave repo fields empty (no "Open GitHub" button).
-                { "RepositoryOwner", "" },
-                { "RepositoryName", "" },
+                { "RepositoryOwner", UnknownsCollectionUpdater.RepositoryOwner },
+                { "RepositoryName", UnknownsCollectionUpdater.RepositoryName },
                 { "ButtonColor", new Color(0.12f, 0.72f, 1f) }, // electric cyan
                 { "Enabled", enabled },
                 { "RuntimeEnabled", true }

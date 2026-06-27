@@ -172,19 +172,32 @@ namespace UnknownsCollection {
         }
 
         // ---- Channel awareness ----
-        // The update target follows the shared "show test versions" toggle: ON -> newest release of any
-        // channel (prereleases included), OFF -> newest STABLE (vX.Y.Z) only. Releases is newest-first.
+        // Semantic version comparison where a STABLE vX.Y.Z SUPERSEDES its prereleases vX.Y.Z.W
+        // (unlike System.Version, which wrongly orders 1.0.0.4 > 1.0.0). Returns >0 if a is newer than b.
+        // Rule: compare the X.Y.Z base first; on a tie, the finalized stable (no 4th part) beats any
+        // prerelease, and among prereleases the higher 4th part wins.
+        [HideFromIl2Cpp]
+        public static int SemCompare(Version a, Version b) {
+            int c = new Version(a.Major, a.Minor, a.Build).CompareTo(new Version(b.Major, b.Minor, b.Build));
+            if (c != 0) return c;
+            bool aPre = a.Revision > 0, bPre = b.Revision > 0;
+            if (aPre && bPre) return a.Revision.CompareTo(b.Revision);
+            if (aPre == bPre) return 0;
+            return aPre ? -1 : 1; // prerelease is older than the finalized stable of the same base
+        }
+
+        // The update target follows the shared "show test versions" toggle. OFF -> newest STABLE only.
+        // ON -> the newest prerelease ONLY if it is semantically AHEAD of the newest stable (i.e. a
+        // prerelease of a FUTURE version); an old prerelease (base <= newest stable) is ignored and the
+        // stable is used instead. So the latest prerelease downloads only when it leads the latest release.
         [HideFromIl2Cpp]
         public GithubRelease UpdateTarget() {
             if (Releases == null) return null;
-            if (VersionDisplay.ShowTestVersions()) {
-                foreach (var r in Releases) {
-                    if (r == null || r.Draft) continue;
-                    if (r.Assets != null && r.Assets.Any(FilterPluginAsset)) return r;
-                }
-                return null;
-            }
-            return LatestInChannel(true);
+            var stable = LatestInChannel(true);
+            if (!VersionDisplay.ShowTestVersions()) return stable;
+            var pre = LatestInChannel(false);
+            if (pre != null && (stable == null || SemCompare(pre.Version, stable.Version) > 0)) return pre;
+            return stable;
         }
 
         // stable = vX.Y.Z (Version.Revision <= 0), test = vX.Y.Z.W (Revision > 0).
@@ -215,13 +228,15 @@ namespace UnknownsCollection {
         [HideFromIl2Cpp]
         public bool HasUpdate() {
             var t = UpdateTarget();
-            return t != null && t.IsNewer(UnknownsCollectionPlugin.Version) && t.Assets.Any(FilterPluginAsset);
+            return t != null && t.Assets.Any(FilterPluginAsset)
+                && SemCompare(t.Version, UnknownsCollectionPlugin.Version) > 0;
         }
 
         [HideFromIl2Cpp]
         public void TriggerUpdateFromManager() {
             var t = UpdateTarget();
-            if (t != null && t.IsNewer(UnknownsCollectionPlugin.Version) && t.Assets.Any(FilterPluginAsset))
+            if (t != null && t.Assets.Any(FilterPluginAsset)
+                && SemCompare(t.Version, UnknownsCollectionPlugin.Version) > 0)
                 StartDownloadRelease(t, managerMode: true);
         }
 
@@ -233,7 +248,8 @@ namespace UnknownsCollection {
             if (IsModManagerEnabled()) return; // Mod Manager owns the update UI
 
             var target = UpdateTarget();
-            if (target == null || !target.IsNewer(UnknownsCollectionPlugin.Version) || !target.Assets.Any(FilterPluginAsset))
+            if (target == null || !target.Assets.Any(FilterPluginAsset)
+                || SemCompare(target.Version, UnknownsCollectionPlugin.Version) <= 0)
                 return;
 
             var template = GameObject.Find("ExitGameButton");

@@ -71,6 +71,11 @@ namespace UnknownsCollection {
             if (AmongUsClient.Instance == null) return message;
             foreach (InnerNet.ClientData client in AmongUsClient.Instance.allClients.ToArray()) {
                 if (client == null || client.Character == null) continue;
+                // The local player is, by definition, running this mod - never flag yourself. Without
+                // this, a solo lobby (only the host) reports "missing mod", which both shows the lobby
+                // warning AND blocks the game start. Trust the local client unconditionally.
+                if (client.Id == AmongUsClient.Instance.ClientId) continue;
+                if (client.Character == PlayerControl.LocalPlayer) continue;
                 string name = client.Character.Data.PlayerName;
 
                 if (!playerVersions.TryGetValue(client.Id, out PlayerVersion pv)) {

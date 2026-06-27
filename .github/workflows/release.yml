@@ -1,0 +1,66 @@
+name: Build & Release
+
+# Pushe einen Tag wie "v1.0.0" (stable) oder "v1.0.0.3" (Testversion), um automatisch zu bauen und
+# ein Release mit der UnknownsCollection.dll als Asset zu erstellen.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+# TOR-Version, gegen die gebaut wird. Muss zur genutzten API passen.
+env:
+  TOR_VERSION: '4.8.0'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 6
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '6.0.x'
+
+      - name: Version aus Tag ermitteln
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # vX.Y.Z (stable) oder vX.Y.Z.W (Testversion, W = Testversionsnummer).
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$'; then
+            echo "::error::Tag '$GITHUB_REF_NAME' ist keine gueltige Version (erwartet vX.Y.Z oder vX.Y.Z.W)."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Version in Quellen auf Tag setzen
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Optionale 4. Stelle der Quell-Konstante mitmatchen und durch die volle Tag-Version ersetzen.
+          sed -i -E "s/(PluginVersion = \")[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(\")/\1${VERSION}\3/" UnknownsCollectionPlugin.cs
+          sed -i -E "s|(<Version>)[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?(</Version>)|\1${VERSION}\3|" UnknownsCollection.csproj
+          echo "Gesetzt auf:"; grep PluginVersion UnknownsCollectionPlugin.cs
+
+      - name: TheOtherRoles.dll laden (Build-Referenz)
+        run: |
+          DEST="$RUNNER_TEMP/TheOtherRoles.dll"
+          URL="https://github.com/TheOtherRolesAU/TheOtherRoles/releases/download/v${TOR_VERSION}/TheOtherRoles.dll"
+          echo "Lade $URL"
+          curl -fL --retry 3 -o "$DEST" "$URL"
+          echo "TOR_DLL=$DEST" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: dotnet build -c Release -p:TheOtherRolesDll="$TOR_DLL"
+
+      - name: Release erstellen + DLL anhaengen
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DLL="bin/Release/net6.0/UnknownsCollection.dll"
+          gh release create "$GITHUB_REF_NAME" "$DLL" \
+            --title "$GITHUB_REF_NAME" --generate-notes \
+          || gh release upload "$GITHUB_REF_NAME" "$DLL" --clobber

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net6.0</TargetFramework>
+        <Version>0.1.0</Version>
+        <Description>Unknown's Collection - custom roles for The Other Roles. First role: The Tesla (Impostor).</Description>
+        <Authors>DaUnknown-0</Authors>
+        <LangVersion>latest</LangVersion>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <PlatformTarget>AnyCPU</PlatformTarget>
+        <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+        <Platforms>AnyCPU</Platforms>
+        <AssemblyName>UnknownsCollection</AssemblyName>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="AmongUs.GameLibs.Steam" Version="2024.10.29" />
+        <PackageReference Include="BepInEx.IL2CPP.MSBuild" Version="2.1.0-rc.1" />
+        <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.697" />
+        <PackageReference Include="Reactor" Version="2.3.1" />
+    </ItemGroup>
+
+    <!-- TOR DLL location: defaults to the local build, overridable in CI via -p:TheOtherRolesDll=... -->
+    <PropertyGroup>
+        <TheOtherRolesDll Condition="'$(TheOtherRolesDll)' == ''">..\TheOtherRoles-main\TheOtherRoles-main\TheOtherRoles\bin\Debug\net6.0\TheOtherRoles.dll</TheOtherRolesDll>
+    </PropertyGroup>
+
+    <!-- Reference TOR as hard dependency (CustomOption, RoleInfo, RPCProcedure, Helpers, ...) -->
+    <ItemGroup>
+        <Reference Include="TheOtherRoles">
+            <HintPath>$(TheOtherRolesDll)</HintPath>
+            <Private>false</Private>
+        </Reference>
+    </ItemGroup>
+
+    <Target Name="CopyCustomContent" AfterTargets="AfterBuild" Condition="Exists('$(AmongUsLatest)/BepInEx/plugins/')">
+        <Message Text="Copying UnknownsCollection to BepInEx plugins" />
+        <Copy SourceFiles="$(ProjectDir)\bin\$(Configuration)\net6.0\UnknownsCollection.dll" DestinationFolder="$(AmongUsLatest)/BepInEx/plugins/" />
+    </Target>
+</Project>

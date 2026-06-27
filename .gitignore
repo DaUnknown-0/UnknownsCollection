@@ -1,0 +1,7 @@
+bin/
+obj/
+*.user
+packages.lock.json
+.vs/
+.idea/
+*.dll

@@ -32,13 +32,14 @@ namespace UnknownsCollection {
             Ensure();
             if (text == null) return;
             text.gameObject.SetActive(true);
+            // NOTE: plain ASCII markers - the HUD font has no lightning/emoji glyph (renders as a box).
             if (danger) {
                 float t = Mathf.PingPong(Time.time * 4f, 1f);
                 text.color = Color.Lerp(new Color(1f, 0.85f, 0.85f, 1f), new Color(1f, 0.05f, 0.05f, 1f), t);
-                text.text = "⚡ GEFAHR";
+                text.text = "! GEFAHR !";
             } else {
                 text.color = new Color(0.12f, 0.72f, 1f, 1f);
-                text.text = "⚡ GELADEN";
+                text.text = "+/- GELADEN";
             }
         }
 

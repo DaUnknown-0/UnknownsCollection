@@ -171,7 +171,7 @@ namespace UnknownsCollection {
             resultTimer = 1.2f;
             SetScanActive(false);
             if (title != null) {
-                title.text = shownSabotaged ? "⚠ SABOTAGED" : "✓ SAFE";
+                title.text = shownSabotaged ? "[!] SABOTAGED" : "SAFE";
                 title.color = shownSabotaged ? new Color(1f, 0.35f, 0.2f) : new Color(0.4f, 1f, 0.5f);
             }
             if (hint != null) hint.text = drunk ? "(du bist Drunk - unsicher)" : "";
@@ -222,7 +222,7 @@ namespace UnknownsCollection {
                     nextExpected++;
                     if (nextExpected > WireCount) { // defused!
                         Saboteur.SendClearSabotage();
-                        if (title != null) { title.text = "✓ DEFUSED"; title.color = new Color(0.4f, 1f, 0.5f); }
+                        if (title != null) { title.text = "DEFUSED"; title.color = new Color(0.4f, 1f, 0.5f); }
                         if (hint != null) hint.text = "";
                         RefreshWires();
                         phase = Phase.Done;

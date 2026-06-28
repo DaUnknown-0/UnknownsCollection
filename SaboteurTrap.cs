@@ -107,6 +107,18 @@ namespace UnknownsCollection {
                 player.NetTransform.Halt();
                 t.stunned.Add(playerId);
 
+                // Single-use: stop it from triggering again, but keep the object alive so it can be SHOWN.
+                traps.Remove(t);
+
+                // Reveal the trap (and play a sound) to the player who stepped in it - and to the
+                // Saboteur - so the victim realises they are trapped. (Mirrors TOR's Trapper.)
+                bool localInvolved = PlayerControl.LocalPlayer != null
+                    && (PlayerControl.LocalPlayer.PlayerId == playerId || Saboteur.IsLocalSaboteur());
+                if (t.obj != null && localInvolved) {
+                    t.obj.SetActive(true);
+                    try { SoundEffectsManager.play("trapperTrap"); } catch { }
+                }
+
                 float dur = Saboteur.TrapStunDuration != null ? Saboteur.TrapStunDuration.getFloat() : 5f;
                 // Schedule the after-stun limp window (covers freeze + tail) on every client.
                 if (Saboteur.TrappedLimp != null && Saboteur.TrappedLimp.getBool()) {
@@ -117,13 +129,12 @@ namespace UnknownsCollection {
                 var hud = HudManager.Instance;
                 if (hud != null)
                     hud.StartCoroutine(Effects.Lerp(dur, new Action<float>((p) => {
-                        if (p == 1f && player != null) player.moveable = true;
+                        if (p == 1f) {
+                            if (player != null) player.moveable = true;
+                            if (t.obj != null) UnityEngine.Object.Destroy(t.obj); // remove AFTER the stun
+                        }
                     })));
-                else player.moveable = true;
-
-                // A trap is single-use: consume it.
-                if (t.obj != null) UnityEngine.Object.Destroy(t.obj);
-                traps.Remove(t);
+                else { player.moveable = true; if (t.obj != null) UnityEngine.Object.Destroy(t.obj); }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] trap Trigger failed: {e}");
             }

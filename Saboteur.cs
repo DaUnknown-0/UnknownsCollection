@@ -93,7 +93,7 @@ namespace UnknownsCollection {
 
         // ---- Role identity (own name/color over the real Impostor role) ----
         private static RoleInfo saboteurInfo;
-        private static RoleInfo SaboteurInfo() => saboteurInfo ??= new RoleInfo(
+        public static RoleInfo SaboteurInfo() => saboteurInfo ??= new RoleInfo(
             "Saboteur", Color,
             "Sabotage a task or lay a trap",
             "Sabotage a task or lay a trap",
@@ -521,12 +521,21 @@ namespace UnknownsCollection {
         // ====================================================================
         // Sabotage-task: console discovery (saboteur) + victim completion poll (everyone)
         // ====================================================================
+        private static ShipStatus consoleShip; // the ship the cache was built for
+
         private static Console[] GetConsoles() {
-            // Re-scan while empty: a cache built before ShipStatus spawned its consoles would otherwise
-            // stay permanently empty and the SABOTAGE button would never find a console.
-            if (consoleCache == null || consoleCache.Length == 0)
+            var ss = MapUtilities.CachedShipStatus;
+            // Re-scan when: no cache yet, an empty cache (built before consoles spawned), or the ship
+            // changed (new round/game) - otherwise the cache keeps DESTROYED consoles from the previous
+            // map and the SABOTAGE / SEARCH buttons find nothing. Tying it to the ShipStatus instance
+            // makes it self-heal every game.
+            bool stale = consoleCache == null || consoleCache.Length == 0 || consoleShip != ss
+                         || (consoleCache.Length > 0 && consoleCache[0] == null);
+            if (stale && ss != null) {
                 consoleCache = UnityEngine.Object.FindObjectsOfType<Console>();
-            return consoleCache;
+                consoleShip = ss;
+            }
+            return consoleCache ?? System.Array.Empty<Console>();
         }
 
         // A console the Saboteur may mark - just exclude the sabotage-repair consoles (lights/comms/
@@ -552,7 +561,10 @@ namespace UnknownsCollection {
             float bestDist = float.MaxValue;
             foreach (var c in GetConsoles()) {
                 if (!IsSabotageableConsole(c)) continue;
-                float ud = c.UsableDistance > 0f ? c.UsableDistance : 0.8f;
+                // Be generous: at least 1.5 units. Console transforms are often offset from where the
+                // player stands, so a tight range made the SABOTAGE button never light up (diag showed
+                // consoleInRange=False even while standing in a task room).
+                float ud = Mathf.Max(c.UsableDistance, 1.5f);
                 float d = Vector2.Distance(here, (Vector2)c.transform.position);
                 if (d <= ud && d < bestDist) { bestDist = d; best = c; }
             }
@@ -584,8 +596,8 @@ namespace UnknownsCollection {
             if (progressInit && prog > lastProgress) {
                 float d = Vector2.Distance(me.GetTruePosition(), new Vector2(sabotagedX, sabotagedY));
                 UnknownsCollectionPlugin.Logger?.LogInfo(
-                    $"[Saboteur] task step completed (prog {lastProgress}->{prog}); dist to sabotaged console = {d:F2} (need <=1.4)");
-                if (d <= 1.4f) SendRequestKill(me.PlayerId, sabotagedX, sabotagedY);
+                    $"[Saboteur] task step completed (prog {lastProgress}->{prog}); dist to sabotaged console = {d:F2} (need <=2.0)");
+                if (d <= 2.0f) SendRequestKill(me.PlayerId, sabotagedX, sabotagedY);
             }
             lastProgress = prog;
             progressInit = true;
@@ -599,11 +611,27 @@ namespace UnknownsCollection {
                 if (Time.time - lastDiag < 2f) return;
                 lastDiag = Time.time;
                 var room = HudManager.Instance?.roomTracker?.LastRoom?.RoomId;
-                var c = FindUsableConsoleInRange();
+
+                // Console scan stats (the SABOTAGE button depends on finding a nearby task console).
+                int total = 0, sabable = 0;
+                float nearest = float.MaxValue;
+                var me = PlayerControl.LocalPlayer;
+                if (me != null) {
+                    Vector2 here = me.GetTruePosition();
+                    foreach (var c in GetConsoles()) {
+                        if (c == null) continue;
+                        total++;
+                        if (!IsSabotageableConsole(c)) continue;
+                        sabable++;
+                        float d = Vector2.Distance(here, (Vector2)c.transform.position);
+                        if (d < nearest) nearest = d;
+                    }
+                }
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[Saboteur][diag] active={active} tokens={tokens} trapCost={TrapCost()} sabCost={(SabotageTokenCost != null ? Mathf.RoundToInt(SabotageTokenCost.getFloat()) : 1)} " +
                     $"traps={SaboteurTrap.ActiveCount}/{MaxTraps()} canPlace={SaboteurTrap.CanPlaceHere()} room={room} " +
-                    $"consoleInRange={(c != null)} consoles={(consoleCache == null ? -1 : consoleCache.Length)} sabotagedActive={sabotagedActive}");
+                    $"consoles={total} sabotageable={sabable} nearestConsoleDist={(nearest == float.MaxValue ? -1f : nearest):F2} " +
+                    $"inRange={(FindUsableConsoleInRange() != null)} sabotagedActive={sabotagedActive}");
             } catch { }
         }
 

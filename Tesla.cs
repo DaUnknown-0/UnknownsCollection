@@ -52,6 +52,7 @@ namespace UnknownsCollection {
         public static CustomOption LiveMinPlayers;     // 1404 - min ALIVE players for charges to kill
         public static CustomOption CanChargeSelf;      // 1405 - Tesla may charge itself
         public static CustomOption DiesIfSelfCharged;  // 1406 - self-charge also kills the Tesla
+        public static CustomOption GraceAfterMeeting;  // 1407 - grace seconds after meeting / round start
 
         // ---- Runtime state (reset each round) ----
         public static PlayerControl tesla;
@@ -60,6 +61,10 @@ namespace UnknownsCollection {
         public static bool active;                 // role spawned & usable this game
         public static float countdown;             // remaining seconds before the pair dies
         private static bool dangerLocal;           // local cosmetic danger latch (warning onset)
+        private static float graceUntil;           // Time.time until which the countdown is frozen
+        private static bool wasInMeeting;          // meeting-end edge detector (per client)
+        // Everyone charged so far this game - excluded from future selections (no repeats).
+        public static readonly System.Collections.Generic.HashSet<byte> chargedHistory = new();
 
         // ---- Custom RPC (190) subtypes ----
         private const byte RpcId = 190; // == UnknownsCollectionPlugin.TeslaRpcId
@@ -72,7 +77,7 @@ namespace UnknownsCollection {
 
         // ---- Role identity (own name/color over the real Impostor role) ----
         private static RoleInfo teslaInfo;
-        private static RoleInfo TeslaInfo() => teslaInfo ??= new RoleInfo(
+        public static RoleInfo TeslaInfo() => teslaInfo ??= new RoleInfo(
             "Tesla", Color,
             "Charge two players and bring them together",
             "Charge two players and bring them together",
@@ -97,6 +102,8 @@ namespace UnknownsCollection {
                     false, SpawnRate);
                 DiesIfSelfCharged = CustomOption.Create(1406, Types.Impostor, "Self-Charge Also Kills The Tesla",
                     true, CanChargeSelf);
+                GraceAfterMeeting = CustomOption.Create(1407, Types.Impostor, "Tesla Grace Seconds After Meeting",
+                    5f, 0f, 30f, 1f, SpawnRate);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Tesla] Options created.");
             } catch (Exception e) {
@@ -206,9 +213,15 @@ namespace UnknownsCollection {
             plusId = minusId = byte.MaxValue;
             countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
             dangerLocal = false;
+            // Round-start grace: everyone spawns together, so freeze the countdown briefly.
+            graceUntil = Time.time + GraceSeconds();
+            wasInMeeting = false;
             if (active)
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Tesla] The Tesla is {tesla.Data?.PlayerName}.");
         }
+
+        private static float GraceSeconds() => GraceAfterMeeting != null ? GraceAfterMeeting.getFloat() : 0f;
+        private static bool InGrace() => Time.time < graceUntil;
 
         // Drafted as Tesla in Role-Draft mode (see UCRoleDraft). setRole runs on every client, so
         // marking locally here is consistent everywhere - no extra role RPC needed.
@@ -219,6 +232,9 @@ namespace UnknownsCollection {
             minusId = newMinusId;
             countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
             dangerLocal = false;
+            // Remember the charged players so they can't be charged again in a later round.
+            if (newPlusId != byte.MaxValue) chargedHistory.Add(newPlusId);
+            if (newMinusId != byte.MaxValue) chargedHistory.Add(newMinusId);
         }
 
         private static void ApplyClear() {
@@ -280,8 +296,18 @@ namespace UnknownsCollection {
                 active = false;
                 countdown = 0f;
                 dangerLocal = false;
+                graceUntil = 0f;
+                wasInMeeting = false;
+                chargedHistory.Clear();
                 TeslaMeetingUI.Reset();
             }
+        }
+
+        // Also clear the charged-history at game end (belt-and-suspenders; resetVariables already clears
+        // it at the next game's start).
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
+        static class GameEndPatch {
+            public static void Postfix() { chargedHistory.Clear(); }
         }
 
         // ====================================================================
@@ -320,6 +346,9 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
                 dangerLocal = false;
+                // Charges are per-round: clear the previous round's pair at every meeting. The Tesla
+                // re-charges a NEW pair during the meeting (already-charged players are excluded).
+                plusId = minusId = byte.MaxValue;
             }
         }
 
@@ -330,6 +359,12 @@ namespace UnknownsCollection {
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {
+                    // Meeting-end edge (runs on every client): (re)start the grace window so the countdown
+                    // doesn't drain while everyone is still bunched up at the spawn point.
+                    bool nowMeeting = InMeeting();
+                    if (wasInMeeting && !nowMeeting) graceUntil = Time.time + GraceSeconds();
+                    wasInMeeting = nowMeeting;
+
                     HostCountdown();
                     LocalCosmetics();
                 } catch (Exception e) {
@@ -352,6 +387,9 @@ namespace UnknownsCollection {
 
             // Live gate: below the minimum, charges are harmless (countdown frozen).
             if (AliveCount() < (LiveMinPlayers?.getFloat() ?? 4f)) return;
+
+            // Grace window after a meeting / round start: don't drain while players are still bunched up.
+            if (InGrace()) return;
 
             float dist = Vector2.Distance(plus.GetTruePosition(), minus.GetTruePosition());
             float trigger = TriggerDistance != null ? TriggerDistance.getFloat() : 1.5f;
@@ -395,7 +433,7 @@ namespace UnknownsCollection {
             byte partnerId = me.PlayerId == plusId ? minusId : plusId;
             var partner = Helpers.playerById(partnerId);
             bool danger = false;
-            if (IsAlive(partner)) {
+            if (IsAlive(partner) && !InGrace()) {
                 float dist = Vector2.Distance(me.GetTruePosition(), partner.GetTruePosition());
                 float trigger = TriggerDistance != null ? TriggerDistance.getFloat() : 1.5f;
                 danger = dist <= trigger;

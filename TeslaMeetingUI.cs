@@ -60,12 +60,16 @@ namespace UnknownsCollection {
                     PlayerVoteArea pva = hud.playerStates[i];
                     if (pva.AmDead) continue;
                     if (pva.TargetPlayerId == selfId && !canSelf) continue;
+                    if (Tesla.chargedHistory.Contains(pva.TargetPlayerId)) continue; // no repeats
 
                     GameObject template = pva.Buttons.transform.Find("CancelButton").gameObject;
                     GameObject checkbox = UnityEngine.Object.Instantiate(template);
                     checkbox.transform.SetParent(pva.transform);
                     checkbox.transform.position = template.transform.position;
-                    checkbox.transform.localPosition = new Vector3(-0.95f, 0.03f, -1.3f);
+                    // Default spot is (-0.95) - the SAME spot TOR's Guesser shoot button uses. If this
+                    // Tesla is also a Guesser, shift our checkbox left so the two don't overlap.
+                    float x = HandleGuesser.isGuesser(PlayerControl.LocalPlayer.PlayerId) ? -1.43f : -0.95f;
+                    checkbox.transform.localPosition = new Vector3(x, 0.03f, -1.3f);
 
                     SpriteRenderer renderer = checkbox.GetComponent<SpriteRenderer>();
                     renderer.color = Color.white;
@@ -126,7 +130,7 @@ namespace UnknownsCollection {
             var minusName = Helpers.playerById(minusTarget)?.Data?.PlayerName ?? "?";
             try {
                 HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer,
-                    $"⚡ Charged: <color=#1FB8FFFF>+ {plusName}</color>, <color=#FF8C00FF>- {minusName}</color>");
+                    $"Charged: <color=#1FB8FFFF>+ {plusName}</color>, <color=#FF8C00FF>- {minusName}</color>");
             } catch { }
         }
 

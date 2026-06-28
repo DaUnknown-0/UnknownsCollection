@@ -571,6 +571,32 @@ namespace UnknownsCollection {
             return best;
         }
 
+        // CREW search range: only when actually within the console's usable distance - i.e. exactly when
+        // the player could DO the task. Crew aren't impostors, so TOR's ConsoleCanUsePatch lets Console
+        // .CanUse return the real proximity (couldUse), which already accounts for the interaction offset.
+        private static Console FindConsoleForSearch() {
+            var me = PlayerControl.LocalPlayer;
+            if (me == null || me.Data == null) return null;
+            Console best = null;
+            float bestDist = float.MaxValue;
+            foreach (var c in GetConsoles()) {
+                if (!IsSabotageableConsole(c)) continue;
+                float d;
+                try { d = c.CanUse(me.Data, out bool _, out bool couldUse); if (!couldUse) continue; }
+                catch { continue; }
+                if (d < bestDist) { bestDist = d; best = c; }
+            }
+            return best;
+        }
+
+        private static Sprite searchSprite;
+        private static Sprite GetSearchSprite() {
+            if (searchSprite != null) return searchSprite;
+            try { searchSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.FindButton.png", 100f); }
+            catch { }
+            return searchSprite;
+        }
+
         // Sum of the local player's task progress (per-step), used to detect "a step just completed".
         private static int LocalTaskProgress() {
             var me = PlayerControl.LocalPlayer;
@@ -638,9 +664,44 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class SabotageHudUpdatePatch {
             public static void Postfix() {
-                try { VictimPoll(); SaboteurTrap.Update(); SaboteurScanUI.Update(); Diag(); }
+                try { VictimPoll(); SaboteurTrap.Update(); SaboteurScanUI.Update(); PlaceSearchButton(); Diag(); }
                 catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] HUD poll failed: {e}"); }
             }
+        }
+
+        // Keep the crew SEARCH button from sitting on top of another role's ability button: each frame
+        // pick the first ability-grid slot that no other ACTIVE CustomButton occupies. Mirrors ChanceMod's
+        // vent-button placement (Chance.cs). The search button itself + mirrored buttons are ignored.
+        private static readonly Vector3[] SearchSlots = {
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft,
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowCenter,
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowFarLeft,
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowRight,
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.highRowRight,
+        };
+        private static readonly Vector3 SearchFallbackSlot =
+            TheOtherRoles.Objects.CustomButton.ButtonPositions.highRowRight + new Vector3(0f, 0.6f, 0f);
+        private const float SlotEps = 0.25f;
+
+        private static void PlaceSearchButton() {
+            if (searchButton == null || searchButton.actionButtonGameObject == null) return;
+            if (!searchButton.actionButtonGameObject.activeSelf) return; // only while visible
+
+            Vector3 chosen = SearchFallbackSlot;
+            foreach (var slot in SearchSlots) {
+                bool free = true;
+                foreach (var b in TheOtherRoles.Objects.CustomButton.buttons) {
+                    if (b == null || b == searchButton || b.mirror) continue;
+                    if (b.actionButtonGameObject == null || !b.actionButtonGameObject.activeSelf) continue;
+                    if (Mathf.Abs(b.PositionOffset.x - slot.x) < SlotEps
+                        && Mathf.Abs(b.PositionOffset.y - slot.y) < SlotEps) { free = false; break; }
+                }
+                if (free) { chosen = slot; break; }
+            }
+            searchButton.PositionOffset = chosen;
         }
 
         // ====================================================================
@@ -741,7 +802,7 @@ namespace UnknownsCollection {
                     // Crew SEARCH button: visible to every non-Impostor whenever the role COULD spawn.
                     searchButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
-                            var c = FindUsableConsoleInRange();
+                            var c = FindConsoleForSearch();
                             if (c == null || SaboteurScanUI.IsOpen) return;
                             SaboteurScanUI.Open(c.transform.position);
                             searchButton.Timer = searchButton.MaxTimer;
@@ -750,9 +811,9 @@ namespace UnknownsCollection {
                               && !LocalIsImpostor()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
                               && !SaboteurScanUI.IsOpen,
-                        () => PlayerControl.LocalPlayer.CanMove && FindUsableConsoleInRange() != null,
+                        () => PlayerControl.LocalPlayer.CanMove && FindConsoleForSearch() != null,
                         () => { },
-                        sprite,
+                        GetSearchSprite(),
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
                         __instance,
                         KeyCode.F,

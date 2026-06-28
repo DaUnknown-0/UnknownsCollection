@@ -49,6 +49,11 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte TeslaRpcId = 190;
     public const byte VersionHandshakeRpcId = 191;
     public const byte SaboteurRpcId = 192;
+    public const byte CorrupterRpcId = 193;
+    public const byte SilencerRpcId = 194;
+    public const byte IllusionistRpcId = 195;
+    public const byte SiphonerRpcId = 196;
+    public const byte WitnessRpcId = 197;
 
     public static ManualLogSource Logger { get; private set; }
 
@@ -80,6 +85,26 @@ public class UnknownsCollectionPlugin : BasePlugin
         // CustomOptionHolder.Load(), reflection setup in TryPatch, attribute patches via PatchAll.
         Saboteur.CreateOptions();
         Saboteur.TryPatch(harmony);
+
+        // The Silencer role (Impostor). Mutes a marked player (vote + chat) for the next meeting.
+        Silencer.CreateOptions();
+        Silencer.TryPatch(harmony);
+
+        // The Siphoner role (Crewmate). Drains a nearby Impostor's kill cooldown (host-authoritative).
+        Siphoner.CreateOptions();
+        Siphoner.TryPatch(harmony);
+
+        // The Witness role (Crewmate). Sole-witness sighting -> red name, body-report reveal, anon notes.
+        Witness.CreateOptions();
+        Witness.TryPatch(harmony);
+
+        // The Corrupter role (Impostor). Kills lay hallucination zones (fake drifting players for crew).
+        Corrupter.CreateOptions();
+        Corrupter.TryPatch(harmony);
+
+        // The Illusionist role (Impostor). Records a path and replays it as an unkillable shielded clone.
+        Illusionist.CreateOptions();
+        Illusionist.TryPatch(harmony);
 
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line below).

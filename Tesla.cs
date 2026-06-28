@@ -153,13 +153,8 @@ namespace UnknownsCollection {
             return n;
         }
 
-        // A plain TOR Impostor (no special impostor role like Morphling/Bomber/...): its first
-        // RoleInfo is exactly the Impostor entry. Those are the only eligible Tesla candidates.
-        private static bool IsPlainImpostor(PlayerControl p) {
-            if (!IsAlive(p) || p.Data.Role == null || !p.Data.Role.IsImpostor) return false;
-            var info = RoleInfo.getRoleInfoForPlayer(p, false).FirstOrDefault();
-            return info != null && info.roleId == RoleId.Impostor;
-        }
+        // A plain TOR Impostor not already claimed by another UC role (shared rule, see UCPromotion).
+        private static bool IsPlainImpostor(PlayerControl p) => UCPromotion.IsPlainImpostor(p);
 
         private static void PostChat(PlayerControl source, string text) {
             try {
@@ -210,6 +205,7 @@ namespace UnknownsCollection {
         private static void ApplySetTesla(byte teslaPlayerId) {
             tesla = Helpers.playerById(teslaPlayerId);
             active = tesla != null;
+            if (active) UCPromotion.Claim(teslaPlayerId);
             plusId = minusId = byte.MaxValue;
             countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
             dangerLocal = false;

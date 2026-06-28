@@ -199,15 +199,9 @@ namespace UnknownsCollection {
             saboteur != null && PlayerControl.LocalPlayer != null
             && saboteur.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
-        // A plain TOR Impostor (no special impostor role like Morphling/Bomber/...): its first RoleInfo
-        // is exactly the Impostor entry. Those are the only eligible Saboteur candidates. The Tesla (if
-        // it spawned first this game) is excluded so the two roles never land on the same player.
-        private static bool IsPlainImpostor(PlayerControl p) {
-            if (!IsAlive(p) || p.Data.Role == null || !p.Data.Role.IsImpostor) return false;
-            if (Tesla.tesla != null && p.PlayerId == Tesla.tesla.PlayerId) return false;
-            var info = RoleInfo.getRoleInfoForPlayer(p, false).FirstOrDefault();
-            return info != null && info.roleId == RoleId.Impostor;
-        }
+        // A plain TOR Impostor not already claimed by another UC role (shared rule, see UCPromotion).
+        // The claim registry excludes the Tesla (and any other UC role) so two never land on one player.
+        private static bool IsPlainImpostor(PlayerControl p) => UCPromotion.IsPlainImpostor(p);
 
         // ====================================================================
         // Custom RPC senders (each also applies locally; the sender never receives its own RPC)
@@ -240,6 +234,7 @@ namespace UnknownsCollection {
         private static void ApplySetSaboteur(byte saboteurPlayerId) {
             saboteur = Helpers.playerById(saboteurPlayerId);
             active = saboteur != null;
+            if (active) UCPromotion.Claim(saboteurPlayerId);
             RefillTokens();
             killUsedThisRound = false;
             if (active)

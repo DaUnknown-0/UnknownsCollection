@@ -3,23 +3,26 @@
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
 /*
- * Role-Draft integration for the Unknown's Collection impostor roles (Tesla, Saboteur).
+ * Role-Draft integration for the Unknown's Collection roles.
  *
- * TOR's RoleDraft lets each player pick a role from RoleInfo.allRoleInfos, filtered by faction and
- * spawn settings, and assigns the pick via RPCProcedure.setRole(roleId, ...). Our roles are NOT real
- * RoleIds - they are tags layered over a plain Impostor and are normally chosen by a random promotion
- * at IntroCutscene.OnDestroy. To make them DRAFTABLE without touching TOR source we:
+ * TOR's RoleDraft lets each player pick a role from RoleInfo.allRoleInfos, filtered by FACTION and the
+ * spawn settings, then assigns the pick via RPCProcedure.setRole(roleId, ...). Our roles are NOT real
+ * RoleIds - they are tags layered over a plain Impostor / Crewmate, normally chosen by a random
+ * promotion at IntroCutscene.OnDestroy. To make them DRAFTABLE without touching TOR source we:
  *
- *   1. add lightweight "draft entries" (own RoleInfo, ImpostorRed so the faction filter shows them to
- *      impostors, with a sentinel RoleId 200/201) to RoleInfo.allRoleInfos for the duration of the
- *      intro (only when the option is enabled);
- *   2. intercept RPCProcedure.setRole for those sentinel ids (a prefix that marks the player as Tesla/
- *      Saboteur instead of running TOR's switch). setRole runs on every client via the draft RPC, so
- *      the mark is naturally consistent everywhere - no extra sync needed; and
- *   3. suppress the random promotion while the draft runs (the draft decides instead).
+ *   1. add lightweight "draft entries" (own RoleInfo, sentinel RoleId 200-206) to RoleInfo.allRoleInfos
+ *      for the duration of the intro, only while each role's full spawn gate is met. The RoleInfo COLOR
+ *      decides the draft faction (RoleInfo.isImpostor == color == Palette.ImpostorRed), so impostor
+ *      entries use ImpostorRed and crew entries use their own (non-red) colour -> they are offered to
+ *      crewmates, not impostors;
+ *   2. inject each entry's spawn rate into the draft's imp/crew settings (reflection, the patch class is
+ *      internal to TOR) so the draft's availability + 100%-forcing maths respect the configured rate;
+ *   3. intercept RPCProcedure.setRole for the sentinel ids (a prefix that marks the player as the role
+ *      instead of running TOR's switch). setRole runs on every client via the draft RPC, so the mark is
+ *      consistent everywhere - no extra sync needed; and
+ *   4. suppress the random promotion while the draft runs (each role's IntroEnd checks DraftWillRun()).
  *
- * The entries are removed again at the end of the intro so they never leak into in-game systems (the
- * Guesser list, end screen, ...).
+ * The entries are removed again at the end of the intro so they never leak into in-game systems.
  */
 
 using System;
@@ -31,27 +34,66 @@ using static TheOtherRoles.TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class UCRoleDraft {
-        // Sentinel RoleId bytes - TOR's RoleId enum only runs 0..56, so 200/201 are free and stable.
+        // Sentinel RoleId bytes - TOR's RoleId enum only runs 0..56, so 200-206 are free and stable.
         public const byte TeslaDraftId = 200;
         public const byte SaboteurDraftId = 201;
+        public const byte CorrupterDraftId = 202;
+        public const byte SilencerDraftId = 203;
+        public const byte IllusionistDraftId = 204;
+        public const byte SiphonerDraftId = 205;
+        public const byte WitnessDraftId = 206;
 
-        private static RoleInfo teslaDraft, saboteurDraft;
-        private static RoleInfo TeslaDraft() => teslaDraft ??= new RoleInfo(
-            "Tesla", Palette.ImpostorRed, "Charge two players and bring them together",
-            "Charge two players and bring them together", (RoleId)TeslaDraftId);
-        private static RoleInfo SaboteurDraft() => saboteurDraft ??= new RoleInfo(
-            "Saboteur", Palette.ImpostorRed, "Sabotage a task or lay a trap",
-            "Sabotage a task or lay a trap", (RoleId)SaboteurDraftId);
+        // ---- Draft entry table (all UC roles) ----
+        private class Entry {
+            public byte id;
+            public RoleInfo info;
+            public bool impostor;             // imp faction (ImpostorRed) vs crew faction
+            public Func<CustomOption> rateOpt;
+            public Func<CustomOption> minOpt;
+            public Action<byte> mark;
+        }
 
-        // Whether the Role Draft is the active assignment path. TOR's RoleDraft.isEnabled also requires a
-        // Classic/Guesser gamemode, but TORMapOptions is internal; the draft option alone is sufficient
-        // here (the other gamemodes don't assign TOR roles, so our roles simply won't appear there).
+        private static List<Entry> entries;
+        private static List<Entry> Entries() {
+            if (entries != null) return entries;
+            entries = new List<Entry> {
+                Make(TeslaDraftId,       "Tesla",       Palette.ImpostorRed, "Charge two players and bring them together",
+                     true,  () => Tesla.SpawnRate,       () => Tesla.SpawnMinPlayers,       Tesla.MarkFromDraft),
+                Make(SaboteurDraftId,    "Saboteur",    Palette.ImpostorRed, "Sabotage a task or lay a trap",
+                     true,  () => Saboteur.SpawnRate,    () => Saboteur.SpawnMinPlayers,    Saboteur.MarkFromDraft),
+                Make(CorrupterDraftId,   "Corrupter",   Palette.ImpostorRed, "Your kills haunt the area with false visions",
+                     true,  () => Corrupter.SpawnRate,   () => Corrupter.SpawnMinPlayers,   Corrupter.MarkFromDraft),
+                Make(SilencerDraftId,    "Silencer",    Palette.ImpostorRed, "Mute a player for the next meeting",
+                     true,  () => Silencer.SpawnRate,    () => Silencer.SpawnMinPlayers,    Silencer.MarkFromDraft),
+                Make(IllusionistDraftId, "Illusionist", Palette.ImpostorRed, "Record a path and replay it as an unkillable clone",
+                     true,  () => Illusionist.SpawnRate, () => Illusionist.SpawnMinPlayers, Illusionist.MarkFromDraft),
+                Make(SiphonerDraftId,    "Siphoner",    Siphoner.Color,      "Drain the Impostor's kill power by standing near them",
+                     false, () => Siphoner.SpawnRate,    () => Siphoner.SpawnMinPlayers,    Siphoner.MarkFromDraft),
+                Make(WitnessDraftId,     "Witness",     Witness.Color,       "Be the sole witness of a kill and expose the killer",
+                     false, () => Witness.SpawnRate,     () => Witness.SpawnMinPlayers,     Witness.MarkFromDraft),
+            };
+            return entries;
+        }
+
+        private static Entry Make(byte id, string name, UnityEngine.Color color, string desc, bool impostor,
+                                  Func<CustomOption> rateOpt, Func<CustomOption> minOpt, Action<byte> mark) {
+            return new Entry {
+                id = id,
+                info = new RoleInfo(name, color, desc, desc, (RoleId)id),
+                impostor = impostor,
+                rateOpt = rateOpt,
+                minOpt = minOpt,
+                mark = mark,
+            };
+        }
+
+        // Whether the Role Draft is the active assignment path (the draft option alone is sufficient
+        // here; other gamemodes don't assign TOR roles, so our roles simply won't appear there).
         public static bool DraftWillRun() {
             try { return CustomOptionHolder.isDraftMode != null && CustomOptionHolder.isDraftMode.getBool(); }
             catch { return false; }
         }
 
-        // Connected (non-disconnected) players - the same lobby-size measure the random promotion uses.
         private static int PlayerCount() {
             int n = 0;
             foreach (PlayerControl p in PlayerControl.AllPlayerControls)
@@ -59,23 +101,19 @@ namespace UnknownsCollection {
             return n;
         }
 
-        // A role is draftable only when its full spawn gate is met: enabled, everyone has the mod, AND
-        // the lobby is at least its "Minimum Players To Spawn" - so the draft honours the same gates as
-        // the normal random promotion (which is disabled while the draft runs).
-        private static bool TeslaDraftable() =>
-            DraftWillRun() && TeslaVersionHandshake.EveryoneHasMod()
-            && Tesla.SpawnRate != null && Tesla.SpawnRate.getSelection() > 0
-            && PlayerCount() >= (Tesla.SpawnMinPlayers != null ? Tesla.SpawnMinPlayers.getFloat() : 6f);
-
-        private static bool SaboteurDraftable() =>
-            DraftWillRun() && TeslaVersionHandshake.EveryoneHasMod()
-            && Saboteur.SpawnRate != null && Saboteur.SpawnRate.getSelection() > 0
-            && PlayerCount() >= (Saboteur.SpawnMinPlayers != null ? Saboteur.SpawnMinPlayers.getFloat() : 6f);
+        // A role is draftable only when its full spawn gate is met: draft on, everyone has the mod,
+        // rate > 0, AND the lobby is at least its "Minimum Players To Spawn".
+        private static bool Draftable(Entry e) {
+            var rate = e.rateOpt();
+            var min = e.minOpt();
+            return DraftWillRun() && TeslaVersionHandshake.EveryoneHasMod()
+                   && rate != null && rate.getSelection() > 0
+                   && PlayerCount() >= (min != null ? min.getFloat() : 6f);
+        }
 
         // Add/remove each entry from the draft list to match its current draftability.
         private static void SyncEntries() {
-            SetEntry(TeslaDraft(), TeslaDraftable(), "Tesla");
-            SetEntry(SaboteurDraft(), SaboteurDraftable(), "Saboteur");
+            foreach (var e in Entries()) SetEntry(e.info, Draftable(e), e.info.name);
         }
 
         private static void SetEntry(RoleInfo ri, bool want, string name) {
@@ -92,19 +130,18 @@ namespace UnknownsCollection {
             }
         }
 
-        // Unconditionally drop both entries (end of intro / reset).
+        // Unconditionally drop all entries (end of intro / reset).
         private static void RemoveAll() {
             try {
-                if (teslaDraft != null) RoleInfo.allRoleInfos.Remove(teslaDraft);
-                if (saboteurDraft != null) RoleInfo.allRoleInfos.Remove(saboteurDraft);
+                foreach (var e in Entries())
+                    if (e.info != null) RoleInfo.allRoleInfos.Remove(e.info);
             } catch { }
         }
 
         // The Role Draft keys availability AND the 100%-forcing logic on RoleManagerSelectRolesPatch's
-        // impSettings (RoleId -> rate). Our sentinel roles aren't there by default, so the draft treated
-        // them as ordinary options (no rate, no forcing) and the random "N of M" trim could drop them.
-        // This postfix injects their spawn rate so the draft respects the configured rate, including a
-        // 100% force. Reflection-based because RoleManagerSelectRolesPatch is internal to TOR.
+        // imp/crew/neutral settings (RoleId -> rate). Our sentinel roles aren't there by default, so this
+        // postfix injects their spawn rate into the matching faction dictionary (imp for impostor roles,
+        // crew for crew roles), including a 100% force. Reflection-based: the patch class is internal.
         public static void PatchDraftData(Harmony harmony) {
             try {
                 var t = typeof(CustomOption).Assembly.GetType("TheOtherRoles.Patches.RoleManagerSelectRolesPatch");
@@ -122,19 +159,24 @@ namespace UnknownsCollection {
         }
 
         // Postfix on RoleManagerSelectRolesPatch.getRoleAssignmentData. __result is the (internal-nested)
-        // RoleAssignmentData; its public impSettings field is a managed Dictionary<byte,int> we can edit.
+        // RoleAssignmentData; its public impSettings / crewSettings fields are managed dictionaries.
         public static void InjectDraftRates(object __result) {
             try {
                 if (__result == null || !DraftWillRun()) return;
-                var field = __result.GetType().GetField("impSettings");
-                if (field?.GetValue(__result) is not Dictionary<byte, int> imp) return;
+                var impField = __result.GetType().GetField("impSettings");
+                var crewField = __result.GetType().GetField("crewSettings");
+                var imp = impField?.GetValue(__result) as Dictionary<byte, int>;
+                var crew = crewField?.GetValue(__result) as Dictionary<byte, int>;
+                if (imp == null && crew == null) return;
+
                 SyncEntries(); // keep allRoleInfos membership in step with the gates
-                // Inject the rate only for a draftable role; otherwise make sure it's absent so the draft
-                // never offers it (mirrors the spawn gate of the random promotion).
-                if (TeslaDraftable()) imp[TeslaDraftId] = Tesla.SpawnRate.getSelection();
-                else imp.Remove(TeslaDraftId);
-                if (SaboteurDraftable()) imp[SaboteurDraftId] = Saboteur.SpawnRate.getSelection();
-                else imp.Remove(SaboteurDraftId);
+
+                foreach (var e in Entries()) {
+                    var dict = e.impostor ? imp : crew;
+                    if (dict == null) continue;
+                    if (Draftable(e)) dict[e.id] = e.rateOpt().getSelection();
+                    else dict.Remove(e.id);
+                }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] InjectDraftRates failed: {e}");
             }
@@ -148,7 +190,7 @@ namespace UnknownsCollection {
 
         // Remove them once the intro ends, so they never leak into in-game systems.
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.First)] // before the Tesla/Saboteur random-pick postfixes
+        [HarmonyPriority(Priority.First)] // before the role random-pick postfixes
         static class OnDestroyPatch {
             public static void Postfix() { RemoveAll(); }
         }
@@ -159,14 +201,14 @@ namespace UnknownsCollection {
             public static void Postfix() { RemoveAll(); }
         }
 
-        // Intercept the draft pick for our sentinel roles: mark the player as Tesla/Saboteur instead of
+        // Intercept the draft pick for our sentinel roles: mark the player as that UC role instead of
         // running TOR's setRole switch (which has no case for these ids). Runs on every client.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.setRole))]
         [HarmonyPriority(Priority.High)]
         static class SetRolePatch {
             public static bool Prefix(byte roleId, byte playerId) {
-                if (roleId == TeslaDraftId) { Tesla.MarkFromDraft(playerId); return false; }
-                if (roleId == SaboteurDraftId) { Saboteur.MarkFromDraft(playerId); return false; }
+                foreach (var e in Entries())
+                    if (roleId == e.id) { e.mark(playerId); return false; }
                 return true;
             }
         }

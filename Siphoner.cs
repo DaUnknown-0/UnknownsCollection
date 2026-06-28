@@ -45,6 +45,8 @@ namespace UnknownsCollection {
         public static CustomOption TickInterval;      // 1464 - seconds between drain ticks
         public static CustomOption ScaleWithDistance; // 1465 - closer = stronger drain
         public static CustomOption WarnImpostor;      // 1466 - drained Impostor sees a warning flash
+        public static CustomOption AffectSabotage;    // 1467 - also drain sabotage power (hold the sabotage cd)
+        public static CustomOption SabotageHold;      // 1468 - seconds the sabotage cooldown is held while draining
 
         // ---- Runtime state ----
         public static PlayerControl siphoner;
@@ -53,8 +55,15 @@ namespace UnknownsCollection {
 
         // ---- Custom RPC (196) subtypes ----
         private const byte RpcId = 196; // == UnknownsCollectionPlugin.SiphonerRpcId
-        private const byte SubSetSiphoner = 0; // siphonerId
-        private const byte SubDrain = 1;       // impostorId, penalty(float)
+        private const byte SubSetSiphoner = 0;  // siphonerId
+        private const byte SubDrain = 1;        // impostorId, penalty(float)
+        private const byte SubSabotageHold = 2; // seconds(float) - block sabotage until Time.time+seconds
+
+        // Cross-plugin sabotage-block channel (AppDomain shared data, no hard dependency). Useful TOR
+        // Stuff's Sabotage Tuning reads this same key and honours the block instead of fighting our
+        // shared-timer write (mirrors how Sabotage Tuning suppresses the Chance modifier). Holds the
+        // absolute Time.time until which sabotage is suppressed on THIS client.
+        public const string SabBlockKey = "TORMods.SiphonerSabotageBlockUntil";
 
         // ---- Role identity ----
         private static RoleInfo siphonerInfo;
@@ -81,6 +90,10 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 WarnImpostor = CustomOption.Create(1466, Types.Crewmate, "Drained Impostor Sees A Warning",
                     true, SpawnRate);
+                AffectSabotage = CustomOption.Create(1467, Types.Crewmate, "Siphoner Also Drains Sabotage Power",
+                    true, SpawnRate);
+                SabotageHold = CustomOption.Create(1468, Types.Crewmate, "Sabotage Blocked While Draining (sec)",
+                    8f, 1f, 30f, 1f, AffectSabotage);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Siphoner] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] CreateOptions failed: {e}");
@@ -101,6 +114,15 @@ namespace UnknownsCollection {
         private static float Range() => DrainRange != null ? DrainRange.getFloat() : 2f;
         private static float Penalty() => PenaltyPerTick != null ? PenaltyPerTick.getFloat() : 3f;
         private static float Interval() => TickInterval != null ? TickInterval.getFloat() : 2f;
+
+        // The map's shared sabotage cooldown system (vanilla gates EVERY sabotage on this one Timer; the
+        // host validates incoming sabotages against it). Same lever Useful TOR Stuff's SabotageTuning uses.
+        private static SabotageSystemType GetSab() {
+            var ship = MapUtilities.CachedShipStatus;
+            if (ship == null || ship.Systems == null) return null;
+            if (!ship.Systems.TryGetValue(SystemTypes.Sabotage, out ISystemType sys) || sys == null) return null;
+            return sys.TryCast<SabotageSystemType>();
+        }
 
         // ====================================================================
         // Custom RPC senders (each applies locally too)
@@ -129,6 +151,21 @@ namespace UnknownsCollection {
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 ApplyDrain(impostorId, penalty);
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] SendDrain failed: {e}"); }
+        }
+
+        // Tell every client to suppress sabotage for the next `seconds` (honoured by Sabotage Tuning if
+        // present; the host shared-timer write below is the gate when Sabotage Tuning is off).
+        private static void SendSabotageHold(float seconds) {
+            try {
+                var w = BeginRpc(SubSabotageHold);
+                w.Write(seconds);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplySabotageHold(seconds);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] SendSabotageHold failed: {e}"); }
+        }
+
+        private static void ApplySabotageHold(float seconds) {
+            try { AppDomain.CurrentDomain.SetData(SabBlockKey, Time.time + seconds); } catch { }
         }
 
         // ---- Appliers (run on every client) ----
@@ -172,6 +209,7 @@ namespace UnknownsCollection {
                             ApplyDrain(impostorId, penalty);
                             break;
                         }
+                        case SubSabotageHold: ApplySabotageHold(reader.ReadSingle()); break;
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] HandleRpc failed: {e}");
@@ -232,14 +270,29 @@ namespace UnknownsCollection {
 
                     Vector2 here = siphoner.GetTruePosition();
                     float range = Range();
+                    bool anyInRange = false;
                     foreach (var p in PlayerControl.AllPlayerControls) {
                         if (!IsAlive(p) || p.Data.Role == null || !p.Data.Role.IsImpostor) continue;
                         float dist = Vector2.Distance(here, p.GetTruePosition());
                         if (dist > range) continue;
+                        anyInRange = true;
                         float penalty = Penalty();
                         if (ScaleWithDistance == null || ScaleWithDistance.getBool())
                             penalty *= Mathf.Clamp(2f - dist / Mathf.Max(range, 0.01f), 1f, 2f);
                         SendDrain(p.PlayerId, penalty);
+                    }
+
+                    // Also drain sabotage power: hold the shared sabotage cooldown up while an Impostor is
+                    // near. The host validates sabotages against sab.Timer and serialises it to everyone,
+                    // so this blocks the sabotage menu for all impostors while the Siphoner is draining.
+                    if (anyInRange && (AffectSabotage == null || AffectSabotage.getBool())) {
+                        float hold = SabotageHold != null ? SabotageHold.getFloat() : 8f;
+                        // Vanilla path (Sabotage Tuning off): host-authoritative shared-timer write.
+                        var sab = GetSab();
+                        if (sab != null && sab.Timer < hold) sab.Timer = hold;
+                        // Integration path: broadcast the block so Sabotage Tuning (if present) honours it
+                        // on every client instead of pinning the shared timer back to idle.
+                        SendSabotageHold(hold);
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] drain tick failed: {e}");

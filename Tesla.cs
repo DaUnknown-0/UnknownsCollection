@@ -210,6 +210,10 @@ namespace UnknownsCollection {
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Tesla] The Tesla is {tesla.Data?.PlayerName}.");
         }
 
+        // Drafted as Tesla in Role-Draft mode (see UCRoleDraft). setRole runs on every client, so
+        // marking locally here is consistent everywhere - no extra role RPC needed.
+        public static void MarkFromDraft(byte playerId) => ApplySetTesla(playerId);
+
         private static void ApplySetCharges(byte newPlusId, byte newMinusId) {
             plusId = newPlusId;
             minusId = newMinusId;
@@ -288,6 +292,7 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                    if (UCRoleDraft.DraftWillRun()) return;                                   // draft assigns instead
                     if (SpawnRate == null || SpawnRate.getSelection() <= 0) return;          // role disabled
                     if (!TeslaVersionHandshake.EveryoneHasMod()) return;                      // client-side gate
                     if (LobbyPlayerCount() < (SpawnMinPlayers?.getFloat() ?? 6f)) return;      // spawn gate

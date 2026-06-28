@@ -121,12 +121,13 @@ namespace UnknownsCollection {
                 var text = __instance.GameStartText;
                 if (text == null) return;
                 bool teslaOn = Tesla.SpawnRate != null && Tesla.SpawnRate.getSelection() > 0;
-                if (!teslaOn || EveryoneHasMod()) return;
+                bool saboteurOn = Saboteur.SpawnRate != null && Saboteur.SpawnRate.getSelection() > 0;
+                if ((!teslaOn && !saboteurOn) || EveryoneHasMod()) return;
                 string marker = "Unknown's Collection";
                 if (text.text != null && text.text.Contains(marker)) return;
 
-                string msg = "<color=#FFA500FF>The Tesla is enabled, but not all players have " +
-                             "Unknown's Collection - the role is client-side and will NOT spawn.</color>";
+                string msg = "<color=#FFA500FF>An Unknown's Collection role is enabled, but not all players " +
+                             "have the mod - these roles are client-side and the game will NOT start.</color>";
                 text.text = string.IsNullOrEmpty(text.text) ? msg : text.text + "\n" + msg;
                 var cam = Camera.main;
                 if (cam != null) {

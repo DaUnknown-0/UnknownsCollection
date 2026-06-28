@@ -8,9 +8,11 @@
  * each role is built from Harmony patches: own RoleInfo (display tag), CustomButton/meeting UI,
  * a small custom RPC, and host-authoritative game logic.
  *
- * First role: The Tesla (Impostor) - charges two players (+ / -). While the charged pair is too
- * close a hidden countdown drains; it pauses when they separate and only refills in meetings. At
- * zero, both die. See Tesla.cs.
+ * Roles:
+ *  - The Tesla (Impostor) - charges two players (+ / -); a hidden countdown drains while the pair is
+ *    too close and only refills in meetings; at zero both die. See Tesla.cs.
+ *  - The Saboteur (Impostor) - once per round sabotages a task console (lethal on completion, with a
+ *    crew search/defuse counterplay) or lays an invisible stun trap. See Saboteur.cs.
  */
 
 global using Il2CppInterop.Runtime;
@@ -39,13 +41,14 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.0.1";
+    public const string PluginVersion = "1.0.1.1";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
     // 200-202, 246-253. 190 / 191 are free across all of them. Keep these globally unique.
     public const byte TeslaRpcId = 190;
     public const byte VersionHandshakeRpcId = 191;
+    public const byte SaboteurRpcId = 192;
 
     public static ManualLogSource Logger { get; private set; }
 
@@ -72,6 +75,11 @@ public class UnknownsCollectionPlugin : BasePlugin
         // TryPatch adds the reflection patch on TOR's resetVariables + resolves the UncheckedMurder RPC.
         Tesla.CreateOptions();
         Tesla.TryPatch(harmony);
+
+        // The Saboteur role (Impostor). Same construction as the Tesla: options after TOR's
+        // CustomOptionHolder.Load(), reflection setup in TryPatch, attribute patches via PatchAll.
+        Saboteur.CreateOptions();
+        Saboteur.TryPatch(harmony);
 
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line below).

@@ -85,6 +85,10 @@ public class UnknownsCollectionPlugin : BasePlugin
         // the PingTracker version line below).
         harmony.PatchAll(typeof(UnknownsCollectionPlugin).Assembly);
 
+        // Reflection-based patch (internal TOR type): inject the Tesla/Saboteur spawn rates into the
+        // Role Draft so the draft respects their configured rate + 100% force.
+        UCRoleDraft.PatchDraftData(harmony);
+
         // Self-updater: checks GitHub releases and offers an in-game update (channel-aware: follows the
         // shared test-versions toggle). Must exist before registration so the repo fields resolve.
         AddComponent<UnknownsCollectionUpdater>();

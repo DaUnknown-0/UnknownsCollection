@@ -22,6 +22,9 @@
  * Guesser list, end screen, ...).
  */
 
+using System;
+using System.Collections.Generic;
+using System.Reflection;
 using HarmonyLib;
 using TheOtherRoles;
 using static TheOtherRoles.TheOtherRoles;
@@ -53,17 +56,57 @@ namespace UnknownsCollection {
                 if (add) {
                     bool modOk = TeslaVersionHandshake.EveryoneHasMod();
                     if (modOk && Tesla.SpawnRate != null && Tesla.SpawnRate.getSelection() > 0
-                        && !RoleInfo.allRoleInfos.Contains(TeslaDraft()))
+                        && !RoleInfo.allRoleInfos.Contains(TeslaDraft())) {
                         RoleInfo.allRoleInfos.Add(TeslaDraft());
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[UCRoleDraft] Tesla added to draft list.");
+                    }
                     if (modOk && Saboteur.SpawnRate != null && Saboteur.SpawnRate.getSelection() > 0
-                        && !RoleInfo.allRoleInfos.Contains(SaboteurDraft()))
+                        && !RoleInfo.allRoleInfos.Contains(SaboteurDraft())) {
                         RoleInfo.allRoleInfos.Add(SaboteurDraft());
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[UCRoleDraft] Saboteur added to draft list.");
+                    }
                 } else {
                     if (teslaDraft != null) RoleInfo.allRoleInfos.Remove(teslaDraft);
                     if (saboteurDraft != null) RoleInfo.allRoleInfos.Remove(saboteurDraft);
                 }
-            } catch (System.Exception e) {
+            } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] EnsureEntries failed: {e}");
+            }
+        }
+
+        // The Role Draft keys availability AND the 100%-forcing logic on RoleManagerSelectRolesPatch's
+        // impSettings (RoleId -> rate). Our sentinel roles aren't there by default, so the draft treated
+        // them as ordinary options (no rate, no forcing) and the random "N of M" trim could drop them.
+        // This postfix injects their spawn rate so the draft respects the configured rate, including a
+        // 100% force. Reflection-based because RoleManagerSelectRolesPatch is internal to TOR.
+        public static void PatchDraftData(Harmony harmony) {
+            try {
+                var t = typeof(CustomOption).Assembly.GetType("TheOtherRoles.Patches.RoleManagerSelectRolesPatch");
+                var m = t?.GetMethod("getRoleAssignmentData", BindingFlags.Public | BindingFlags.Static);
+                if (m == null) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning("[UCRoleDraft] getRoleAssignmentData not found - draft rate injection disabled.");
+                    return;
+                }
+                var post = typeof(UCRoleDraft).GetMethod(nameof(InjectDraftRates), BindingFlags.Public | BindingFlags.Static);
+                harmony.Patch(m, postfix: new HarmonyMethod(post));
+                UnknownsCollectionPlugin.Logger?.LogInfo("[UCRoleDraft] Draft rate injection patched.");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] PatchDraftData failed: {e}");
+            }
+        }
+
+        // Postfix on RoleManagerSelectRolesPatch.getRoleAssignmentData. __result is the (internal-nested)
+        // RoleAssignmentData; its public impSettings field is a managed Dictionary<byte,int> we can edit.
+        public static void InjectDraftRates(object __result) {
+            try {
+                if (__result == null || !DraftWillRun() || !TeslaVersionHandshake.EveryoneHasMod()) return;
+                var field = __result.GetType().GetField("impSettings");
+                if (field?.GetValue(__result) is not Dictionary<byte, int> imp) return;
+                EnsureEntries(true); // make sure the RoleInfo objects exist in allRoleInfos too
+                if (Tesla.SpawnRate != null) imp[TeslaDraftId] = Tesla.SpawnRate.getSelection();
+                if (Saboteur.SpawnRate != null) imp[SaboteurDraftId] = Saboteur.SpawnRate.getSelection();
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] InjectDraftRates failed: {e}");
             }
         }
 

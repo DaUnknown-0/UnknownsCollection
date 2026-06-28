@@ -455,6 +455,7 @@ namespace UnknownsCollection {
             sabotagedActive = true;
             sabotagedX = x;
             sabotagedY = y;
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] console sabotaged at ({x:F2}, {y:F2}).");
         }
 
         private static void ApplyClearSabotage() {
@@ -479,8 +480,14 @@ namespace UnknownsCollection {
         // Host-authoritative: validate a completion request, then kill + clear (once per round).
         private static void HostHandleRequestKill(byte victimId, float x, float y) {
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-            if (!active || !sabotagedActive || killUsedThisRound) return;
-            if (AliveCount() < (MinAliveForKill?.getFloat() ?? 4f)) return;
+            if (!active || !sabotagedActive || killUsedThisRound) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request rejected: active={active} sabotaged={sabotagedActive} killUsed={killUsedThisRound}");
+                return;
+            }
+            if (AliveCount() < (MinAliveForKill?.getFloat() ?? 4f)) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request rejected: alive {AliveCount()} < min {MinAliveForKill?.getFloat()}");
+                return;
+            }
 
             var victim = Helpers.playerById(victimId);
             if (!IsAlive(victim)) return;
@@ -488,6 +495,7 @@ namespace UnknownsCollection {
             // Sanity: the reported position must match the stored console.
             if (Vector2.Distance(new Vector2(x, y), new Vector2(sabotagedX, sabotagedY)) > 1.0f) return;
 
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request ACCEPTED for victim {victim.Data?.PlayerName}.");
             killUsedThisRound = true;
             byte killerId = IsAlive(saboteur) ? saboteur.PlayerId : victimId;
             SendKillFx(victimId);                 // FX first (everywhere)
@@ -514,19 +522,24 @@ namespace UnknownsCollection {
         // Sabotage-task: console discovery (saboteur) + victim completion poll (everyone)
         // ====================================================================
         private static Console[] GetConsoles() {
-            if (consoleCache == null)
+            // Re-scan while empty: a cache built before ShipStatus spawned its consoles would otherwise
+            // stay permanently empty and the SABOTAGE button would never find a console.
+            if (consoleCache == null || consoleCache.Length == 0)
                 consoleCache = UnityEngine.Object.FindObjectsOfType<Console>();
             return consoleCache;
         }
 
-        // Only real task consoles may be sabotaged - skip the sabotage-repair consoles (lights/comms/
-        // reactor/oxygen) and anything without a task type.
+        // A console the Saboteur may mark - just exclude the sabotage-repair consoles (lights/comms/
+        // reactor/oxygen). We do NOT require TaskTypes to be non-empty: some task consoles leave it
+        // empty, and a non-task console simply never triggers the kill (harmless).
         private static bool IsSabotageableConsole(Console c) {
-            if (c == null || c.TaskTypes == null || c.TaskTypes.Length == 0) return false;
-            foreach (var tt in c.TaskTypes) {
-                if (tt == TaskTypes.FixLights || tt == TaskTypes.FixComms || tt == TaskTypes.RestoreOxy
-                    || tt == TaskTypes.ResetReactor || tt == TaskTypes.ResetSeismic || tt == TaskTypes.StopCharles)
-                    return false;
+            if (c == null) return false;
+            if (c.TaskTypes != null) {
+                foreach (var tt in c.TaskTypes) {
+                    if (tt == TaskTypes.FixLights || tt == TaskTypes.FixComms || tt == TaskTypes.RestoreOxy
+                        || tt == TaskTypes.ResetReactor || tt == TaskTypes.ResetSeismic || tt == TaskTypes.StopCharles)
+                        return false;
+                }
             }
             return true;
         }
@@ -570,16 +583,34 @@ namespace UnknownsCollection {
             int prog = LocalTaskProgress();
             if (progressInit && prog > lastProgress) {
                 float d = Vector2.Distance(me.GetTruePosition(), new Vector2(sabotagedX, sabotagedY));
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Saboteur] task step completed (prog {lastProgress}->{prog}); dist to sabotaged console = {d:F2} (need <=1.4)");
                 if (d <= 1.4f) SendRequestKill(me.PlayerId, sabotagedX, sabotagedY);
             }
             lastProgress = prog;
             progressInit = true;
         }
 
+        // Throttled diagnostic for the local Saboteur - reveals which gate blocks an ability.
+        private static float lastDiag;
+        private static void Diag() {
+            try {
+                if (!IsLocalSaboteur() || InMeeting()) return;
+                if (Time.time - lastDiag < 2f) return;
+                lastDiag = Time.time;
+                var room = HudManager.Instance?.roomTracker?.LastRoom?.RoomId;
+                var c = FindUsableConsoleInRange();
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Saboteur][diag] active={active} tokens={tokens} trapCost={TrapCost()} sabCost={(SabotageTokenCost != null ? Mathf.RoundToInt(SabotageTokenCost.getFloat()) : 1)} " +
+                    $"traps={SaboteurTrap.ActiveCount}/{MaxTraps()} canPlace={SaboteurTrap.CanPlaceHere()} room={room} " +
+                    $"consoleInRange={(c != null)} consoles={(consoleCache == null ? -1 : consoleCache.Length)} sabotagedActive={sabotagedActive}");
+            } catch { }
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class SabotageHudUpdatePatch {
             public static void Postfix() {
-                try { VictimPoll(); SaboteurTrap.Update(); SaboteurScanUI.Update(); }
+                try { VictimPoll(); SaboteurTrap.Update(); SaboteurScanUI.Update(); Diag(); }
                 catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] HUD poll failed: {e}"); }
             }
         }

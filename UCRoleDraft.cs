@@ -51,27 +51,53 @@ namespace UnknownsCollection {
             catch { return false; }
         }
 
-        private static void EnsureEntries(bool add) {
+        // Connected (non-disconnected) players - the same lobby-size measure the random promotion uses.
+        private static int PlayerCount() {
+            int n = 0;
+            foreach (PlayerControl p in PlayerControl.AllPlayerControls)
+                if (p != null && p.Data != null && !p.Data.Disconnected) n++;
+            return n;
+        }
+
+        // A role is draftable only when its full spawn gate is met: enabled, everyone has the mod, AND
+        // the lobby is at least its "Minimum Players To Spawn" - so the draft honours the same gates as
+        // the normal random promotion (which is disabled while the draft runs).
+        private static bool TeslaDraftable() =>
+            DraftWillRun() && TeslaVersionHandshake.EveryoneHasMod()
+            && Tesla.SpawnRate != null && Tesla.SpawnRate.getSelection() > 0
+            && PlayerCount() >= (Tesla.SpawnMinPlayers != null ? Tesla.SpawnMinPlayers.getFloat() : 6f);
+
+        private static bool SaboteurDraftable() =>
+            DraftWillRun() && TeslaVersionHandshake.EveryoneHasMod()
+            && Saboteur.SpawnRate != null && Saboteur.SpawnRate.getSelection() > 0
+            && PlayerCount() >= (Saboteur.SpawnMinPlayers != null ? Saboteur.SpawnMinPlayers.getFloat() : 6f);
+
+        // Add/remove each entry from the draft list to match its current draftability.
+        private static void SyncEntries() {
+            SetEntry(TeslaDraft(), TeslaDraftable(), "Tesla");
+            SetEntry(SaboteurDraft(), SaboteurDraftable(), "Saboteur");
+        }
+
+        private static void SetEntry(RoleInfo ri, bool want, string name) {
             try {
-                if (add) {
-                    bool modOk = TeslaVersionHandshake.EveryoneHasMod();
-                    if (modOk && Tesla.SpawnRate != null && Tesla.SpawnRate.getSelection() > 0
-                        && !RoleInfo.allRoleInfos.Contains(TeslaDraft())) {
-                        RoleInfo.allRoleInfos.Add(TeslaDraft());
-                        UnknownsCollectionPlugin.Logger?.LogInfo("[UCRoleDraft] Tesla added to draft list.");
-                    }
-                    if (modOk && Saboteur.SpawnRate != null && Saboteur.SpawnRate.getSelection() > 0
-                        && !RoleInfo.allRoleInfos.Contains(SaboteurDraft())) {
-                        RoleInfo.allRoleInfos.Add(SaboteurDraft());
-                        UnknownsCollectionPlugin.Logger?.LogInfo("[UCRoleDraft] Saboteur added to draft list.");
-                    }
-                } else {
-                    if (teslaDraft != null) RoleInfo.allRoleInfos.Remove(teslaDraft);
-                    if (saboteurDraft != null) RoleInfo.allRoleInfos.Remove(saboteurDraft);
+                bool has = RoleInfo.allRoleInfos.Contains(ri);
+                if (want && !has) {
+                    RoleInfo.allRoleInfos.Add(ri);
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[UCRoleDraft] {name} added to draft list.");
+                } else if (!want && has) {
+                    RoleInfo.allRoleInfos.Remove(ri);
                 }
             } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] EnsureEntries failed: {e}");
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] SetEntry({name}) failed: {e}");
             }
+        }
+
+        // Unconditionally drop both entries (end of intro / reset).
+        private static void RemoveAll() {
+            try {
+                if (teslaDraft != null) RoleInfo.allRoleInfos.Remove(teslaDraft);
+                if (saboteurDraft != null) RoleInfo.allRoleInfos.Remove(saboteurDraft);
+            } catch { }
         }
 
         // The Role Draft keys availability AND the 100%-forcing logic on RoleManagerSelectRolesPatch's
@@ -99,12 +125,16 @@ namespace UnknownsCollection {
         // RoleAssignmentData; its public impSettings field is a managed Dictionary<byte,int> we can edit.
         public static void InjectDraftRates(object __result) {
             try {
-                if (__result == null || !DraftWillRun() || !TeslaVersionHandshake.EveryoneHasMod()) return;
+                if (__result == null || !DraftWillRun()) return;
                 var field = __result.GetType().GetField("impSettings");
                 if (field?.GetValue(__result) is not Dictionary<byte, int> imp) return;
-                EnsureEntries(true); // make sure the RoleInfo objects exist in allRoleInfos too
-                if (Tesla.SpawnRate != null) imp[TeslaDraftId] = Tesla.SpawnRate.getSelection();
-                if (Saboteur.SpawnRate != null) imp[SaboteurDraftId] = Saboteur.SpawnRate.getSelection();
+                SyncEntries(); // keep allRoleInfos membership in step with the gates
+                // Inject the rate only for a draftable role; otherwise make sure it's absent so the draft
+                // never offers it (mirrors the spawn gate of the random promotion).
+                if (TeslaDraftable()) imp[TeslaDraftId] = Tesla.SpawnRate.getSelection();
+                else imp.Remove(TeslaDraftId);
+                if (SaboteurDraftable()) imp[SaboteurDraftId] = Saboteur.SpawnRate.getSelection();
+                else imp.Remove(SaboteurDraftId);
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] InjectDraftRates failed: {e}");
             }
@@ -113,20 +143,20 @@ namespace UnknownsCollection {
         // Add the draft entries just before the team/role-draft intro builds its role list.
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.ShowTeam))]
         static class ShowTeamPatch {
-            public static void Prefix() { if (DraftWillRun()) EnsureEntries(true); }
+            public static void Prefix() { if (DraftWillRun()) SyncEntries(); }
         }
 
         // Remove them once the intro ends, so they never leak into in-game systems.
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
         [HarmonyPriority(Priority.First)] // before the Tesla/Saboteur random-pick postfixes
         static class OnDestroyPatch {
-            public static void Postfix() { EnsureEntries(false); }
+            public static void Postfix() { RemoveAll(); }
         }
 
         // Safety: also drop them on a full reset.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { EnsureEntries(false); }
+            public static void Postfix() { RemoveAll(); }
         }
 
         // Intercept the draft pick for our sentinel roles: mark the player as Tesla/Saboteur instead of

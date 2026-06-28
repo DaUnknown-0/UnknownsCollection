@@ -82,7 +82,13 @@ namespace UnknownsCollection {
                     message += $"<color=#FF0000FF>{name} is missing Unknown's Collection (or has a different version)\n</color>";
                     continue;
                 }
-                int diff = UnknownsCollectionPlugin.Version.CompareTo(pv.version);
+                // The handshake only transmits Major.Minor.Build (3 bytes), so the received version is
+                // always 3-part. Compare against a 3-part local version too - otherwise a TEST build
+                // (vX.Y.Z.W, Revision>0) is always "newer" than the received vX.Y.Z and the handshake
+                // wrongly blocks the start. Distinct builds are still caught by the module-GUID check.
+                var localV = UnknownsCollectionPlugin.Version;
+                var local3 = new System.Version(localV.Major, localV.Minor, localV.Build);
+                int diff = local3.CompareTo(pv.version);
                 if (diff > 0)
                     message += $"<color=#FF0000FF>{name} has an older Unknown's Collection (v{pv.version})\n</color>";
                 else if (diff < 0)

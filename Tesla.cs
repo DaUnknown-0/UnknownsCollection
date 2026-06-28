@@ -42,7 +42,7 @@ using Types = TheOtherRoles.CustomOption.CustomOptionType;
 namespace UnknownsCollection {
     public static class Tesla {
         // ---- Theme ----
-        public static readonly Color Color = new Color(0.12f, 0.72f, 1f, 1f); // electric cyan
+        public static readonly Color Color = Palette.ImpostorRed; // impostor role -> red role tag (matches UCRoleDraft)
 
         // ---- Options ----
         public static CustomOption SpawnRate;          // 1400 (header) - impostor role chance

@@ -114,6 +114,12 @@ namespace UnknownsCollection {
                     return;
                 }
 
+                // Keep the vanilla Use button hidden while the search/defuse UI is up: otherwise the same
+                // action input (click / E / Space / Enter) that drives the scan also triggers the Use
+                // button and opens the real task minigame on top of us. Mirrors TOR hiding it in meetings
+                // (UpdatePatch.updateUseButton). Restored automatically the frame after we Close().
+                try { HudManager.Instance?.UseButton?.Hide(); } catch { }
+
                 switch (phase) {
                     case Phase.Scan: UpdateScan(); break;
                     case Phase.Result: UpdateResult(); break;

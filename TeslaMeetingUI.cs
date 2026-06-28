@@ -67,8 +67,10 @@ namespace UnknownsCollection {
                     checkbox.transform.SetParent(pva.transform);
                     checkbox.transform.position = template.transform.position;
                     // Default spot is (-0.95) - the SAME spot TOR's Guesser shoot button uses. If this
-                    // Tesla is also a Guesser, shift our checkbox left so the two don't overlap.
-                    float x = HandleGuesser.isGuesser(PlayerControl.LocalPlayer.PlayerId) ? -1.43f : -0.95f;
+                    // Tesla is also a Guesser, shift our checkbox RIGHT (toward centre) to -0.5 so it clears
+                    // the shoot button - the exact direction/offset TOR's own Swapper uses for the same
+                    // clash (MeetingPatch.cs:528). Shifting LEFT instead pushed it onto the name/(L)(D) marks.
+                    float x = HandleGuesser.isGuesser(PlayerControl.LocalPlayer.PlayerId) ? -0.5f : -0.95f;
                     checkbox.transform.localPosition = new Vector3(x, 0.03f, -1.3f);
 
                     SpriteRenderer renderer = checkbox.GetComponent<SpriteRenderer>();

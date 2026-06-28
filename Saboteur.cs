@@ -40,7 +40,7 @@ using Types = TheOtherRoles.CustomOption.CustomOptionType;
 namespace UnknownsCollection {
     public static class Saboteur {
         // ---- Theme ----
-        public static readonly Color Color = new Color(0.62f, 0.10f, 0.80f, 1f); // toxic violet ("poison")
+        public static readonly Color Color = Palette.ImpostorRed; // impostor role -> red role tag (matches UCRoleDraft)
 
         // ---- Options (IDs 1410-1427) ----
         public static CustomOption SpawnRate;            // 1410 (header) - impostor role chance
@@ -504,15 +504,19 @@ namespace UnknownsCollection {
         }
 
         // Perform an unchecked murder on every client (local call + RPC), like the Tesla/Sheriff.
+        // showAnimation = 0: this is a REMOTE task-kill - the Saboteur is nowhere near the victim, so the
+        // kill animation must be suppressed. Passing 0 sets KillAnimationCoPerformKillPatch.hideNextAnimation,
+        // which rewrites the animation's source to the target and so prevents the killer being teleported to
+        // the console. Mirrors the Vampire/Bomber remote kills (Helpers.checkMurderAttemptAndKill(.., false)).
         private static void RpcUncheckedMurder(byte sourceId, byte targetId) {
             try {
                 MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
                     PlayerControl.LocalPlayer.NetId, uncheckedMurderRpc, SendOption.Reliable, -1);
                 w.Write(sourceId);
                 w.Write(targetId);
-                w.Write(byte.MaxValue); // showAnimation
+                w.Write((byte)0); // showAnimation = 0 -> no kill animation, no teleport of the Saboteur
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                RPCProcedure.uncheckedMurderPlayer(sourceId, targetId, byte.MaxValue);
+                RPCProcedure.uncheckedMurderPlayer(sourceId, targetId, 0);
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] RpcUncheckedMurder failed: {e}");
             }

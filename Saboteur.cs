@@ -572,8 +572,11 @@ namespace UnknownsCollection {
         }
 
         // CREW search range: only when actually within the console's usable distance - i.e. exactly when
-        // the player could DO the task. Crew aren't impostors, so TOR's ConsoleCanUsePatch lets Console
-        // .CanUse return the real proximity (couldUse), which already accounts for the interaction offset.
+        // the player could DO the task. Crew aren't impostors, so TOR's ConsoleCanUsePatch (UsablesPatch.cs)
+        // lets the original Console.CanUse run. Gate on canUse (NOT couldUse): in vanilla, couldUse only
+        // means "right player type, alive, can move" and is true everywhere regardless of distance - using
+        // it left the SEARCH button permanently lit and the scan UI aborting instantly on open because the
+        // player was never actually near the console. canUse adds the `distance <= UsableDistance` check.
         private static Console FindConsoleForSearch() {
             var me = PlayerControl.LocalPlayer;
             if (me == null || me.Data == null) return null;
@@ -582,7 +585,7 @@ namespace UnknownsCollection {
             foreach (var c in GetConsoles()) {
                 if (!IsSabotageableConsole(c)) continue;
                 float d;
-                try { d = c.CanUse(me.Data, out bool _, out bool couldUse); if (!couldUse) continue; }
+                try { d = c.CanUse(me.Data, out bool canUse, out bool _); if (!canUse) continue; }
                 catch { continue; }
                 if (d < bestDist) { bestDist = d; best = c; }
             }

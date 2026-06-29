@@ -49,6 +49,11 @@ namespace UnknownsCollection {
         private static AnimationClip idleClip, runClip, enterClip, exitClip;
         private static bool useAnim;                 // true once the SpriteAnim + clips are confirmed working
 
+        private static SpriteRenderer skinClone;     // the clone's skin ("pants") renderer
+        private static SpriteAnim skinAnim;          // plays the skin's matching Idle/Run/EnterVent/ExitVent
+        private static AnimationClip sIdle, sRun, sEnter, sExit;
+        private static bool useSkinAnim;             // true once the skin SpriteAnim + clips are confirmed working
+
         private static List<Vector2> path = new();
         private static List<bool> vents = new();     // per-sample "in a vent" flag, parallel to `path`
         private static float startTime;
@@ -102,11 +107,14 @@ namespace UnknownsCollection {
                 foreach (var sr in cos.GetComponentsInChildren<SpriteRenderer>(false)) tryAdd(sr);
                 if (srcList.Count == 0) return;
 
+                var skinRend = cos.skin != null ? cos.skin.layer : null;
+
                 go = new GameObject("IllusionistClone");
                 var built = new List<SpriteRenderer>(srcList.Count);
-                int bodyIdx = -1;
+                int bodyIdx = -1, skinIdx = -1;
                 foreach (var sr in srcList) {
                     if (sr == bodyRend) bodyIdx = built.Count;
+                    if (skinRend != null && sr == skinRend) skinIdx = built.Count;
                     var child = new GameObject(sr.name);
                     child.transform.SetParent(go.transform, false);
                     // go carries facing (and the fallback vent scale); children sit at their world offset.
@@ -128,9 +136,12 @@ namespace UnknownsCollection {
                 renderers = built.ToArray();
                 sources = srcList.ToArray();
 
-                // Drive the body with the vanilla animation clips so it walks on its OWN movement.
+                // Drive the body (and skin) with the vanilla animation clips so they walk on the clone's
+                // OWN movement instead of the live player's.
                 bodyClone = bodyIdx >= 0 ? renderers[bodyIdx] : null;
+                skinClone = skinIdx >= 0 ? renderers[skinIdx] : null;
                 WireBodyAnimation();
+                WireSkinAnimation(cos);
 
                 path = new List<Vector2>(points);
                 vents = ventFlags != null ? new List<bool>(ventFlags) : new List<bool>();
@@ -172,6 +183,31 @@ namespace UnknownsCollection {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Illusionist] body-anim wiring failed, mirroring live body instead: {e}");
                 useAnim = false;
             }
+        }
+
+        // Same idea for the skin ("pants"), which has its own animation that must run in lock-step with the
+        // body - otherwise the legs move under static trousers.
+        private static void WireSkinAnimation(CosmeticsLayer cos) {
+            try {
+                if (skinClone == null) { useSkinAnim = false; return; }
+                SkinViewData view = null;
+                try { view = cos.GetSkinView(); } catch { }
+                if (view == null) { useSkinAnim = false; return; }
+                sIdle = view.IdleAnim; sRun = view.RunAnim; sEnter = view.EnterVentAnim; sExit = view.ExitVentAnim;
+                if (sIdle == null || sRun == null) { useSkinAnim = false; return; }
+                skinClone.gameObject.AddComponent<Animator>();
+                skinAnim = skinClone.gameObject.AddComponent<SpriteAnim>();
+                skinAnim.Play(sIdle, 1f);
+                useSkinAnim = skinAnim.Playing;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Illusionist] skin-anim wiring failed: {e}");
+                useSkinAnim = false;
+            }
+        }
+
+        private static void PlaySkin(AnimationClip clip) {
+            if (!useSkinAnim || clip == null) return;
+            try { skinAnim.Play(clip, 1f); } catch { }
         }
 
         public static void Flash(float seconds) => flashUntil = Time.time + seconds;
@@ -243,35 +279,30 @@ namespace UnknownsCollection {
             if (want == bodyState) return;
             bodyState = want;
             try { bodyAnim.Play(want == BodyState.Run ? runClip : idleClip, 1f); } catch { }
+            PlaySkin(want == BodyState.Run ? sRun : sIdle);
         }
 
         private static void StartEnter() {
             ventPhase = VentPhase.Entering;
             bodyState = BodyState.None;
-            bodyClone.gameObject.SetActive(true);
-            SetCosmeticsVisible(false);          // hat/visor/skin disappear into the vent with the body
+            // Keep the whole figure visible while the body ducks into the vent; only hide once it is fully
+            // inside (Entering -> In). The skin ducks along via its own enter-vent animation.
+            SetVisibleAll(true);
             try { bodyAnim.Play(enterClip != null ? enterClip : idleClip, 1f); } catch { }
+            PlaySkin(sEnter != null ? sEnter : sIdle);
         }
 
         private static void StartExit() {
             ventPhase = VentPhase.Exiting;
             bodyState = BodyState.None;
-            bodyClone.gameObject.SetActive(true);
-            SetCosmeticsVisible(false);          // cosmetics reappear only once the body is back out
+            SetVisibleAll(true);                 // the figure reappears as the body climbs back out
             try { bodyAnim.Play(exitClip != null ? exitClip : idleClip, 1f); } catch { }
+            PlaySkin(sExit != null ? sExit : sIdle);
         }
 
         private static void SetVisibleAll(bool on) {
             if (renderers == null) return;
             foreach (var r in renderers) if (r != null) r.gameObject.SetActive(on);
-        }
-
-        private static void SetCosmeticsVisible(bool on) {
-            if (renderers == null) return;
-            foreach (var r in renderers) {
-                if (r == null || r == bodyClone) continue;
-                r.gameObject.SetActive(on);
-            }
         }
 
         private static bool IsBodyAnimPlaying() {
@@ -291,8 +322,8 @@ namespace UnknownsCollection {
                 var s = sources[k];
                 var c = renderers[k];
                 if (s == null || c == null) continue;
-                bool isBody = c == bodyClone;
-                if (!(isBody && useAnim)) c.sprite = s.sprite;   // body sprite is animation-driven
+                bool animDriven = (c == bodyClone && useAnim) || (c == skinClone && useSkinAnim);
+                if (!animDriven) c.sprite = s.sprite;            // body/skin sprites are animation-driven
                 c.color = s.color;
                 c.flipX = false;
                 try { c.material.CopyPropertiesFromMaterial(s.material); } catch { }
@@ -357,6 +388,10 @@ namespace UnknownsCollection {
             bodyAnim = null;
             idleClip = runClip = enterClip = exitClip = null;
             useAnim = false;
+            skinClone = null;
+            skinAnim = null;
+            sIdle = sRun = sEnter = sExit = null;
+            useSkinAnim = false;
             ventPhase = VentPhase.Out;
             bodyState = BodyState.None;
             ventScale = 1f;

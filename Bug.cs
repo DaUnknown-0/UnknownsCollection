@@ -320,11 +320,11 @@ namespace UnknownsCollection {
             private float nextPulse;
             private string baseWinStr;
             private Vector3 baseWinPos;
+            private Vector3 pulseOffset;
 
             private RawImage glitchOverlay;
             private Texture2D glitchTex;
             private float glitchEndTime;
-            private int glitchOffset;
 
             private void Start() {
                 nextPulse = Time.time + UnityEngine.Random.Range(0.1f, 0.5f);
@@ -390,7 +390,6 @@ namespace UnknownsCollection {
                 int blockY = UnityEngine.Random.Range(0, rows - 8);
                 int blockH = UnityEngine.Random.Range(4, 12);
                 int offset = UnityEngine.Random.Range(-20, 21);
-                glitchOffset = offset;
                 glitchEndTime = Time.time + UnityEngine.Random.Range(0.08f, 0.2f);
 
                 byte gray = (byte)UnityEngine.Random.Range(20, 60);
@@ -438,22 +437,22 @@ namespace UnknownsCollection {
                             } else {
                                 mgr.WinText.text = baseWinStr;
                             }
-                            mgr.WinText.transform.localPosition = baseWinPos + new Vector3(
-                                UnityEngine.Random.Range(-6f, 6f),
-                                UnityEngine.Random.Range(-1.5f, 1.5f), 0);
+                            pulseOffset = new Vector3(
+                                UnityEngine.Random.Range(-2.5f, 2.5f),
+                                UnityEngine.Random.Range(-0.8f, 0.8f), 0);
+                            mgr.WinText.transform.localPosition = baseWinPos + pulseOffset;
                         }
                     }
 
                     if (glitchEndTime > 0 && t > glitchEndTime) {
                         glitchEndTime = 0;
-                        glitchOffset = 0;
                         ClearGlitchTex();
                     }
 
                     if (mgr.WinText != null) {
                         float sx = Mathf.Sin(t * 25f) * 0.3f;
                         float sy = Mathf.Cos(t * 20f) * 0.2f;
-                        mgr.WinText.transform.localPosition += new Vector3(sx, sy, 0);
+                        mgr.WinText.transform.localPosition = baseWinPos + new Vector3(sx, sy, 0) + pulseOffset;
 
                         if (UnityEngine.Random.value < 0.015f)
                             mgr.WinText.color = new Color(

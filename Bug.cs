@@ -353,9 +353,9 @@ namespace UnknownsCollection {
                     rt.offsetMax = Vector2.zero;
 
                     staticImage = imgGo.AddComponent<RawImage>();
-                    staticImage.color = new Color(1f, 1f, 1f, 0.18f);
+                    staticImage.color = new Color(1f, 1f, 1f, 0.06f);
 
-                    noiseTex = new Texture2D(128, 72, TextureFormat.RGBA32, false);
+                    noiseTex = new Texture2D(64, 36, TextureFormat.RGBA32, false);
                     noiseTex.filterMode = FilterMode.Point;
                     noiseTex.wrapMode = TextureWrapMode.Clamp;
                     staticImage.texture = noiseTex;
@@ -368,7 +368,7 @@ namespace UnknownsCollection {
             private void UpdateStatic() {
                 if (noiseTex == null || staticImage == null) return;
                 if (Time.time < nextNoiseFrame) return;
-                nextNoiseFrame = Time.time + UnityEngine.Random.Range(0.05f, 0.12f);
+                nextNoiseFrame = Time.time + UnityEngine.Random.Range(0.08f, 0.15f);
                 int w = noiseTex.width, h = noiseTex.height;
                 var pixels = new Color32[w * h];
                 for (int i = 0; i < pixels.Length; i++) {
@@ -377,9 +377,6 @@ namespace UnknownsCollection {
                 }
                 noiseTex.SetPixels32(pixels);
                 noiseTex.Apply();
-
-                staticImage.color = new Color(1f, 1f, 1f,
-                    0.12f + UnityEngine.Random.value * 0.12f);
             }
 
             private void Update() {
@@ -398,8 +395,8 @@ namespace UnknownsCollection {
 
                     if (mgr.WinText != null) {
                         if (t > nextPulse) {
-                            nextPulse = t + UnityEngine.Random.Range(0.05f, 0.3f);
-                            int r = UnityEngine.Random.Range(0, 5);
+                            nextPulse = t + UnityEngine.Random.Range(0.2f, 0.6f);
+                            int r = UnityEngine.Random.Range(0, 6);
                             if (r == 0) {
                                 string glitched = "";
                                 int len = baseWinStr?.Length ?? 10;
@@ -411,17 +408,17 @@ namespace UnknownsCollection {
                             }
                             if (r < 2) {
                                 mgr.WinText.transform.localPosition = baseWinPos + new Vector3(
-                                    UnityEngine.Random.Range(-12f, 12f),
-                                    UnityEngine.Random.Range(-3f, 3f), 0);
+                                    UnityEngine.Random.Range(-6f, 6f),
+                                    UnityEngine.Random.Range(-1.5f, 1.5f), 0);
                             } else {
                                 mgr.WinText.transform.localPosition = baseWinPos;
                             }
                         }
-                        float sx = Mathf.Sin(t * 37f) * 0.5f;
-                        float sy = Mathf.Cos(t * 29f) * 0.3f;
+                        float sx = Mathf.Sin(t * 25f) * 0.3f;
+                        float sy = Mathf.Cos(t * 20f) * 0.2f;
                         mgr.WinText.transform.localPosition += new Vector3(sx, sy, 0);
 
-                        if (UnityEngine.Random.value < 0.025f)
+                        if (UnityEngine.Random.value < 0.015f)
                             mgr.WinText.color = new Color(
                                 UnityEngine.Random.value, UnityEngine.Random.value,
                                 UnityEngine.Random.value, 1f);
@@ -430,14 +427,14 @@ namespace UnknownsCollection {
                     }
 
                     if (bonusText != null) {
-                        if (UnityEngine.Random.value < 0.03f) {
+                        if (UnityEngine.Random.value < 0.02f) {
                             bonusText.transform.localPosition = baseBonusPos + new Vector3(
-                                UnityEngine.Random.Range(-15f, 15f),
-                                UnityEngine.Random.Range(-4f, 4f), 0);
+                                UnityEngine.Random.Range(-8f, 8f),
+                                UnityEngine.Random.Range(-2f, 2f), 0);
                             bonusText.color = new Color(
-                                Mathf.Clamp01(Color.r + UnityEngine.Random.Range(-0.5f, 0.5f)),
-                                Mathf.Clamp01(Color.g + UnityEngine.Random.Range(-0.5f, 0.5f)),
-                                Mathf.Clamp01(Color.b + UnityEngine.Random.Range(-0.5f, 0.5f)));
+                                Mathf.Clamp01(Color.r + UnityEngine.Random.Range(-0.3f, 0.3f)),
+                                Mathf.Clamp01(Color.g + UnityEngine.Random.Range(-0.3f, 0.3f)),
+                                Mathf.Clamp01(Color.b + UnityEngine.Random.Range(-0.3f, 0.3f)));
                         } else {
                             bonusText.transform.localPosition = baseBonusPos;
                             bonusText.color = Color;

@@ -77,6 +77,8 @@ public class UnknownsCollectionPlugin : BasePlugin
         TORAssembly = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "TheOtherRoles");
 
+        UCOptionsPatch.Initialize();
+
         var harmony = new Harmony(PluginGuid);
 
         // The Tesla role. CreateOptions must run after TOR's CustomOptionHolder.Load() (guaranteed
@@ -129,6 +131,21 @@ public class UnknownsCollectionPlugin : BasePlugin
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line below).
         harmony.PatchAll(typeof(UnknownsCollectionPlugin).Assembly);
+
+        // Explicit postfix on TOR's private SetUpOptions to inject UC toggles into their
+        // "Mod Options..." popup without breaking their own toggle creation.
+        try {
+            var clientOptionsType = TORAssembly?.GetType(
+                "TheOtherRoles.Patches.ClientOptionsPatch");
+            var setUpOptions = clientOptionsType?.GetMethod("SetUpOptions",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            if (setUpOptions != null)
+                harmony.Patch(setUpOptions,
+                    postfix: new HarmonyMethod(typeof(UCOptionsPatch),
+                        nameof(UCOptionsPatch.AddUCOptions)));
+        } catch (Exception e) {
+            Logger.LogError($"[UCOptions] Explicit patch failed: {e}");
+        }
 
         // Reflection-based patch (internal TOR type): inject the Tesla/Saboteur spawn rates into the
         // Role Draft so the draft respects their configured rate + 100% force.

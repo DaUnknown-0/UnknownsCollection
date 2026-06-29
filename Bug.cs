@@ -239,34 +239,37 @@ namespace UnknownsCollection {
                         txt.color = Color;
                     }
 
+                    // Attach a runtime component for per-frame visual effects (oscillating bar + text shake)
+                    var fx = __instance.gameObject.AddComponent<BugGlitchEffect>();
+                    fx.mgr = __instance;
+
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] EndGameFx failed: {e}");
                 }
             }
         }
 
-        [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.Update))]
-        static class EndGameUpdatePatch {
-            public static void Postfix(EndGameManager __instance) {
+        private class BugGlitchEffect : MonoBehaviour {
+            public EndGameManager mgr;
+            private void Update() {
                 try {
-                    if (!active || bug == null) return;
+                    if (!active || bug == null || mgr == null) return;
                     bool bugWon = false;
                     foreach (var w in EndGameResult.CachedWinners.GetFastEnumerator()) {
                         if (w.PlayerName == bug.Data.PlayerName) { bugWon = true; break; }
                     }
-                    if (!bugWon || __instance == null) return;
+                    if (!bugWon) return;
 
                     float t = Time.time;
-                    if (__instance.BackgroundBar != null) {
+                    if (mgr.BackgroundBar != null) {
                         float hue = Mathf.PingPong(t * 0.3f, 1f);
-                        __instance.BackgroundBar.material.SetColor("_Color",
+                        mgr.BackgroundBar.material.SetColor("_Color",
                             Color.HSVToRGB(hue, 0.8f, 0.9f));
                     }
-                    // Re-fetch WinText each frame since it's always there during the end screen
-                    if (__instance.WinText != null) {
+                    if (mgr.WinText != null) {
                         float sx = Mathf.Sin(t * 15f) * 2f;
                         float sy = Mathf.Cos(t * 12f) * 2f;
-                        __instance.WinText.transform.localPosition = new Vector3(sx, sy, __instance.WinText.transform.localPosition.z);
+                        mgr.WinText.transform.localPosition = new Vector3(sx, sy, mgr.WinText.transform.localPosition.z);
                     }
                 } catch { }
             }

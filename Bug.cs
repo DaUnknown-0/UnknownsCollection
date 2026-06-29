@@ -3,7 +3,6 @@
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -69,10 +68,34 @@ namespace UnknownsCollection {
                     wavPath = Path.Combine(Directory.GetParent(dllDir)?.FullName ?? dllDir, "sfx_similar.wav");
                 }
                 if (File.Exists(wavPath)) {
-                    var www = new WWW($"file:///{wavPath.Replace('\\', '/')}");
-                    while (!www.isDone) { }
-                    glitchClip = www.GetAudioClip(false, false, AudioType.WAV);
-                    UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Glitch sound loaded.");
+                    byte[] wavBytes = File.ReadAllBytes(wavPath);
+                    // Parse WAV header to create AudioClip
+                    int channels = wavBytes[22];
+                    int sampleRate = BitConverter.ToInt32(wavBytes, 24);
+                    int bitsPerSample = BitConverter.ToInt16(wavBytes, 34);
+                    // Find "data" chunk (skip any extra chunks between fmt and data)
+                    int offset = 12;
+                    int dataSize = 0, dataOffset = 0;
+                    while (offset < wavBytes.Length - 8) {
+                        string chunkId = System.Text.Encoding.ASCII.GetString(wavBytes, offset, 4);
+                        int chunkSize = BitConverter.ToInt32(wavBytes, offset + 4);
+                        if (chunkId == "data") { dataOffset = offset + 8; dataSize = chunkSize; break; }
+                        offset += 8 + chunkSize;
+                    }
+                    if (dataSize > 0) {
+                        int bytesPerSample = bitsPerSample / 8;
+                        int sampleCount = dataSize / bytesPerSample;
+                        float[] samples = new float[sampleCount];
+                        for (int i = 0; i < sampleCount; i++) {
+                            if (bytesPerSample == 2)
+                                samples[i] = BitConverter.ToInt16(wavBytes, dataOffset + i * 2) / 32768f;
+                            else
+                                samples[i] = (wavBytes[dataOffset + i] - 128) / 128f;
+                        }
+                        glitchClip = AudioClip.Create("BugGlitch", sampleCount / channels, channels, sampleRate, false);
+                        glitchClip.SetData(samples, 0);
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Glitch sound loaded.");
+                    }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Bug] Could not load glitch sound: {e.Message}");
@@ -81,16 +104,9 @@ namespace UnknownsCollection {
         }
 
         private static bool BugCanWinAlongside(GameOverReason reason) {
-            if ((int)reason >= 10) {
-                return reason == (GameOverReason)CustomGameOverReason.TeamJackalWin;
-            }
-            return reason == GameOverReason.HumansByTask
-                || reason == GameOverReason.HumansByVote
-                || reason == GameOverReason.HumansDisconnect
-                || reason == GameOverReason.ImpostorByKill
-                || reason == GameOverReason.ImpostorByVote
-                || reason == GameOverReason.ImpostorBySabotage
-                || reason == GameOverReason.ImpostorDisconnect;
+            int r = (int)reason;
+            if (r <= 6) return true; // standard crew/impostor wins
+            return r == 10 || r == 11; // LoversWin or TeamJackalWin
         }
 
         private static MessageWriter BeginRpc(byte subtype) {
@@ -223,33 +239,36 @@ namespace UnknownsCollection {
                         txt.color = Color;
                     }
 
-                    __instance.StartCoroutine(GlitchRoutine(__instance));
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] EndGameFx failed: {e}");
                 }
             }
+        }
 
-            private static IEnumerator GlitchRoutine(EndGameManager mgr) {
-                float t = 0f;
-                Vector3 originalPos = mgr.WinText != null ? mgr.WinText.transform.localPosition : Vector3.zero;
+        [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.Update))]
+        static class EndGameUpdatePatch {
+            public static void Postfix(EndGameManager __instance) {
+                try {
+                    if (!active || bug == null) return;
+                    bool bugWon = false;
+                    foreach (var w in EndGameResult.CachedWinners.GetFastEnumerator()) {
+                        if (w.PlayerName == bug.Data.PlayerName) { bugWon = true; break; }
+                    }
+                    if (!bugWon || __instance == null) return;
 
-                while (mgr != null && mgr.gameObject != null) {
-                    t += Time.deltaTime;
-
-                    if (mgr.BackgroundBar != null) {
+                    float t = Time.time;
+                    if (__instance.BackgroundBar != null) {
                         float hue = Mathf.PingPong(t * 0.3f, 1f);
-                        mgr.BackgroundBar.material.SetColor("_Color",
+                        __instance.BackgroundBar.material.SetColor("_Color",
                             Color.HSVToRGB(hue, 0.8f, 0.9f));
                     }
-
-                    if (mgr.WinText != null) {
+                    // Re-fetch WinText each frame since it's always there during the end screen
+                    if (__instance.WinText != null) {
                         float sx = Mathf.Sin(t * 15f) * 2f;
                         float sy = Mathf.Cos(t * 12f) * 2f;
-                        mgr.WinText.transform.localPosition = originalPos + new Vector3(sx, sy, 0f);
+                        __instance.WinText.transform.localPosition = new Vector3(sx, sy, __instance.WinText.transform.localPosition.z);
                     }
-
-                    yield return null;
-                }
+                } catch { }
             }
         }
 

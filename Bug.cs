@@ -26,7 +26,7 @@ namespace UnknownsCollection {
 
         public static PlayerControl bug;
         public static bool active;
-        public static byte bugPlayerId = byte.MaxValue; // survives resetVariables for OnGameEnd
+        public static byte bugPlayerId = byte.MaxValue;
 
         private const byte RpcId = 198;
         private const byte SubSetBug = 0;
@@ -35,8 +35,8 @@ namespace UnknownsCollection {
 
         private static RoleInfo bugInfo;
         public static RoleInfo BugInfo() => bugInfo ??= new RoleInfo(
-            "Bug", Color, "Survive until the end and win with the winning team",
-            "Survive until the end and win with the winning team", RoleId.Crewmate)
+            "Bug", Color, "Survive until the end to win alone",
+            "Survive until the end to win alone", RoleId.Crewmate)
         { isNeutral = true };
 
         public static void CreateOptions() {
@@ -51,7 +51,76 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            try {
+                var torAsm = typeof(CustomOption).Assembly;
+                var checkType = torAsm.GetType("TheOtherRoles.Patches.CheckEndCriteriaPatch");
+                if (checkType == null) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning("[Bug] CheckEndCriteriaPatch not found — own win disabled.");
+                    return;
+                }
+
+                var methodNames = new[] {
+                    "CheckAndEndGameForCrewmateWin",
+                    "CheckAndEndGameForImpostorWin",
+                    "CheckAndEndGameForJackalWin",
+                    "CheckAndEndGameForTaskWin",
+                    "CheckAndEndGameForSabotageWin"
+                };
+                var prefix = new HarmonyMethod(typeof(Bug), nameof(InterceptorPrefix));
+
+                foreach (var name in methodNames) {
+                    var m = checkType.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static);
+                    if (m != null) {
+                        harmony.Patch(m, prefix: prefix);
+                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] Patched {name} for Bug win intercept.");
+                    } else {
+                        UnknownsCollectionPlugin.Logger?.LogWarning($"[Bug] {name} not found — skipped.");
+                    }
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Bug] TryPatch failed: {e}");
+            }
+        }
+
+        public static bool triggerBugWin;
+
+        private const int BugWinReason = 18;
+
+        public static bool InterceptorPrefix(ref bool __result) {
+            try {
+                if (BugIsAliveAndActive()) {
+                    triggerBugWin = true;
+                    GameManager.Instance.RpcEndGame((GameOverReason)BugWinReason, false);
+                    __result = true;
+                    return false;
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Bug] InterceptorPrefix failed: {e}");
+            }
+            return true;
+        }
+
+        private static bool BugIsAliveAndActive() =>
+            active && bug != null && bug.Data != null && !bug.Data.IsDead && !bug.Data.Disconnected;
+
+        private static FieldInfo winConditionField;
+        private static void SetWinCondition(int value) {
+            try {
+                if (winConditionField == null) {
+                    var atdType = typeof(CustomOption).Assembly.GetType("TheOtherRoles.Patches.AdditionalTempData");
+                    if (atdType != null)
+                        winConditionField = atdType.GetField("winCondition", BindingFlags.Public | BindingFlags.Static);
+                }
+                if (winConditionField != null) {
+                    var wcEnum = typeof(CustomOption).Assembly.GetType("TheOtherRoles.Patches.WinCondition");
+                    if (wcEnum != null)
+                        winConditionField.SetValue(null, Enum.ToObject(wcEnum, value));
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Bug] SetWinCondition failed: {e}");
+            }
+        }
 
         private static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
@@ -70,11 +139,9 @@ namespace UnknownsCollection {
                 }
                 if (File.Exists(wavPath)) {
                     byte[] wavBytes = File.ReadAllBytes(wavPath);
-                    // Parse WAV header to create AudioClip
                     int channels = wavBytes[22];
                     int sampleRate = BitConverter.ToInt32(wavBytes, 24);
                     int bitsPerSample = BitConverter.ToInt16(wavBytes, 34);
-                    // Find "data" chunk (skip any extra chunks between fmt and data)
                     int offset = 12;
                     int dataSize = 0, dataOffset = 0;
                     while (offset < wavBytes.Length - 8) {
@@ -102,12 +169,6 @@ namespace UnknownsCollection {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Bug] Could not load glitch sound: {e.Message}");
             }
             return glitchClip;
-        }
-
-        private static bool BugCanWinAlongside(GameOverReason reason) {
-            int r = (int)reason;
-            if (r <= 6) return true; // standard crew/impostor wins
-            return r == 10 || r == 11; // LoversWin or TeamJackalWin
         }
 
         private static MessageWriter BeginRpc(byte subtype) {
@@ -156,6 +217,7 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 bug = null;
                 active = false;
+                triggerBugWin = false;
             }
         }
 
@@ -197,61 +259,50 @@ namespace UnknownsCollection {
             }
         }
 
-        public const byte BugGameOverReason = 18; // custom game over reason (TOR uses 10-16, Revenger 17)
-
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.Last)] // after TOR's OnGameEnd removes/re-adds winners
+        [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
-                    // bug / bugPlayerId: resetVariables (called in TOR's Postfix) nulls the `bug` field,
-                    // but bugPlayerId survives because it's only set once per round.
+                    if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != BugWinReason) return;
                     if (bugPlayerId == byte.MaxValue) return;
-                    PlayerControl bugPlayer = bug ?? Helpers.playerById(bugPlayerId);
-                    if (bugPlayer == null || bugPlayer.Data == null || bugPlayer.Data.IsDead || bugPlayer.Data.Disconnected) return;
-                    if (!BugCanWinAlongside(TheOtherRoles.Patches.OnGameEndPatch.gameOverReason)) return;
 
-                    // Bug wins as the SOLE winner — replace all winners with just the Bug
+                    PlayerControl bugPlayer = Helpers.playerById(bugPlayerId);
+                    if (bugPlayer == null || bugPlayer.Data == null) return;
+
                     EndGameResult.CachedWinners.Clear();
                     EndGameResult.CachedWinners.Add(new CachedPlayerData(bugPlayer.Data));
-                    endGameResult.GameOverReason = (GameOverReason)BugGameOverReason;
-                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] Bug is the sole winner! (reason={BugGameOverReason})");
+                    SetWinCondition(12);
+                    UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Bug wins! (own win condition)");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] OnGameEnd failed: {e}");
                 }
             }
         }
 
-        private static PlayerControl GetBugPlayerEndGame() =>
-            bug ?? (bugPlayerId != byte.MaxValue ? Helpers.playerById(bugPlayerId) : null);
-
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
+        [HarmonyPriority(Priority.Last)]
         static class EndGameFxPatch {
             public static void Postfix(EndGameManager __instance) {
                 try {
-                    var bp = GetBugPlayerEndGame();
-                    if (bp == null) return;
-                    bool bugWon = false;
-                    foreach (var w in EndGameResult.CachedWinners.GetFastEnumerator()) {
-                        if (w.PlayerName == bp.Data.PlayerName) { bugWon = true; break; }
-                    }
-                    if (!bugWon) return;
+                    if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != BugWinReason) return;
 
                     if (__instance.WinText != null) {
                         GameObject bonus = UnityEngine.Object.Instantiate(__instance.WinText.gameObject);
                         bonus.transform.position = new Vector3(__instance.WinText.transform.position.x,
-                            __instance.WinText.transform.position.y - 0.7f,
+                            __instance.WinText.transform.position.y - 0.5f,
                             __instance.WinText.transform.position.z);
-                        bonus.transform.localScale = new Vector3(0.6f, 0.6f, 1f);
+                        bonus.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
                         var txt = bonus.GetComponent<TMP_Text>();
-                        txt.text = "BUG SURVIVED";
+                        txt.text = "Bug Wins";
                         txt.color = Color;
                     }
 
-                    // Attach a runtime component for per-frame visual effects (oscillating bar + text shake)
+                    if (__instance.BackgroundBar != null)
+                        __instance.BackgroundBar.material.SetColor("_Color", Color);
+
                     var fx = __instance.gameObject.AddComponent<BugGlitchEffect>();
                     fx.mgr = __instance;
-
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] EndGameFx failed: {e}");
                 }
@@ -262,13 +313,7 @@ namespace UnknownsCollection {
             public EndGameManager mgr;
             private void Update() {
                 try {
-                    var bp = GetBugPlayerEndGame();
-                    if (bp == null || mgr == null) return;
-                    bool bugWon = false;
-                    foreach (var w in EndGameResult.CachedWinners.GetFastEnumerator()) {
-                        if (w.PlayerName == bp.Data.PlayerName) { bugWon = true; break; }
-                    }
-                    if (!bugWon) return;
+                    if (mgr == null) return;
 
                     float t = Time.time;
                     if (mgr.BackgroundBar != null) {
@@ -282,6 +327,20 @@ namespace UnknownsCollection {
                         mgr.WinText.transform.localPosition = new Vector3(sx, sy, mgr.WinText.transform.localPosition.z);
                     }
                 } catch { }
+            }
+        }
+
+        [HarmonyPatch(typeof(GameData), nameof(GameData.RecomputeTaskCounts))]
+        static class TaskCountPatch {
+            public static void Postfix(GameData __instance) {
+                try {
+                    if (bug == null || bug.Data == null) return;
+                    var (completed, total) = TasksHandler.taskInfo(bug.Data);
+                    __instance.TotalTasks -= total;
+                    __instance.CompletedTasks -= completed;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Bug] TaskCountPatch failed: {e}");
+                }
             }
         }
 

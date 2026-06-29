@@ -223,14 +223,18 @@ namespace UnknownsCollection {
             }
         }
 
+        private static PlayerControl GetBugPlayerEndGame() =>
+            bug ?? (bugPlayerId != byte.MaxValue ? Helpers.playerById(bugPlayerId) : null);
+
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
         static class EndGameFxPatch {
             public static void Postfix(EndGameManager __instance) {
                 try {
-                    if (!active || bug == null) return;
+                    var bp = GetBugPlayerEndGame();
+                    if (bp == null) return;
                     bool bugWon = false;
                     foreach (var w in EndGameResult.CachedWinners.GetFastEnumerator()) {
-                        if (w.PlayerName == bug.Data.PlayerName) { bugWon = true; break; }
+                        if (w.PlayerName == bp.Data.PlayerName) { bugWon = true; break; }
                     }
                     if (!bugWon) return;
 
@@ -259,10 +263,11 @@ namespace UnknownsCollection {
             public EndGameManager mgr;
             private void Update() {
                 try {
-                    if (!active || bug == null || mgr == null) return;
+                    var bp = GetBugPlayerEndGame();
+                    if (bp == null || mgr == null) return;
                     bool bugWon = false;
                     foreach (var w in EndGameResult.CachedWinners.GetFastEnumerator()) {
-                        if (w.PlayerName == bug.Data.PlayerName) { bugWon = true; break; }
+                        if (w.PlayerName == bp.Data.PlayerName) { bugWon = true; break; }
                     }
                     if (!bugWon) return;
 

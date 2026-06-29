@@ -405,6 +405,9 @@ namespace UnknownsCollection {
                 glitchTex.Apply();
             }
 
+            private static string ColorToHex(Color c) =>
+                $"{(byte)(c.r * 255):X2}{(byte)(c.g * 255):X2}{(byte)(c.b * 255):X2}";
+
             private void Update() {
                 try {
                     if (mgr == null) return;
@@ -422,20 +425,42 @@ namespace UnknownsCollection {
                         if (r < 2) TriggerBlockGlitch();
 
                         if (mgr.WinText != null) {
+                            mgr.WinText.richText = true;
                             int len = baseWinStr?.Length ?? 10;
                             if (r < 3) {
                                 string glitched = "";
-                                for (int i = 0; i < len; i++)
-                                    glitched += (char)UnityEngine.Random.Range(33, 127);
+                                for (int i = 0; i < len; i++) {
+                                    char c = (char)UnityEngine.Random.Range(33, 127);
+                                    Color rc = new Color(
+                                        UnityEngine.Random.value,
+                                        UnityEngine.Random.value,
+                                        UnityEngine.Random.value);
+                                    glitched += $"<color=#{ColorToHex(rc)}>{c}</color>";
+                                }
                                 mgr.WinText.text = glitched;
                             } else if (r < 4) {
                                 char[] chars = baseWinStr?.ToCharArray() ?? new char[0];
-                                for (int i = 0; i < chars.Length; i++)
-                                    if (UnityEngine.Random.value < 0.5f)
-                                        chars[i] = (char)UnityEngine.Random.Range(33, 127);
-                                mgr.WinText.text = new string(chars);
+                                string mixed = "";
+                                for (int i = 0; i < chars.Length; i++) {
+                                    char c = UnityEngine.Random.value < 0.5f
+                                        ? (char)UnityEngine.Random.Range(33, 127) : chars[i];
+                                    Color rc = new Color(
+                                        UnityEngine.Random.value,
+                                        UnityEngine.Random.value,
+                                        UnityEngine.Random.value);
+                                    mixed += $"<color=#{ColorToHex(rc)}>{c}</color>";
+                                }
+                                mgr.WinText.text = mixed;
                             } else {
-                                mgr.WinText.text = baseWinStr;
+                                string colored = "";
+                                foreach (char c in baseWinStr) {
+                                    Color rc = new Color(
+                                        UnityEngine.Random.value,
+                                        UnityEngine.Random.value,
+                                        UnityEngine.Random.value);
+                                    colored += $"<color=#{ColorToHex(rc)}>{c}</color>";
+                                }
+                                mgr.WinText.text = colored;
                             }
                             pulseOffset = new Vector3(
                                 UnityEngine.Random.Range(-2.5f, 2.5f),

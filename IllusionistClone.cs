@@ -54,6 +54,10 @@ namespace UnknownsCollection {
         private static AnimationClip sIdle, sRun, sEnter, sExit;
         private static bool useSkinAnim;             // true once the skin SpriteAnim + clips are confirmed working
 
+        private static Transform[] cosmeticTransforms; // transforms of cosmetics (hat, visor) that need to move with vents
+        private static Vector3[] cosmeticOriginalPos;  // original localPosition for each cosmetic, parallel to cosmeticTransforms
+        private static float ventAnimProgress = 0f;    // 0 (out) -> 1 (in) during enter; 1 (in) -> 0 (out) during exit
+
         private static List<Vector2> path = new();
         private static List<bool> vents = new();     // per-sample "in a vent" flag, parallel to `path`
         private static float startTime;
@@ -70,6 +74,7 @@ namespace UnknownsCollection {
         private enum BodyState { None, Idle, Run }
         private static BodyState bodyState = BodyState.None;
         private static float ventScale = 1f;         // fallback shrink (only used when the clips are missing)
+        private static float ventAnimStartTime = 0f; // Time.time when vent animation started
 
         private const float VentTween = 0.22f;       // fallback shrink duration
         private const float FaceEps = 0.012f;        // ignore tiny horizontal jitter when picking a facing
@@ -142,6 +147,17 @@ namespace UnknownsCollection {
                 skinClone = skinIdx >= 0 ? renderers[skinIdx] : null;
                 WireBodyAnimation();
                 WireSkinAnimation(cos);
+
+                // Identify cosmetics (anything that's not body or skin) that need to move during vent animations
+                var cosmeticList = new List<Transform>();
+                var cosmeticPosList = new List<Vector3>();
+                for (int k = 0; k < renderers.Length; k++) {
+                    if (renderers[k] == bodyClone || renderers[k] == skinClone) continue;
+                    cosmeticList.Add(renderers[k].transform);
+                    cosmeticPosList.Add(renderers[k].transform.localPosition);
+                }
+                cosmeticTransforms = cosmeticList.ToArray();
+                cosmeticOriginalPos = cosmeticPosList.ToArray();
 
                 path = new List<Vector2>(points);
                 vents = ventFlags != null ? new List<bool>(ventFlags) : new List<bool>();
@@ -259,17 +275,21 @@ namespace UnknownsCollection {
                 case VentPhase.Out:
                     if (inVent) { StartEnter(); break; }
                     PlayLocomotion(moving);
+                    ventAnimProgress = 0f;
                     break;
                 case VentPhase.Entering:
                     if (!inVent) { StartExit(); break; }
-                    if (!IsBodyAnimPlaying()) { ventPhase = VentPhase.In; SetVisibleAll(false); }
+                    UpdateVentCosmeticPositions(true);
+                    if (!IsBodyAnimPlaying()) { ventPhase = VentPhase.In; SetVisibleAll(false); ventAnimProgress = 1f; }
                     break;
                 case VentPhase.In:
                     if (!inVent) StartExit();
+                    ventAnimProgress = 1f;
                     break;
                 case VentPhase.Exiting:
                     if (inVent) { StartEnter(); break; }
-                    if (!IsBodyAnimPlaying()) { ventPhase = VentPhase.Out; SetVisibleAll(true); bodyState = BodyState.None; }
+                    UpdateVentCosmeticPositions(false);
+                    if (!IsBodyAnimPlaying()) { ventPhase = VentPhase.Out; SetVisibleAll(true); bodyState = BodyState.None; ventAnimProgress = 0f; }
                     break;
             }
         }
@@ -285,6 +305,8 @@ namespace UnknownsCollection {
         private static void StartEnter() {
             ventPhase = VentPhase.Entering;
             bodyState = BodyState.None;
+            ventAnimStartTime = Time.time;
+            ventAnimProgress = 0f;
             // Keep the whole figure visible while the body ducks into the vent; only hide once it is fully
             // inside (Entering -> In). The skin ducks along via its own enter-vent animation.
             SetVisibleAll(true);
@@ -295,6 +317,8 @@ namespace UnknownsCollection {
         private static void StartExit() {
             ventPhase = VentPhase.Exiting;
             bodyState = BodyState.None;
+            ventAnimStartTime = Time.time;
+            ventAnimProgress = 1f;
             SetVisibleAll(true);                 // the figure reappears as the body climbs back out
             try { bodyAnim.Play(exitClip != null ? exitClip : idleClip, 1f); } catch { }
             PlaySkin(sExit != null ? sExit : sIdle);
@@ -303,6 +327,40 @@ namespace UnknownsCollection {
         private static void SetVisibleAll(bool on) {
             if (renderers == null) return;
             foreach (var r in renderers) if (r != null) r.gameObject.SetActive(on);
+        }
+
+        // Move cosmetics (hat, visor) down/up during vent animations so they follow the body sprite
+        private static void UpdateVentCosmeticPositions(bool entering) {
+            if (cosmeticTransforms == null || cosmeticOriginalPos == null) return;
+
+            // Estimate animation progress based on time (VentTween is the fallback duration, use it as reference)
+            float elapsed = Time.time - ventAnimStartTime;
+            float duration = VentTween;
+
+            // Get animation clip length if available for more accurate timing
+            try {
+                var clip = entering ? enterClip : exitClip;
+                if (clip != null) duration = clip.length;
+            } catch { }
+
+            float t = Mathf.Clamp01(elapsed / Mathf.Max(duration, 0.01f));
+
+            if (entering) {
+                // Entering: progress from 0 (out) to 1 (in)
+                ventAnimProgress = t;
+            } else {
+                // Exiting: progress from 1 (in) to 0 (out)
+                ventAnimProgress = 1f - t;
+            }
+
+            // Move cosmetics down as the clone enters the vent (down ~0.5 units based on typical vent animation)
+            const float ventDepth = 0.5f;
+            for (int i = 0; i < cosmeticTransforms.Length && i < cosmeticOriginalPos.Length; i++) {
+                if (cosmeticTransforms[i] == null) continue;
+                Vector3 pos = cosmeticOriginalPos[i];
+                pos.y -= ventAnimProgress * ventDepth;
+                cosmeticTransforms[i].localPosition = pos;
+            }
         }
 
         private static bool IsBodyAnimPlaying() {
@@ -392,6 +450,10 @@ namespace UnknownsCollection {
             skinAnim = null;
             sIdle = sRun = sEnter = sExit = null;
             useSkinAnim = false;
+            cosmeticTransforms = null;
+            cosmeticOriginalPos = null;
+            ventAnimProgress = 0f;
+            ventAnimStartTime = 0f;
             ventPhase = VentPhase.Out;
             bodyState = BodyState.None;
             ventScale = 1f;

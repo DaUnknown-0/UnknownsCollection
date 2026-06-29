@@ -320,7 +320,6 @@ namespace UnknownsCollection {
             private float nextPulse;
             private string baseWinStr;
             private Vector3 baseWinPos;
-            private Vector3 pulseOffset;
 
             private RawImage glitchOverlay;
             private Texture2D glitchTex;
@@ -462,10 +461,7 @@ namespace UnknownsCollection {
                                 }
                                 mgr.WinText.text = colored;
                             }
-                            pulseOffset = new Vector3(
-                                UnityEngine.Random.Range(-2.5f, 2.5f),
-                                UnityEngine.Random.Range(-0.8f, 0.8f), 0);
-                            mgr.WinText.transform.localPosition = baseWinPos + pulseOffset;
+                            mgr.WinText.transform.localPosition = baseWinPos;
                         }
                     }
 
@@ -475,10 +471,6 @@ namespace UnknownsCollection {
                     }
 
                     if (mgr.WinText != null) {
-                        float sx = Mathf.Sin(t * 25f) * 0.3f;
-                        float sy = Mathf.Cos(t * 20f) * 0.2f;
-                        mgr.WinText.transform.localPosition = baseWinPos + new Vector3(sx, sy, 0) + pulseOffset;
-
                         if (UnityEngine.Random.value < 0.015f)
                             mgr.WinText.color = new Color(
                                 UnityEngine.Random.value, UnityEngine.Random.value,
@@ -489,17 +481,14 @@ namespace UnknownsCollection {
 
                     if (bonusText != null) {
                         if (UnityEngine.Random.value < 0.02f) {
-                            bonusText.transform.localPosition = baseBonusPos + new Vector3(
-                                UnityEngine.Random.Range(-8f, 8f),
-                                UnityEngine.Random.Range(-2f, 2f), 0);
                             bonusText.color = new Color(
                                 Mathf.Clamp01(Color.r + UnityEngine.Random.Range(-0.3f, 0.3f)),
                                 Mathf.Clamp01(Color.g + UnityEngine.Random.Range(-0.3f, 0.3f)),
                                 Mathf.Clamp01(Color.b + UnityEngine.Random.Range(-0.3f, 0.3f)));
                         } else {
-                            bonusText.transform.localPosition = baseBonusPos;
                             bonusText.color = Color;
                         }
+                        bonusText.transform.localPosition = baseBonusPos;
                     }
                 } catch { }
             }

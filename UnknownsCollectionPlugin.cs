@@ -54,6 +54,9 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte IllusionistRpcId = 195;
     public const byte SiphonerRpcId = 196;
     public const byte WitnessRpcId = 197;
+    public const byte BugRpcId = 198;
+    public const byte ManiacRpcId = 199;
+    public const byte FollowerRpcId = 200;
 
     public static ManualLogSource Logger { get; private set; }
 
@@ -105,6 +108,18 @@ public class UnknownsCollectionPlugin : BasePlugin
         // The Illusionist role (Impostor). Records a path and replays it as an unkillable shielded clone.
         Illusionist.CreateOptions();
         Illusionist.TryPatch(harmony);
+
+        // The Bug role (Neutral). Survive until the end and win with the winning team.
+        Bug.CreateOptions();
+        Bug.TryPatch(harmony);
+
+        // The Maniac role (Impostor). Plant a bomb on a player that can be passed before detonation.
+        Maniac.CreateOptions();
+        Maniac.TryPatch(harmony);
+
+        // The Follower role (Neutral). Copy the role of the first player to die.
+        Follower.CreateOptions();
+        Follower.TryPatch(harmony);
 
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line below).

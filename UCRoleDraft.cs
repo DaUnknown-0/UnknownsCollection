@@ -42,6 +42,9 @@ namespace UnknownsCollection {
         public const byte IllusionistDraftId = 204;
         public const byte SiphonerDraftId = 205;
         public const byte WitnessDraftId = 206;
+        public const byte BugDraftId = 207;
+        public const byte ManiacDraftId = 208;
+        public const byte FollowerDraftId = 209;
 
         // ---- Draft entry table (all UC roles) ----
         private class Entry {
@@ -71,6 +74,12 @@ namespace UnknownsCollection {
                      false, () => Siphoner.SpawnRate,    () => Siphoner.SpawnMinPlayers,    Siphoner.MarkFromDraft),
                 Make(WitnessDraftId,     "Witness",     Witness.Color,       "Be the sole witness of a kill and expose the killer",
                      false, () => Witness.SpawnRate,     () => Witness.SpawnMinPlayers,     Witness.MarkFromDraft),
+                Make(BugDraftId,         "Bug",         Bug.Color,           "Survive until the end and win with the winning team",
+                     false, () => Bug.SpawnRate,         () => Bug.SpawnMinPlayers,         Bug.MarkFromDraft),
+                Make(ManiacDraftId,      "Maniac",      Palette.ImpostorRed, "Plant a bomb on a player that can be passed",
+                     true,  () => Maniac.SpawnRate,      () => Maniac.SpawnMinPlayers,      Maniac.MarkFromDraft),
+                Make(FollowerDraftId,    "Follower",    Follower.Color,      "Copy the role of the first player to die",
+                     false, () => Follower.SpawnRate,    () => Follower.SpawnMinPlayers,    Follower.MarkFromDraft),
             };
             return entries;
         }

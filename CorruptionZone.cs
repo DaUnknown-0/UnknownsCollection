@@ -6,33 +6,43 @@
  * CorruptionZone - the Corrupter's hallucination field (client-side FX, no netcode).
  *
  * A zone is an invisible disc placed at a body. While the LOCAL crewmate stands inside it, a handful of
- * "fake players" - frozen clones of random real players' cosmetics - drift around and flicker, so the
+ * "fake players" - snapshot clones of random real players' cosmetics - drift around and flicker, so the
  * crew "sees people where they aren't". The figures are pure local visuals: every client builds its own
  * copy and only shows them to a living non-impostor standing in the zone. Impostors don't see them
  * (unless the option says so).
  *
- * Figures are made by cloning a real player's CosmeticsLayer GameObject (Object.Instantiate). Everything
- * is heavily guarded: if a clone fails, the zone just shows fewer/no figures (graceful, never fatal).
+ * RENDERING mirrors IllusionistClone: instead of cloning the entire CosmeticsLayer GameObject (which
+ * runs Awake/OnEnable on the child MonoBehaviours, breaking hats and custom materials), we SNAPSHOT the
+ * visible SpriteRenderers (body, hat front/back, visor, skin) into fresh GameObjects with
+ * maskInteraction = None. This fixes hat rendering and works with color-blind mode.
+ *
+ * Everything is heavily guarded: if a figure fails, the zone just shows fewer/no figures (graceful,
+ * never fatal).
  */
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using TMPro;
 using UnityEngine;
 using TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class CorruptionZone {
         private class Figure {
-            public GameObject go;
-            public SpriteRenderer[] renderers;
-            public Vector2 home;     // anchor inside the zone
-            public Vector2 target;   // current wander goal
-            public float seed;       // flicker phase offset
+            public GameObject go;                    // root GameObject for this figure
+            public SpriteRenderer[] renderers;        // clone renderers (parallel to sources)
+            public SpriteRenderer[] sources;          // live source renderers this figure mirrors
+            public PlayerControl srcPlayer;           // the real player we mirror
+            public Vector2 home;                      // anchor inside the zone
+            public Vector2 target;                    // current wander goal
+            public float seed;                        // flicker phase offset
+            public TextMeshPro colorBlindLabel;       // color-blind name text (optional)
         }
+
         private class Zone {
             public Vector2 center;
-            public float expiry;     // Time.time at which it vanishes
+            public float expiry;                      // Time.time at which it vanishes
             public readonly List<Figure> figures = new();
         }
 
@@ -51,7 +61,7 @@ namespace UnknownsCollection {
                 int n = Corrupter.FiguresPerZoneValue();
                 float r = Corrupter.ZoneRadiusValue();
 
-                // Clone sources: any real players (prefer the living, fall back to all).
+                // Snapshot sources: any real players (prefer the living, fall back to all).
                 var sources = PlayerControl.AllPlayerControls.ToArray()
                     .Where(p => p != null && p.cosmetics != null && p.cosmetics.gameObject != null).ToList();
                 if (sources.Count == 0) { zones.Add(z); return; }
@@ -68,24 +78,76 @@ namespace UnknownsCollection {
             }
         }
 
+        // ---- Snapshot-based figure construction (mirrors IllusionistClone.Spawn) ----
         private static Figure MakeFigure(PlayerControl src, Vector2 center, float radius, int idx) {
             try {
-                var clone = UnityEngine.Object.Instantiate(src.cosmetics.gameObject);
-                clone.name = "CorruptionFigure";
-                // Disable behaviours that would try to drive the clone (animators etc.) - keep only visuals.
-                foreach (var beh in clone.GetComponentsInChildren<MonoBehaviour>(true)) {
-                    try { beh.enabled = false; } catch { }
+                if (src == null || src.cosmetics == null) return null;
+                var cos = src.cosmetics;
+
+                // Collect the visible source renderers (deduped): body first, then hat/visor/skin.
+                var bodyRend = cos.currentBodySprite?.BodySprite;
+                var seen = new HashSet<SpriteRenderer>();
+                var srcList = new List<SpriteRenderer>();
+                void tryAdd(SpriteRenderer sr) {
+                    if (sr == null || sr.sprite == null) return;
+                    if (!sr.gameObject.activeInHierarchy || !sr.enabled) return;
+                    if (!seen.Add(sr)) return;
+                    srcList.Add(sr);
                 }
+                tryAdd(bodyRend);
+                foreach (var sr in cos.GetComponentsInChildren<SpriteRenderer>(false)) tryAdd(sr);
+                if (srcList.Count == 0) return null;
+
+                Vector3 bodyWorld = bodyRend != null ? bodyRend.transform.position : cos.transform.position;
+
+                var root = new GameObject("CorruptionFigure");
+                root.SetActive(false); // stay hidden until inside the zone
+
+                var built = new List<SpriteRenderer>(srcList.Count);
+                foreach (var sr in srcList) {
+                    var child = new GameObject(sr.name);
+                    child.transform.SetParent(root.transform, false);
+                    child.transform.localPosition = sr.transform.position - bodyWorld;
+                    child.transform.localRotation = sr.transform.rotation;
+                    child.transform.localScale = sr.transform.lossyScale;
+
+                    var cr = child.AddComponent<SpriteRenderer>();
+                    cr.sprite = sr.sprite;
+                    try { cr.material = new Material(sr.material); } catch { cr.sharedMaterial = sr.sharedMaterial; }
+                    cr.color = sr.color;
+                    cr.flipX = false;
+                    cr.flipY = sr.flipY;
+                    cr.sortingLayerID = sr.sortingLayerID;
+                    cr.sortingOrder = sr.sortingOrder;
+                    cr.maskInteraction = SpriteMaskInteraction.None; // render outside the sight mask
+                    built.Add(cr);
+                }
+
                 Vector2 home = center + UnityEngine.Random.insideUnitCircle * (radius * 0.5f);
                 var f = new Figure {
-                    go = clone,
-                    renderers = clone.GetComponentsInChildren<SpriteRenderer>(true),
+                    go = root,
+                    renderers = built.ToArray(),
+                    sources = srcList.ToArray(),
+                    srcPlayer = src,
                     home = home,
                     target = home + UnityEngine.Random.insideUnitCircle * (radius * 0.4f),
                     seed = idx * 1.7f
                 };
+
+                // Color-blind mode: clone the source player's color-blind name text
+                if (DataManager.Settings.Accessibility.ColorBlindMode && cos.colorBlindText != null) {
+                    var cbLabel = UnityEngine.Object.Instantiate(cos.colorBlindText.gameObject, root.transform);
+                    cbLabel.name = "ColorBlindLabel";
+                    f.colorBlindLabel = cbLabel.GetComponent<TextMeshPro>();
+                    if (f.colorBlindLabel != null) {
+                        f.colorBlindLabel.text = cos.colorBlindText.text;
+                        f.colorBlindLabel.transform.localPosition = new Vector3(0f, -0.4f, -0.01f);
+                        f.colorBlindLabel.transform.localScale = Vector3.one * 0.5f;
+                    }
+                }
+
                 SetPos(f, home);
-                clone.SetActive(false);
+                root.SetActive(false);
                 return f;
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Corrupter] MakeFigure failed: {e.Message}");
@@ -96,6 +158,23 @@ namespace UnknownsCollection {
         private static void SetPos(Figure f, Vector2 p) {
             if (f.go == null) return;
             f.go.transform.position = new Vector3(p.x, p.y, p.y / 1000f + 0.001f);
+        }
+
+        // ---- Per-frame: mirror appearance from the live source player ----
+        private static void MirrorAppearance(Figure f) {
+            if (f.renderers == null || f.sources == null) return;
+            bool srcGood = f.srcPlayer != null && f.srcPlayer.cosmetics != null && f.srcPlayer.Data != null
+                           && !f.srcPlayer.Data.IsDead && !f.srcPlayer.inVent;
+            if (!srcGood) return;
+            for (int k = 0; k < f.renderers.Length && k < f.sources.Length; k++) {
+                var s = f.sources[k];
+                var c = f.renderers[k];
+                if (s == null || c == null) continue;
+                c.sprite = s.sprite;
+                c.color = s.color;
+                c.flipX = false;
+                try { c.material.CopyPropertiesFromMaterial(s.material); } catch { }
+            }
         }
 
         // ---- Per-frame update (HudManager.Update) ----
@@ -120,6 +199,10 @@ namespace UnknownsCollection {
                     if (!inside) { if (f.go.activeSelf) f.go.SetActive(false); continue; }
                     if (!f.go.activeSelf) f.go.SetActive(true);
 
+                    // Mirror appearance from the live source player each frame (so camo/mushroom mixup etc.
+                    // are reflected on the figures). Skipped while the source is dead/vented.
+                    MirrorAppearance(f);
+
                     // Slow random-walk drift within the zone.
                     Vector2 pos = f.go.transform.position;
                     Vector2 next = Vector2.MoveTowards(pos, f.target, drift * Time.deltaTime);
@@ -132,6 +215,9 @@ namespace UnknownsCollection {
                     if (f.renderers != null)
                         foreach (var r in f.renderers)
                             if (r != null) { var c = r.color; c.a = a; r.color = c; }
+                    if (f.colorBlindLabel != null) {
+                        var cb = f.colorBlindLabel.color; cb.a = a; f.colorBlindLabel.color = cb;
+                    }
                 }
             }
         }

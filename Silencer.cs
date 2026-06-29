@@ -56,6 +56,10 @@ namespace UnknownsCollection {
         // Players muted for the CURRENT/NEXT meeting (set when marked, cleared at meeting end).
         public static readonly HashSet<byte> silencedIds = new();
 
+        // Tracks whether muted players' auto-skip has been processed for the current meeting.
+        // Reset on meeting end alongside silencedIds.
+        private static bool mutesAutoProcessed;
+
         private static PlayerControl currentTarget; // local Silencer's outlined victim candidate
         private static bool wasInMeeting;
 
@@ -202,6 +206,7 @@ namespace UnknownsCollection {
                 silencedIds.Clear();
                 currentTarget = null;
                 wasInMeeting = false;
+                mutesAutoProcessed = false;
             }
         }
 
@@ -243,6 +248,7 @@ namespace UnknownsCollection {
                     if (wasInMeeting && !nowMeeting) {
                         silencedIds.Clear();              // mute lasts exactly one meeting
                         marksLeftThisRound = TargetsPerRoundValue();
+                        mutesAutoProcessed = false;
                     }
                     wasInMeeting = nowMeeting;
 
@@ -280,6 +286,26 @@ namespace UnknownsCollection {
             public static void Postfix(MeetingHud __instance) {
                 try {
                     if (!active || __instance == null) return;
+
+                    // Auto-skip for silenced local player: cast a skip vote once when the meeting
+                    // first opens, so the muted player is excluded from the voting tally and the
+                    // meeting can end sooner (they are "already voted").
+                    if (LocalIsSilenced() && !mutesAutoProcessed && __instance.playerStates != null
+                        && __instance.playerStates.Count > 0)
+                    {
+                        // Verify the local player's vote area exists and hasn't voted yet
+                        foreach (var pva in __instance.playerStates) {
+                            if (pva == null) continue;
+                            if ((byte)pva.TargetPlayerId == PlayerControl.LocalPlayer.PlayerId
+                                && !pva.DidVote)
+                            {
+                                __instance.CmdCastVote(byte.MaxValue, byte.MaxValue); // skip
+                                break;
+                            }
+                        }
+                        mutesAutoProcessed = true;
+                    }
+
                     foreach (var pva in __instance.playerStates) {
                         if (pva == null || pva.NameText == null) continue;
                         if (!silencedIds.Contains((byte)pva.TargetPlayerId)) continue;

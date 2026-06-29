@@ -177,13 +177,14 @@ namespace UnknownsCollection {
         }
 
         // The targeted Impostor extends its OWN kill timer; everyone else ignores it.
+        // A vampire bite sound plays to audibly warn the drained Impostor (replaces the old blue flash).
         private static void ApplyDrain(byte impostorId, float penalty) {
             var me = PlayerControl.LocalPlayer;
             if (me == null || me.PlayerId != impostorId) return;
             try {
                 me.SetKillTimer(Mathf.Max(me.killTimer, 0f) + penalty);
                 if (WarnImpostor == null || WarnImpostor.getBool())
-                    Helpers.showFlash(new Color(0.30f, 0.80f, 0.90f, 1f), 0.25f);
+                    SoundEffectsManager.play("vampireBite");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Siphoner] drain apply failed: {e.Message}");
             }

@@ -43,9 +43,9 @@ namespace UnknownsCollection {
 
         public static void CreateOptions() {
             try {
-                SpawnRate = CustomOption.Create(1500, Types.Crewmate, "Follower",
+                SpawnRate = CustomOption.Create(1500, Types.Neutral, "Follower",
                     CustomOptionHolder.rates, null, true);
-                SpawnMinPlayers = CustomOption.Create(1501, Types.Crewmate, "Follower Minimum Players To Spawn",
+                SpawnMinPlayers = CustomOption.Create(1501, Types.Neutral, "Follower Minimum Players To Spawn",
                     6f, 4f, 15f, 1f, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Follower] Options created.");
             } catch (Exception e) {

@@ -40,9 +40,9 @@ namespace UnknownsCollection {
 
         public static void CreateOptions() {
             try {
-                SpawnRate = CustomOption.Create(1480, Types.Crewmate, "Bug",
+                SpawnRate = CustomOption.Create(1480, Types.Neutral, "Bug",
                     CustomOptionHolder.rates, null, true);
-                SpawnMinPlayers = CustomOption.Create(1481, Types.Crewmate, "Bug Minimum Players To Spawn",
+                SpawnMinPlayers = CustomOption.Create(1481, Types.Neutral, "Bug Minimum Players To Spawn",
                     6f, 4f, 15f, 1f, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Options created.");
             } catch (Exception e) {

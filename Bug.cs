@@ -197,6 +197,8 @@ namespace UnknownsCollection {
             }
         }
 
+        public const byte BugGameOverReason = 18; // custom game over reason (TOR uses 10-16, Revenger 17)
+
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
         [HarmonyPriority(Priority.Last)] // after TOR's OnGameEnd removes/re-adds winners
         static class OnGameEndPatch {
@@ -209,14 +211,11 @@ namespace UnknownsCollection {
                     if (bugPlayer == null || bugPlayer.Data == null || bugPlayer.Data.IsDead || bugPlayer.Data.Disconnected) return;
                     if (!BugCanWinAlongside(TheOtherRoles.Patches.OnGameEndPatch.gameOverReason)) return;
 
-                    bool alreadyWinner = false;
-                    foreach (var w in EndGameResult.CachedWinners.GetFastEnumerator()) {
-                        if (w.PlayerName == bugPlayer.Data.PlayerName) { alreadyWinner = true; break; }
-                    }
-                    if (!alreadyWinner) {
-                        EndGameResult.CachedWinners.Add(new CachedPlayerData(bugPlayer.Data));
-                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] Bug added to winners.");
-                    }
+                    // Bug wins as the SOLE winner — replace all winners with just the Bug
+                    EndGameResult.CachedWinners.Clear();
+                    EndGameResult.CachedWinners.Add(new CachedPlayerData(bugPlayer.Data));
+                    endGameResult.GameOverReason = (GameOverReason)BugGameOverReason;
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] Bug is the sole winner! (reason={BugGameOverReason})");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] OnGameEnd failed: {e}");
                 }

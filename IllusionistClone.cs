@@ -16,21 +16,26 @@
  * player's sight mask, so a detached copy would be invisible except the unmasked hat - that was the
  * "only the hat shows" bug).
  *
- * The clone then mirrors EVERYTHING about the live Illusionist each frame so disguises read correctly:
- *   - appearance: sprite + material colors are copied from the live player, so Camouflage, the Fungle
- *     Mushroom-Mixup sabotage and any other look change are reflected automatically (frozen only while
- *     the live player is dead/vented/hidden, so the clone never copies an invisible state);
- *   - facing: derived from the clone's own movement direction (the recorded path), via a root scale flip;
- *   - venting: the recording stores an in-vent flag per sample; on replay the clone shrinks into / pops
- *     out of the vent at those points instead of sitting on top of it.
+ * The clone then behaves like a real player:
+ *   - body animation: a SpriteAnim on the body plays the vanilla Idle / Run / EnterVent / ExitVent clips,
+ *     driven by the CLONE's own movement along the recorded path (not the live player's movement). If the
+ *     clips cannot be wired up it falls back to mirroring the live player's body sprite + a shrink vent.
+ *   - appearance: cosmetic sprites + material colors are copied from the live player each frame, so
+ *     Camouflage, the Fungle Mushroom-Mixup sabotage and any other look change are reflected (frozen only
+ *     while the live player is dead/vented/hidden, so the clone never copies an invisible state);
+ *   - facing: derived from the clone's own movement direction, via a root scale flip;
+ *   - shield glow: gated by the "Clone Shield Visible To Everyone" option (and hidden during camouflage,
+ *     mirroring how vanilla hides outlines), so it is not always a give-away to the crew.
  *
  * One clone at a time: a new playback replaces the old. Everything guarded; a failed clone is a no-op.
  */
 
 using System;
 using System.Collections.Generic;
+using PowerTools;
 using UnityEngine;
 using TheOtherRoles;
+using static TheOtherRoles.TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class IllusionistClone {
@@ -38,6 +43,11 @@ namespace UnknownsCollection {
         private static SpriteRenderer[] renderers;   // clone renderers
         private static SpriteRenderer[] sources;     // live source renderers, parallel to `renderers`
         private static PlayerControl src;            // the live Illusionist we mirror
+
+        private static SpriteRenderer bodyClone;     // the clone's body renderer (driven by SpriteAnim)
+        private static SpriteAnim bodyAnim;          // plays the vanilla Idle/Run/EnterVent/ExitVent clips
+        private static AnimationClip idleClip, runClip, enterClip, exitClip;
+        private static bool useAnim;                 // true once the SpriteAnim + clips are confirmed working
 
         private static List<Vector2> path = new();
         private static List<bool> vents = new();     // per-sample "in a vent" flag, parallel to `path`
@@ -49,10 +59,16 @@ namespace UnknownsCollection {
         private static Vector3 anchorOffset;         // constant body-vs-feet visual offset, baked at spawn
         private static float flashUntil;             // shield-flash highlight end time
         private static float facingSign = 1f;        // +1 facing right, -1 facing left (from movement)
-        private static float ventScale = 1f;         // 1 = out, 0 = fully inside the vent (shrink animation)
 
-        private const float VentTween = 0.22f;       // seconds to shrink into / grow out of a vent
+        private enum VentPhase { Out, Entering, In, Exiting }
+        private static VentPhase ventPhase = VentPhase.Out;
+        private enum BodyState { None, Idle, Run }
+        private static BodyState bodyState = BodyState.None;
+        private static float ventScale = 1f;         // fallback shrink (only used when the clips are missing)
+
+        private const float VentTween = 0.22f;       // fallback shrink duration
         private const float FaceEps = 0.012f;        // ignore tiny horizontal jitter when picking a facing
+        private const float MoveSpeedThresh = 0.5f;  // units/s above which the clone plays the run animation
 
         public static bool IsActive() => active && go != null;
         public static Vector2 Position() => currentPos;
@@ -88,10 +104,12 @@ namespace UnknownsCollection {
 
                 go = new GameObject("IllusionistClone");
                 var built = new List<SpriteRenderer>(srcList.Count);
+                int bodyIdx = -1;
                 foreach (var sr in srcList) {
+                    if (sr == bodyRend) bodyIdx = built.Count;
                     var child = new GameObject(sr.name);
                     child.transform.SetParent(go.transform, false);
-                    // go carries facing/vent scale; children sit at their world offset from the body anchor.
+                    // go carries facing (and the fallback vent scale); children sit at their world offset.
                     child.transform.localPosition = sr.transform.position - bodyWorld;
                     child.transform.localRotation = sr.transform.rotation;
                     child.transform.localScale = sr.transform.lossyScale;
@@ -110,26 +128,55 @@ namespace UnknownsCollection {
                 renderers = built.ToArray();
                 sources = srcList.ToArray();
 
+                // Drive the body with the vanilla animation clips so it walks on its OWN movement.
+                bodyClone = bodyIdx >= 0 ? renderers[bodyIdx] : null;
+                WireBodyAnimation();
+
                 path = new List<Vector2>(points);
                 vents = ventFlags != null ? new List<bool>(ventFlags) : new List<bool>();
                 interval = Mathf.Max(sampleInterval, 0.02f);
                 startTime = Time.time;
-                ventScale = (vents.Count > 0 && vents[0]) ? 0f : 1f;
+                ventPhase = (vents.Count > 0 && vents[0]) ? VentPhase.In : VentPhase.Out;
+                ventScale = ventPhase == VentPhase.In && !useAnim ? 0f : 1f;
+                if (ventPhase == VentPhase.In) SetVisibleAll(false);
+                bodyState = BodyState.None;
                 facingSign = InitialFacing();
                 currentPos = path[0];
                 ApplyTransform(currentPos);
                 go.SetActive(true);
                 active = true;
-                UnknownsCollectionPlugin.Logger?.LogInfo($"[Illusionist] clone spawned, {path.Count} points over {path.Count * interval:F1}s, {renderers.Length} renderers.");
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Illusionist] clone spawned, {path.Count} points over {path.Count * interval:F1}s, {renderers.Length} renderers, anim={useAnim}.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] clone spawn failed: {e}");
                 Despawn();
             }
         }
 
+        // Add a SpriteAnim to the body and confirm it actually plays. If anything is missing we fall back
+        // to mirroring the live body sprite (which animates off the live player) + a shrink vent.
+        private static void WireBodyAnimation() {
+            try {
+                var anims = src != null && src.MyPhysics != null ? src.MyPhysics.Animations : null;
+                if (anims != null && anims.group != null) {
+                    idleClip = anims.group.IdleAnim;
+                    runClip = anims.group.RunAnim;
+                    enterClip = anims.group.EnterVentAnim;
+                    exitClip = anims.group.ExitVentAnim;
+                }
+                if (bodyClone == null || idleClip == null || runClip == null) { useAnim = false; return; }
+                bodyClone.gameObject.AddComponent<Animator>();
+                bodyAnim = bodyClone.gameObject.AddComponent<SpriteAnim>();
+                bodyAnim.Play(idleClip, 1f);
+                useAnim = bodyAnim.Playing;   // verify it really animates on this detached object
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Illusionist] body-anim wiring failed, mirroring live body instead: {e}");
+                useAnim = false;
+            }
+        }
+
         public static void Flash(float seconds) => flashUntil = Time.time + seconds;
 
-        // ---- Per-frame replay + appearance mirror + shield outline (HudManager.Update) ----
+        // ---- Per-frame replay + body animation + appearance mirror + shield outline (HudManager.Update) ----
         public static void Update() {
             if (!active || go == null) return;
             try {
@@ -145,17 +192,16 @@ namespace UnknownsCollection {
                 Vector2 b = path[i + 1];
                 currentPos = Vector2.Lerp(a, b, fIdx - i);
 
-                // Facing follows the clone's own movement direction.
+                // Facing + locomotion are both derived from the clone's OWN movement along the path.
                 float dx = b.x - a.x;
                 if (dx > FaceEps) facingSign = 1f;
                 else if (dx < -FaceEps) facingSign = -1f;
-
-                // Vent shrink/grow: target 0 while the recorded sample was in a vent, else 1.
+                bool moving = Vector2.Distance(a, b) / interval > MoveSpeedThresh;
                 bool inVent = i < vents.Count && vents[i];
-                ventScale = Mathf.MoveTowards(ventScale, inVent ? 0f : 1f, Time.deltaTime / VentTween);
 
+                UpdateVent(inVent, moving);
                 ApplyTransform(currentPos);
-                MirrorAppearance();
+                if (ventPhase == VentPhase.Out) MirrorAppearance();
                 ApplyOutline();
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] clone update failed: {e}");
@@ -163,8 +209,79 @@ namespace UnknownsCollection {
             }
         }
 
-        // Copy the live Illusionist's current look (Camouflage, Mushroom-Mixup, disguises, walk frame).
-        // Skipped while the live player is gone/dead/vented/hidden, so we never copy an invisible state.
+        // Vent state machine + locomotion. With the clips the body plays the exact EnterVent/ExitVent and
+        // Idle/Run animations; the other cosmetics hide while inside the vent. Without the clips it falls
+        // back to shrinking the whole clone into the vent.
+        private static void UpdateVent(bool inVent, bool moving) {
+            if (!useAnim) {
+                ventPhase = inVent ? VentPhase.In : VentPhase.Out;
+                ventScale = Mathf.MoveTowards(ventScale, inVent ? 0f : 1f, Time.deltaTime / VentTween);
+                return;
+            }
+
+            switch (ventPhase) {
+                case VentPhase.Out:
+                    if (inVent) { StartEnter(); break; }
+                    PlayLocomotion(moving);
+                    break;
+                case VentPhase.Entering:
+                    if (!inVent) { StartExit(); break; }
+                    if (!IsBodyAnimPlaying()) { ventPhase = VentPhase.In; SetVisibleAll(false); }
+                    break;
+                case VentPhase.In:
+                    if (!inVent) StartExit();
+                    break;
+                case VentPhase.Exiting:
+                    if (inVent) { StartEnter(); break; }
+                    if (!IsBodyAnimPlaying()) { ventPhase = VentPhase.Out; SetVisibleAll(true); bodyState = BodyState.None; }
+                    break;
+            }
+        }
+
+        private static void PlayLocomotion(bool moving) {
+            var want = moving ? BodyState.Run : BodyState.Idle;
+            if (want == bodyState) return;
+            bodyState = want;
+            try { bodyAnim.Play(want == BodyState.Run ? runClip : idleClip, 1f); } catch { }
+        }
+
+        private static void StartEnter() {
+            ventPhase = VentPhase.Entering;
+            bodyState = BodyState.None;
+            bodyClone.gameObject.SetActive(true);
+            SetCosmeticsVisible(false);          // hat/visor/skin disappear into the vent with the body
+            try { bodyAnim.Play(enterClip != null ? enterClip : idleClip, 1f); } catch { }
+        }
+
+        private static void StartExit() {
+            ventPhase = VentPhase.Exiting;
+            bodyState = BodyState.None;
+            bodyClone.gameObject.SetActive(true);
+            SetCosmeticsVisible(false);          // cosmetics reappear only once the body is back out
+            try { bodyAnim.Play(exitClip != null ? exitClip : idleClip, 1f); } catch { }
+        }
+
+        private static void SetVisibleAll(bool on) {
+            if (renderers == null) return;
+            foreach (var r in renderers) if (r != null) r.gameObject.SetActive(on);
+        }
+
+        private static void SetCosmeticsVisible(bool on) {
+            if (renderers == null) return;
+            foreach (var r in renderers) {
+                if (r == null || r == bodyClone) continue;
+                r.gameObject.SetActive(on);
+            }
+        }
+
+        private static bool IsBodyAnimPlaying() {
+            try { return bodyAnim != null && bodyAnim.Playing; } catch { return false; }
+        }
+
+        // Copy the live Illusionist's current look (Camouflage, Mushroom-Mixup, disguises). The body sprite
+        // itself is owned by the SpriteAnim when clips are active, so for the body we copy only the material
+        // (colors); the cosmetics copy sprite + material + color. Skipped while the live player is
+        // gone/dead/vented/hidden, so we never copy an invisible state.
         private static void MirrorAppearance() {
             if (renderers == null || sources == null) return;
             bool srcGood = src != null && src.cosmetics != null && src.Data != null
@@ -174,7 +291,8 @@ namespace UnknownsCollection {
                 var s = sources[k];
                 var c = renderers[k];
                 if (s == null || c == null) continue;
-                c.sprite = s.sprite;
+                bool isBody = c == bodyClone;
+                if (!(isBody && useAnim)) c.sprite = s.sprite;   // body sprite is animation-driven
                 c.color = s.color;
                 c.flipX = false;
                 try { c.material.CopyPropertiesFromMaterial(s.material); } catch { }
@@ -183,21 +301,40 @@ namespace UnknownsCollection {
 
         private static void ApplyOutline() {
             if (renderers == null) return;
+            bool show = ShouldShowShield();
             Color outline = Time.time < flashUntil ? Color.white : Medic.shieldedColor;
             foreach (var r in renderers) {
-                if (r == null) continue;
+                if (r == null || !r.gameObject.activeSelf) continue;
                 var c = r.color; c.a = 1f; r.color = c;
                 try {
-                    r.material.SetFloat("_Outline", 1f);
-                    r.material.SetColor("_OutlineColor", outline);
+                    r.material.SetFloat("_Outline", show ? 1f : 0f);
+                    if (show) r.material.SetColor("_OutlineColor", outline);
                 } catch { }
             }
+        }
+
+        // The shield glow honors the "Clone Shield Visible To Everyone" option and is hidden during
+        // camouflage / mushroom sabotage (mirroring how vanilla suppresses outlines). When the option is
+        // off, only the Illusionist, impostors and ghosts see it - the crew sees a normal-looking player.
+        private static bool ShouldShowShield() {
+            try {
+                if (Camouflager.camouflageTimer > 0f || Helpers.MushroomSabotageActive()) return false;
+                if (Illusionist.ShieldVisibleAll == null || Illusionist.ShieldVisibleAll.getBool()) return true;
+                var lp = PlayerControl.LocalPlayer;
+                if (lp == null) return true;
+                if (Illusionist.illusionist != null && lp.PlayerId == Illusionist.illusionist.PlayerId) return true;
+                if (lp.Data != null && lp.Data.IsDead) return true;
+                if (lp.Data != null && lp.Data.Role != null && lp.Data.Role.IsImpostor) return true;
+                return false;
+            } catch { return true; }
         }
 
         private static void ApplyTransform(Vector2 p) {
             if (go == null) return;
             go.transform.position = new Vector3(p.x + anchorOffset.x, p.y + anchorOffset.y, p.y / 1000f + 0.001f);
-            go.transform.localScale = new Vector3(facingSign * ventScale, ventScale, 1f);
+            float sx = facingSign, sy = 1f;
+            if (!useAnim) { sx *= ventScale; sy = ventScale; }   // fallback shrink
+            go.transform.localScale = new Vector3(sx, sy, 1f);
         }
 
         // Pick the starting facing from the first noticeable horizontal move in the path.
@@ -216,6 +353,13 @@ namespace UnknownsCollection {
             renderers = null;
             sources = null;
             src = null;
+            bodyClone = null;
+            bodyAnim = null;
+            idleClip = runClip = enterClip = exitClip = null;
+            useAnim = false;
+            ventPhase = VentPhase.Out;
+            bodyState = BodyState.None;
+            ventScale = 1f;
         }
     }
 }

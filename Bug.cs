@@ -105,6 +105,8 @@ namespace UnknownsCollection {
             active && bug != null && bug.Data != null && !bug.Data.IsDead && !bug.Data.Disconnected;
 
         private static FieldInfo winConditionField;
+        private static TMPro.TMP_Text bonusText;
+        private static Vector3 baseBonusPos;
         private static void SetWinCondition(int value) {
             try {
                 if (winConditionField == null) {
@@ -293,9 +295,10 @@ namespace UnknownsCollection {
                             __instance.WinText.transform.position.y - 0.5f,
                             __instance.WinText.transform.position.z);
                         bonus.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
-                        var txt = bonus.GetComponent<TMP_Text>();
-                        txt.text = "Bug Wins";
-                        txt.color = Color;
+                        bonusText = bonus.GetComponent<TMP_Text>();
+                        bonusText.text = "Bug Wins";
+                        bonusText.color = Color;
+                        baseBonusPos = bonus.transform.localPosition;
                     }
 
                     if (__instance.BackgroundBar != null)
@@ -311,20 +314,68 @@ namespace UnknownsCollection {
 
         private class BugGlitchEffect : MonoBehaviour {
             public EndGameManager mgr;
+            private float nextGlitch;
+            private float glitchTimer;
+            private int glitchType;
+            private Vector3 baseWinPos;
+
+            private void Start() {
+                nextGlitch = UnityEngine.Random.Range(0.05f, 0.3f);
+                if (mgr != null && mgr.WinText != null)
+                    baseWinPos = mgr.WinText.transform.localPosition;
+            }
+
             private void Update() {
                 try {
                     if (mgr == null) return;
 
                     float t = Time.time;
+                    glitchTimer += Time.deltaTime;
+
                     if (mgr.BackgroundBar != null) {
-                        float hue = Mathf.PingPong(t * 0.3f, 1f);
+                        float hue = Mathf.PingPong(t * 0.5f, 1f);
+                        if (glitchTimer > nextGlitch && glitchTimer - Time.deltaTime <= nextGlitch)
+                            hue = UnityEngine.Random.value;
                         mgr.BackgroundBar.material.SetColor("_Color",
-                            Color.HSVToRGB(hue, 0.8f, 0.9f));
+                            Color.HSVToRGB(hue, 0.9f, 1f));
                     }
+
                     if (mgr.WinText != null) {
-                        float sx = Mathf.Sin(t * 15f) * 2f;
-                        float sy = Mathf.Cos(t * 12f) * 2f;
-                        mgr.WinText.transform.localPosition = new Vector3(sx, sy, mgr.WinText.transform.localPosition.z);
+                        float sx = 0, sy = 0;
+                        if (glitchTimer > nextGlitch) {
+                            nextGlitch = glitchTimer + UnityEngine.Random.Range(0.04f, 0.25f);
+                            glitchType = UnityEngine.Random.Range(0, 4);
+                        }
+                        if (glitchType == 0 && UnityEngine.Random.value < 0.5f) {
+                            sx = UnityEngine.Random.Range(-3f, 3f);
+                            sy = UnityEngine.Random.Range(-1f, 1f);
+                        } else {
+                            sx = Mathf.Sin(t * 20f) * 0.8f;
+                            sy = Mathf.Cos(t * 15f) * 0.8f;
+                        }
+                        mgr.WinText.transform.localPosition = baseWinPos + new Vector3(sx, sy, 0);
+
+                        if (UnityEngine.Random.value < 0.02f)
+                            mgr.WinText.color = new Color(
+                                UnityEngine.Random.value, UnityEngine.Random.value,
+                                UnityEngine.Random.value, 0.8f);
+                        else
+                            mgr.WinText.color = Color.white;
+                    }
+
+                    if (bonusText != null) {
+                        float bx = 0, by = 0;
+                        if (UnityEngine.Random.value < 0.03f) {
+                            bx = UnityEngine.Random.Range(-5f, 5f);
+                            by = UnityEngine.Random.Range(-1f, 1f);
+                            bonusText.color = new Color(
+                                Color.r + UnityEngine.Random.Range(-0.3f, 0.3f),
+                                Color.g + UnityEngine.Random.Range(-0.3f, 0.3f),
+                                Color.b + UnityEngine.Random.Range(-0.3f, 0.3f));
+                        } else {
+                            bonusText.color = Color;
+                        }
+                        bonusText.transform.localPosition = baseBonusPos + new Vector3(bx, by, 0);
                     }
                 } catch { }
             }

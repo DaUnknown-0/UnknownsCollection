@@ -10,18 +10,19 @@
  * sight range AND with a clear line of sight - no wall between), the killer's identity is "noted on a
  * piece of paper":
  *
- *   - the killer's name glows red for the Witness (permanently, or until the next meeting ends);
- *   - if the killer later DIES and HIS body is reported, EVERYONE sees a public note in the meeting:
- *       "I saw {killer} killing {victim}. I need to report this.";
- *   - if the killer SURVIVES (still alive at the first meeting after the sighting), the Witness slips
- *     an ANONYMOUS note to a few random players: "I saw {killer} killing {victim}. Please do something."
+ *   - the killer's name glows red for the Witness (permanently through the game, or until the next
+ *     meeting ends, depending on the option);
+ *   - if the Witness DIES before the next meeting and their body is REPORTED, EVERYONE sees the note
+ *     in chat: "I saw {killer} killing {victim}. I need to report this."
+ *   - if the Witness SURVIVES to the first meeting after the sighting, they slip an ANONYMOUS note
+ *     to a few random players: "I saw {killer} killing {victim}. Please do something."
  *     The recipients do NOT learn who the Witness is.
  *
  * Why host-authoritative? Deciding "sole crewmate to see it" needs every player's position + role +
  * line of sight, which only the host has. The host runs the sighting check on the kill, the report
  * reveal, and the random note hand-out, then broadcasts the results via RPC 197.
  *
- * Options live in the 1470-1475 block. See ID-Registry.md.
+ * Options live in the 1470-1474 block. See ID-Registry.md.
  */
 
 using System;
@@ -48,7 +49,6 @@ namespace UnknownsCollection {
         public static CustomOption SightFactor;       // 1472 - sight range factor (x BaseSight)
         public static CustomOption RedNamePermanent;  // 1473 - red name stays after the first meeting
         public static CustomOption NoteRecipients;    // 1474 - how many random players get the survive-note
-        public static CustomOption AnnouncePublicly;  // 1475 - body-report reveal is public (else only notes)
 
         // ---- Runtime state ----
         public static PlayerControl witness;
@@ -91,8 +91,6 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 NoteRecipients = CustomOption.Create(1474, Types.Crewmate, "Witness Note Recipients If Killer Survives",
                     3f, 1f, 8f, 1f, SpawnRate);
-                AnnouncePublicly = CustomOption.Create(1475, Types.Crewmate, "Reveal Killer Publicly When Body Reported",
-                    true, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Witness] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Witness] CreateOptions failed: {e}");
@@ -319,7 +317,7 @@ namespace UnknownsCollection {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || !HasNote() || revealed || target == null) return;
-                    if (target.PlayerId == noteKillerId) pendingReporter = __instance.PlayerId;
+                    if (target.PlayerId == witness.PlayerId) pendingReporter = __instance.PlayerId;
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Witness] report check failed: {e}");
                 }
@@ -337,14 +335,13 @@ namespace UnknownsCollection {
                     if (!active || !HasNote()) return;
 
                     if (pendingReporter != byte.MaxValue && !revealed) {
-                        if (AnnouncePublicly == null || AnnouncePublicly.getBool())
-                            SendReveal(pendingReporter, noteKillerId, noteVictimId);
+                        SendReveal(pendingReporter, noteKillerId, noteVictimId);
                         pendingReporter = byte.MaxValue;
                         return;
                     }
 
-                    // Killer still alive and not yet revealed -> slip anonymous notes to random players.
-                    if (!notesGiven && !revealed && IsAlive(Helpers.playerById(noteKillerId))) {
+                    // Witness survived to the meeting -> slip anonymous notes to random players.
+                    if (!notesGiven && !revealed && IsAlive(witness)) {
                         notesGiven = true;
                         int n = NoteRecipients != null ? Mathf.RoundToInt(NoteRecipients.getFloat()) : 3;
                         var pool = PlayerControl.AllPlayerControls.ToArray()

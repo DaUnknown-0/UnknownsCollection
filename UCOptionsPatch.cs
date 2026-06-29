@@ -160,8 +160,7 @@ namespace UnknownsCollection {
             nav.onState = false;
             nav.Background.color = new Color32(30, 40, 80, byte.MaxValue); // dark blue
 
-            // Position at bottom-right of the popup
-            nav.transform.localPosition = new Vector3(1.17f, -3.0f, -0.5f);
+            nav.transform.localPosition = new Vector3(1.17f, -1.9f, -0.5f);
 
             var collider = nav.GetComponent<BoxCollider2D>();
             if (collider != null) collider.size = new Vector2(2.2f, 0.6f);

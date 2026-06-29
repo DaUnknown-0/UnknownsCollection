@@ -418,27 +418,29 @@ namespace UnknownsCollection {
                     }
 
                     if (t > nextPulse) {
-                        nextPulse = t + UnityEngine.Random.Range(0.3f, 0.8f);
-                        int r = UnityEngine.Random.Range(0, 5);
-                        if (r == 0) TriggerBlockGlitch();
+                        nextPulse = t + UnityEngine.Random.Range(0.2f, 0.5f);
+                        int r = UnityEngine.Random.Range(0, 6);
+                        if (r < 2) TriggerBlockGlitch();
 
                         if (mgr.WinText != null) {
-                            if (r == 0) {
+                            int len = baseWinStr?.Length ?? 10;
+                            if (r < 3) {
                                 string glitched = "";
-                                int len = baseWinStr?.Length ?? 10;
                                 for (int i = 0; i < len; i++)
                                     glitched += (char)UnityEngine.Random.Range(33, 127);
                                 mgr.WinText.text = glitched;
+                            } else if (r < 4) {
+                                char[] chars = baseWinStr?.ToCharArray() ?? new char[0];
+                                for (int i = 0; i < chars.Length; i++)
+                                    if (UnityEngine.Random.value < 0.5f)
+                                        chars[i] = (char)UnityEngine.Random.Range(33, 127);
+                                mgr.WinText.text = new string(chars);
                             } else {
                                 mgr.WinText.text = baseWinStr;
                             }
-                            if (r == 0) {
-                                mgr.WinText.transform.localPosition = baseWinPos + new Vector3(
-                                    UnityEngine.Random.Range(-6f, 6f),
-                                    UnityEngine.Random.Range(-1.5f, 1.5f), 0);
-                            } else {
-                                mgr.WinText.transform.localPosition = baseWinPos;
-                            }
+                            mgr.WinText.transform.localPosition = baseWinPos + new Vector3(
+                                UnityEngine.Random.Range(-6f, 6f),
+                                UnityEngine.Random.Range(-1.5f, 1.5f), 0);
                         }
                     }
 

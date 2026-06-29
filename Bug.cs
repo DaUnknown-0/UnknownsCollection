@@ -11,6 +11,7 @@ using HarmonyLib;
 using Hazel;
 using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 using TheOtherRoles;
 using TheOtherRoles.Patches;
 using TheOtherRoles.Utilities;
@@ -320,13 +321,65 @@ namespace UnknownsCollection {
             private string baseWinStr;
             private Vector3 baseWinPos;
 
+            private RawImage staticImage;
+            private Texture2D noiseTex;
+            private float nextNoiseFrame;
+
             private void Start() {
                 nextPulse = Time.time + UnityEngine.Random.Range(0.1f, 0.5f);
                 if (mgr != null && mgr.WinText != null) {
                     baseWinStr = mgr.WinText.text;
                     baseWinPos = mgr.WinText.transform.localPosition;
                 }
+                CreateStaticOverlay();
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] BugGlitchEffect started!");
+            }
+
+            private void CreateStaticOverlay() {
+                try {
+                    if (mgr == null) return;
+                    var go = new GameObject("BugStaticCanvas");
+                    go.transform.SetParent(mgr.transform, false);
+                    var canvas = go.AddComponent<Canvas>();
+                    canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                    canvas.sortingOrder = 999;
+
+                    var imgGo = new GameObject("BugStaticImg");
+                    imgGo.transform.SetParent(go.transform, false);
+                    var rt = imgGo.AddComponent<RectTransform>();
+                    rt.anchorMin = Vector2.zero;
+                    rt.anchorMax = Vector2.one;
+                    rt.offsetMin = Vector2.zero;
+                    rt.offsetMax = Vector2.zero;
+
+                    staticImage = imgGo.AddComponent<RawImage>();
+                    staticImage.color = new Color(1f, 1f, 1f, 0.18f);
+
+                    noiseTex = new Texture2D(128, 72, TextureFormat.RGBA32, false);
+                    noiseTex.filterMode = FilterMode.Point;
+                    noiseTex.wrapMode = TextureWrapMode.Clamp;
+                    staticImage.texture = noiseTex;
+                    nextNoiseFrame = Time.time;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Bug] CreateStaticOverlay failed: {e}");
+                }
+            }
+
+            private void UpdateStatic() {
+                if (noiseTex == null || staticImage == null) return;
+                if (Time.time < nextNoiseFrame) return;
+                nextNoiseFrame = Time.time + UnityEngine.Random.Range(0.05f, 0.12f);
+                int w = noiseTex.width, h = noiseTex.height;
+                var pixels = new Color32[w * h];
+                for (int i = 0; i < pixels.Length; i++) {
+                    byte v = UnityEngine.Random.value < 0.5f ? byte.MaxValue : byte.MinValue;
+                    pixels[i] = new Color32(v, v, v, byte.MaxValue);
+                }
+                noiseTex.SetPixels32(pixels);
+                noiseTex.Apply();
+
+                staticImage.color = new Color(1f, 1f, 1f,
+                    0.12f + UnityEngine.Random.value * 0.12f);
             }
 
             private void Update() {
@@ -334,7 +387,8 @@ namespace UnknownsCollection {
                     if (mgr == null) return;
                     float t = Time.time;
 
-                    // --- Background bar: hue cycle + occasional white flash ---
+                    UpdateStatic();
+
                     if (mgr.BackgroundBar != null) {
                         float flash = Mathf.PingPong(t * 0.6f, 1f);
                         Color barColor = Color.HSVToRGB(flash, 0.8f, 1f);
@@ -342,13 +396,11 @@ namespace UnknownsCollection {
                         mgr.BackgroundBar.material.SetColor("_Color", barColor);
                     }
 
-                    // --- Win text: periodic corruption + displacement ---
                     if (mgr.WinText != null) {
                         if (t > nextPulse) {
                             nextPulse = t + UnityEngine.Random.Range(0.05f, 0.3f);
                             int r = UnityEngine.Random.Range(0, 5);
                             if (r == 0) {
-                                // STRING CORRUPTION — replace text with random characters
                                 string glitched = "";
                                 int len = baseWinStr?.Length ?? 10;
                                 for (int i = 0; i < len; i++)
@@ -358,7 +410,6 @@ namespace UnknownsCollection {
                                 mgr.WinText.text = baseWinStr;
                             }
                             if (r < 2) {
-                                // Large offset
                                 mgr.WinText.transform.localPosition = baseWinPos + new Vector3(
                                     UnityEngine.Random.Range(-12f, 12f),
                                     UnityEngine.Random.Range(-3f, 3f), 0);
@@ -366,12 +417,10 @@ namespace UnknownsCollection {
                                 mgr.WinText.transform.localPosition = baseWinPos;
                             }
                         }
-                        // Fast micro-shake between pulses
                         float sx = Mathf.Sin(t * 37f) * 0.5f;
                         float sy = Mathf.Cos(t * 29f) * 0.3f;
                         mgr.WinText.transform.localPosition += new Vector3(sx, sy, 0);
 
-                        // Random color flash
                         if (UnityEngine.Random.value < 0.025f)
                             mgr.WinText.color = new Color(
                                 UnityEngine.Random.value, UnityEngine.Random.value,
@@ -380,10 +429,8 @@ namespace UnknownsCollection {
                             mgr.WinText.color = Color.white;
                     }
 
-                    // --- Bonus "Bug Wins" text: independent glitch ---
                     if (bonusText != null) {
                         if (UnityEngine.Random.value < 0.03f) {
-                            // Throw far off
                             bonusText.transform.localPosition = baseBonusPos + new Vector3(
                                 UnityEngine.Random.Range(-15f, 15f),
                                 UnityEngine.Random.Range(-4f, 4f), 0);

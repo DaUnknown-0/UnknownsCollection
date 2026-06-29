@@ -59,6 +59,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte FollowerRpcId = 200;
 
     public static ManualLogSource Logger { get; private set; }
+    public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
 
     internal static Assembly TORAssembly;
 
@@ -108,6 +109,10 @@ public class UnknownsCollectionPlugin : BasePlugin
         // The Illusionist role (Impostor). Records a path and replays it as an unkillable shielded clone.
         Illusionist.CreateOptions();
         Illusionist.TryPatch(harmony);
+
+        // Per-player settings (config file + in-game toggle via UC Options menu).
+        BugGlitchEnabled = Config.Bind("Bug", "Bug Win Glitch Effects", true,
+            "Enable visual/sound glitch effects on the Bug win screen");
 
         // The Bug role (Neutral). Survive until the end and win with the winning team.
         Bug.CreateOptions();

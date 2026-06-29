@@ -24,7 +24,6 @@ namespace UnknownsCollection {
 
         public static CustomOption SpawnRate;
         public static CustomOption SpawnMinPlayers;
-        public static CustomOption GlitchEnabled;
 
         public static PlayerControl bug;
         public static bool active;
@@ -47,7 +46,6 @@ namespace UnknownsCollection {
                     CustomOptionHolder.rates, null, true);
                 SpawnMinPlayers = CustomOption.Create(1481, Types.Neutral, "Bug Minimum Players To Spawn",
                     6f, 4f, 15f, 1f, SpawnRate);
-                GlitchEnabled = CustomOption.Create(1482, Types.Neutral, "Bug Win Glitch Effects", true, null);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Bug] CreateOptions failed: {e}");
@@ -304,10 +302,10 @@ namespace UnknownsCollection {
                         baseBonusPos = bonus.transform.localPosition;
                     }
 
-                    if (__instance.BackgroundBar != null && (GlitchEnabled?.getBool() ?? true))
+                    if (__instance.BackgroundBar != null && UnknownsCollectionPlugin.BugGlitchEnabled.Value)
                         __instance.BackgroundBar.material.SetColor("_Color", Color);
 
-                    if (GlitchEnabled?.getBool() ?? true) {
+                    if (UnknownsCollectionPlugin.BugGlitchEnabled.Value) {
                         var fx = __instance.gameObject.AddComponent<BugGlitchEffect>();
                         fx.mgr = __instance;
                         UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Glitch effect attached to end screen.");

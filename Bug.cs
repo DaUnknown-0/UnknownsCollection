@@ -321,9 +321,10 @@ namespace UnknownsCollection {
             private string baseWinStr;
             private Vector3 baseWinPos;
 
-            private RawImage staticImage;
-            private Texture2D noiseTex;
-            private float nextNoiseFrame;
+            private RawImage glitchOverlay;
+            private Texture2D glitchTex;
+            private float glitchEndTime;
+            private int glitchOffset;
 
             private void Start() {
                 nextPulse = Time.time + UnityEngine.Random.Range(0.1f, 0.5f);
@@ -331,20 +332,20 @@ namespace UnknownsCollection {
                     baseWinStr = mgr.WinText.text;
                     baseWinPos = mgr.WinText.transform.localPosition;
                 }
-                CreateStaticOverlay();
+                CreateGlitchOverlay();
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] BugGlitchEffect started!");
             }
 
-            private void CreateStaticOverlay() {
+            private void CreateGlitchOverlay() {
                 try {
                     if (mgr == null) return;
-                    var go = new GameObject("BugStaticCanvas");
+                    var go = new GameObject("BugGlitchCanvas");
                     go.transform.SetParent(mgr.transform, false);
                     var canvas = go.AddComponent<Canvas>();
                     canvas.renderMode = RenderMode.ScreenSpaceOverlay;
                     canvas.sortingOrder = 999;
 
-                    var imgGo = new GameObject("BugStaticImg");
+                    var imgGo = new GameObject("BugGlitchImg");
                     imgGo.transform.SetParent(go.transform, false);
                     var rt = imgGo.AddComponent<RectTransform>();
                     rt.anchorMin = Vector2.zero;
@@ -352,31 +353,57 @@ namespace UnknownsCollection {
                     rt.offsetMin = Vector2.zero;
                     rt.offsetMax = Vector2.zero;
 
-                    staticImage = imgGo.AddComponent<RawImage>();
-                    staticImage.color = new Color(1f, 1f, 1f, 0.06f);
+                    glitchOverlay = imgGo.AddComponent<RawImage>();
 
-                    noiseTex = new Texture2D(64, 36, TextureFormat.RGBA32, false);
-                    noiseTex.filterMode = FilterMode.Point;
-                    noiseTex.wrapMode = TextureWrapMode.Clamp;
-                    staticImage.texture = noiseTex;
-                    nextNoiseFrame = Time.time;
+                    int cols = 128, rows = 72;
+                    glitchTex = new Texture2D(cols, rows, TextureFormat.RGBA32, false);
+                    glitchTex.filterMode = FilterMode.Point;
+                    glitchTex.wrapMode = TextureWrapMode.Clamp;
+                    ClearGlitchTex();
+                    glitchOverlay.texture = glitchTex;
+                    glitchOverlay.color = new Color(1f, 1f, 1f, 1f);
                 } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Bug] CreateStaticOverlay failed: {e}");
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Bug] CreateGlitchOverlay failed: {e}");
                 }
             }
 
-            private void UpdateStatic() {
-                if (noiseTex == null || staticImage == null) return;
-                if (Time.time < nextNoiseFrame) return;
-                nextNoiseFrame = Time.time + UnityEngine.Random.Range(0.08f, 0.15f);
-                int w = noiseTex.width, h = noiseTex.height;
-                var pixels = new Color32[w * h];
-                for (int i = 0; i < pixels.Length; i++) {
-                    byte v = UnityEngine.Random.value < 0.5f ? byte.MaxValue : byte.MinValue;
-                    pixels[i] = new Color32(v, v, v, byte.MaxValue);
+            private void ClearGlitchTex() {
+                if (glitchTex == null) return;
+                var cols = glitchTex.width;
+                var rows = glitchTex.height;
+                var pixels = new Color32[cols * rows];
+                for (int i = 0; i < pixels.Length; i++)
+                    pixels[i] = new Color32(0, 0, 0, 0);
+                glitchTex.SetPixels32(pixels);
+                glitchTex.Apply();
+            }
+
+            private void TriggerBlockGlitch() {
+                if (glitchTex == null) return;
+                int cols = glitchTex.width;
+                int rows = glitchTex.height;
+
+                var pixels = new Color32[cols * rows];
+                for (int i = 0; i < pixels.Length; i++)
+                    pixels[i] = new Color32(0, 0, 0, 0);
+
+                int blockY = UnityEngine.Random.Range(0, rows - 8);
+                int blockH = UnityEngine.Random.Range(4, 12);
+                int offset = UnityEngine.Random.Range(-20, 21);
+                glitchOffset = offset;
+                glitchEndTime = Time.time + UnityEngine.Random.Range(0.08f, 0.2f);
+
+                byte gray = (byte)UnityEngine.Random.Range(20, 60);
+                for (int r = blockY; r < blockY + blockH && r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
+                        int src = r * cols + c;
+                        int dst = r * cols + ((c + offset + cols) % cols);
+                        pixels[dst] = new Color32(gray, gray, gray, 180);
+                    }
                 }
-                noiseTex.SetPixels32(pixels);
-                noiseTex.Apply();
+
+                glitchTex.SetPixels32(pixels);
+                glitchTex.Apply();
             }
 
             private void Update() {
@@ -384,19 +411,18 @@ namespace UnknownsCollection {
                     if (mgr == null) return;
                     float t = Time.time;
 
-                    UpdateStatic();
-
                     if (mgr.BackgroundBar != null) {
-                        float flash = Mathf.PingPong(t * 0.6f, 1f);
-                        Color barColor = Color.HSVToRGB(flash, 0.8f, 1f);
-                        if (UnityEngine.Random.value < 0.02f) barColor = Color.white;
-                        mgr.BackgroundBar.material.SetColor("_Color", barColor);
+                        float hue = Mathf.PingPong(t * 0.4f, 1f);
+                        mgr.BackgroundBar.material.SetColor("_Color",
+                            Color.HSVToRGB(hue, 0.7f, 1f));
                     }
 
-                    if (mgr.WinText != null) {
-                        if (t > nextPulse) {
-                            nextPulse = t + UnityEngine.Random.Range(0.2f, 0.6f);
-                            int r = UnityEngine.Random.Range(0, 6);
+                    if (t > nextPulse) {
+                        nextPulse = t + UnityEngine.Random.Range(0.3f, 0.8f);
+                        int r = UnityEngine.Random.Range(0, 5);
+                        if (r == 0) TriggerBlockGlitch();
+
+                        if (mgr.WinText != null) {
                             if (r == 0) {
                                 string glitched = "";
                                 int len = baseWinStr?.Length ?? 10;
@@ -406,7 +432,7 @@ namespace UnknownsCollection {
                             } else {
                                 mgr.WinText.text = baseWinStr;
                             }
-                            if (r < 2) {
+                            if (r == 0) {
                                 mgr.WinText.transform.localPosition = baseWinPos + new Vector3(
                                     UnityEngine.Random.Range(-6f, 6f),
                                     UnityEngine.Random.Range(-1.5f, 1.5f), 0);
@@ -414,6 +440,15 @@ namespace UnknownsCollection {
                                 mgr.WinText.transform.localPosition = baseWinPos;
                             }
                         }
+                    }
+
+                    if (glitchEndTime > 0 && t > glitchEndTime) {
+                        glitchEndTime = 0;
+                        glitchOffset = 0;
+                        ClearGlitchTex();
+                    }
+
+                    if (mgr.WinText != null) {
                         float sx = Mathf.Sin(t * 25f) * 0.3f;
                         float sy = Mathf.Cos(t * 20f) * 0.2f;
                         mgr.WinText.transform.localPosition += new Vector3(sx, sy, 0);

@@ -26,6 +26,7 @@ namespace UnknownsCollection {
 
         public static PlayerControl bug;
         public static bool active;
+        public static byte bugPlayerId = byte.MaxValue; // survives resetVariables for OnGameEnd
 
         private const byte RpcId = 198;
         private const byte SubSetBug = 0;
@@ -128,6 +129,7 @@ namespace UnknownsCollection {
         private static void ApplySetBug(byte id) {
             bug = Helpers.playerById(id);
             active = bug != null;
+            bugPlayerId = active ? id : byte.MaxValue;
             if (active) UCPromotion.Claim(id);
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] The Bug is {bug.Data?.PlayerName}.");
         }
@@ -200,15 +202,19 @@ namespace UnknownsCollection {
         static class OnGameEndPatch {
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
-                    if (!active || bug == null || !IsAlive(bug)) return;
+                    // bug / bugPlayerId: resetVariables (called in TOR's Postfix) nulls the `bug` field,
+                    // but bugPlayerId survives because it's only set once per round.
+                    if (bugPlayerId == byte.MaxValue) return;
+                    PlayerControl bugPlayer = bug ?? Helpers.playerById(bugPlayerId);
+                    if (bugPlayer == null || bugPlayer.Data == null || bugPlayer.Data.IsDead || bugPlayer.Data.Disconnected) return;
                     if (!BugCanWinAlongside(TheOtherRoles.Patches.OnGameEndPatch.gameOverReason)) return;
 
                     bool alreadyWinner = false;
                     foreach (var w in EndGameResult.CachedWinners.GetFastEnumerator()) {
-                        if (w.PlayerName == bug.Data.PlayerName) { alreadyWinner = true; break; }
+                        if (w.PlayerName == bugPlayer.Data.PlayerName) { alreadyWinner = true; break; }
                     }
                     if (!alreadyWinner) {
-                        EndGameResult.CachedWinners.Add(new CachedPlayerData(bug.Data));
+                        EndGameResult.CachedWinners.Add(new CachedPlayerData(bugPlayer.Data));
                         UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] Bug added to winners.");
                     }
                 } catch (Exception e) {

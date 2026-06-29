@@ -21,6 +21,7 @@
  */
 
 using System;
+using HarmonyLib;
 using UnityEngine;
 using TheOtherRoles;
 using static TheOtherRoles.TheOtherRoles;
@@ -87,6 +88,15 @@ namespace UnknownsCollection {
             if (root != null) root.SetActive(false);
         }
 
+        // While the search/defuse minigame is up, the action input (a mouse click) would also hit the
+        // vanilla Use button and open the real task minigame on top of us. Swallow that click here instead
+        // of hiding the button every frame (which made the bottom action-button row flicker). The button
+        // stays visible but does nothing until we Close().
+        [HarmonyPatch(typeof(UseButton), nameof(UseButton.DoClick))]
+        static class UseButtonDoClickPatch {
+            public static bool Prefix() => !IsOpen;
+        }
+
         public static bool IsDrunk(byte id) {
             try { return Invert.invert.FindAll(x => x.PlayerId == id).Count > 0 && Invert.meetings > 0; }
             catch { return false; }
@@ -114,11 +124,10 @@ namespace UnknownsCollection {
                     return;
                 }
 
-                // Keep the vanilla Use button hidden while the search/defuse UI is up: otherwise the same
-                // action input (click / E / Space / Enter) that drives the scan also triggers the Use
-                // button and opens the real task minigame on top of us. Mirrors TOR hiding it in meetings
-                // (UpdatePatch.updateUseButton). Restored automatically the frame after we Close().
-                try { HudManager.Instance?.UseButton?.Hide(); } catch { }
+                // Note: we do NOT hide the vanilla Use button here. Hiding it every frame fought the
+                // vanilla show and made the bottom action-button row flicker continuously. Instead the
+                // click that would open the real task is swallowed in UseButtonDoClickPatch (below) while
+                // this minigame is open, which keeps the button visible and static.
 
                 switch (phase) {
                     case Phase.Scan: UpdateScan(); break;

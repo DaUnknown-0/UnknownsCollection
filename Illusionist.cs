@@ -50,6 +50,7 @@ namespace UnknownsCollection {
         public static bool active;
 
         private static readonly List<Vector2> recordBuffer = new();
+        private static readonly List<bool> ventBuffer = new(); // per-sample "in a vent" flag, parallel to recordBuffer
         private static bool recording;
         private static float recordStart;
         private static float lastSample;
@@ -127,13 +128,16 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] SendSetIllusionist failed: {e}"); }
         }
 
-        private static void SendSpawnClone(List<Vector2> pts) {
+        private static void SendSpawnClone(List<Vector2> pts, List<bool> ventFlags) {
             try {
                 var w = BeginRpc(SubSpawnClone);
                 w.Write(pts.Count);
-                foreach (var p in pts) { w.Write(p.x); w.Write(p.y); }
+                for (int i = 0; i < pts.Count; i++) {
+                    w.Write(pts[i].x); w.Write(pts[i].y);
+                    w.Write(i < ventFlags.Count && ventFlags[i]);
+                }
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                IllusionistClone.Spawn(pts, SampleInterval);
+                IllusionistClone.Spawn(pts, ventFlags, SampleInterval);
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] SendSpawnClone failed: {e}"); }
         }
 
@@ -159,6 +163,7 @@ namespace UnknownsCollection {
             active = illusionist != null;
             if (active) UCPromotion.Claim(id);
             recordBuffer.Clear();
+            ventBuffer.Clear();
             recording = false;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Illusionist] The Illusionist is {illusionist.Data?.PlayerName}.");
         }
@@ -180,8 +185,12 @@ namespace UnknownsCollection {
                         case SubSpawnClone: {
                             int count = reader.ReadInt32();
                             var pts = new List<Vector2>(count);
-                            for (int i = 0; i < count; i++) pts.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
-                            IllusionistClone.Spawn(pts, SampleInterval);
+                            var vnt = new List<bool>(count);
+                            for (int i = 0; i < count; i++) {
+                                pts.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
+                                vnt.Add(reader.ReadBoolean());
+                            }
+                            IllusionistClone.Spawn(pts, vnt, SampleInterval);
                             break;
                         }
                         case SubFlash: IllusionistClone.Flash(0.4f); break;
@@ -203,6 +212,7 @@ namespace UnknownsCollection {
                 illusionist = null;
                 active = false;
                 recordBuffer.Clear();
+                ventBuffer.Clear();
                 recording = false;
                 IllusionistClone.Despawn();
             }
@@ -248,6 +258,7 @@ namespace UnknownsCollection {
                     if (!IsAlive(me)) { recording = false; return; }
                     if (Time.time - lastSample >= SampleInterval) {
                         recordBuffer.Add(me.GetTruePosition());
+                        ventBuffer.Add(me.inVent);
                         lastSample = Time.time;
                     }
                     if (Time.time - recordStart >= RecordLengthValue()) recording = false; // auto-stop when full
@@ -314,6 +325,7 @@ namespace UnknownsCollection {
                         () => { // OnClick: toggle recording
                             if (recording) { recording = false; return; }
                             recordBuffer.Clear();
+                            ventBuffer.Clear();
                             recording = true;
                             recordStart = Time.time;
                             lastSample = 0f;
@@ -331,7 +343,7 @@ namespace UnknownsCollection {
                     playbackButton = new TheOtherRoles.Objects.CustomButton(
                         () => { // OnClick: spawn the clone from the recorded path
                             if (recording || recordBuffer.Count == 0) return;
-                            SendSpawnClone(new List<Vector2>(recordBuffer));
+                            SendSpawnClone(new List<Vector2>(recordBuffer), new List<bool>(ventBuffer));
                             playbackButton.Timer = playbackButton.MaxTimer;
                         },
                         () => active && IsLocalIllusionist() && !recording && recordBuffer.Count > 0

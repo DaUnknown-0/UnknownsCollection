@@ -45,7 +45,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
-    // 200-202, 246-253. 190 / 191 are free across all of them. Keep these globally unique.
+    // 200-202, 246-253. Keep these globally unique.
     public const byte TeslaRpcId = 190;
     public const byte VersionHandshakeRpcId = 191;
     public const byte SaboteurRpcId = 192;
@@ -57,8 +57,8 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte BugRpcId = 198;
     public const byte ManiacRpcId = 199;
     public const byte FollowerRpcId = 200;
-    public const byte ShadeRpcId = 201;
-    public const byte CopycatRpcId = 202;
+    public const byte ShadeRpcId = 205;   // 201 conflicts with Chance.ChaosRpcId
+    public const byte CopycatRpcId = 206; // 202 conflicts with Chance.ChaosModifierClearRpcId
     public const byte ScoutRpcId = 203;
     public const byte BeaconRpcId = 204;
 

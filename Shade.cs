@@ -6,7 +6,7 @@
  * The Shade (Impostor)
  *
  * A normal TOR Impostor is silently promoted to "The Shade" at game start (host-authoritative pick,
- * broadcast via RPC 201). When the Shade kills a player, the victim's body disappears (DeadBody is
+ * broadcast via RPC 205). When the Shade kills a player, the victim's body disappears (DeadBody is
  * hidden). If another player (not the Shade) walks within FindDistance of the kill location, the body
  * becomes visible and reportable again.
  *
@@ -44,7 +44,7 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, DeadBody> hiddenBodyRefs = new();
 
         // ---- Custom RPC (201) subtypes ----
-        private const byte RpcId = 201;
+        private const byte RpcId = 205;
         private const byte SubSetShade = 0;
         private const byte SubHideBody = 1;   // victimId, posX, posY
         private const byte SubRevealBody = 2; // victimId

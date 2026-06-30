@@ -6,7 +6,7 @@
  * The Copycat (Neutral)
  *
  * A normal TOR Crewmate is silently promoted to "The Copycat" at game start (host-authoritative pick,
- * broadcast via RPC 202). The Copycat learns abilities by witnessing other players use them (tracked
+ * broadcast via RPC 206). The Copycat learns abilities by witnessing other players use them (tracked
  * via TOR CustomRPC IDs on PlayerControl.HandleRpc). Up to MaxAbilitiesStored abilities can be kept
  * simultaneously (oldest is dropped when full). Each learned ability appears as a CustomButton on the
  * Copycat's HUD. The Copycat wins if alive when the game ends (wins with the winning team).
@@ -90,7 +90,7 @@ namespace UnknownsCollection {
         private const byte TorSheriffRpc = 108;
 
         // ---- Custom RPC (202) subtypes ----
-        private const byte RpcId = 202;
+        private const byte RpcId = 206;
         private const byte SubSetCopycat = 0;
         private const byte SubUseAbility = 1;   // abilityId
         private const byte SubEndCamouflage = 2;

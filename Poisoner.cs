@@ -23,6 +23,7 @@ using HarmonyLib;
 using Hazel;
 using UnityEngine;
 using TheOtherRoles;
+using TheOtherRoles.Patches;
 using TheOtherRoles.Utilities;
 using static TheOtherRoles.TheOtherRoles;
 using Types = TheOtherRoles.CustomOption.CustomOptionType;

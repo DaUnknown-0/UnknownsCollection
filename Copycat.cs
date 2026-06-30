@@ -254,20 +254,22 @@ namespace UnknownsCollection {
         }
 
         // ---- Ability implementations (run on every client via RPC) ----
-        private static byte originalColorId;
+        // Camouflage/Morph change the Copycat's look LOCALLY on every client (via setLook/
+        // setDefaultLook - exactly like TOR's Camouflager/Morphling). We must NOT use the vanilla
+        // PlayerControl.RpcSetColor here: that is a host-authoritative RPC, so a non-host (and every
+        // non-owner client, since this runs on all clients via SubUseAbility) calling it on the
+        // Copycat's NetId routes through the host's CheckColor/anti-cheat and gets the sender kicked.
+        // setLook is purely cosmetic and client-side, so no network traffic is produced at all.
 
         private static void StartCamouflage() {
             camouflaged = true;
             camoEndTime = Time.time + 10f;
-            originalColorId = (byte)copycat.Data.DefaultOutfit.ColorId;
-            copycat.RpcSetColor(6); // grey
+            if (copycat != null) copycat.setLook("", 6, "", "", "", ""); // grey, no cosmetics
         }
 
         private static void EndCamouflage() {
             camouflaged = false;
-            if (copycat != null) {
-                copycat.RpcSetColor(originalColorId);
-            }
+            RestoreLook();
         }
 
         private static void StartMorph() {
@@ -278,23 +280,41 @@ namespace UnknownsCollection {
             morphTargetId = target.PlayerId;
             isMorphed = true;
             morphEndTime = Time.time + 15f;
-            originalColorId = (byte)copycat.Data.DefaultOutfit.ColorId;
-            byte targetColor = (byte)target.Data.DefaultOutfit.ColorId;
-            copycat.RpcSetColor(targetColor);
+            if (copycat != null && target.Data != null)
+                copycat.setLook(target.Data.PlayerName, target.Data.DefaultOutfit.ColorId,
+                    target.Data.DefaultOutfit.HatId, target.Data.DefaultOutfit.VisorId,
+                    target.Data.DefaultOutfit.SkinId, target.Data.DefaultOutfit.PetId);
         }
 
         private static void EndMorph() {
             isMorphed = false;
             morphTargetId = byte.MaxValue;
-            if (copycat != null) {
-                copycat.RpcSetColor(originalColorId);
+            RestoreLook();
+        }
+
+        // Restore the Copycat's own look. Camouflage and Morph can overlap, so if the other effect
+        // is still running we re-apply it instead of falling back to the default outfit.
+        private static void RestoreLook() {
+            if (copycat == null) return;
+            if (camouflaged) { copycat.setLook("", 6, "", "", "", ""); return; }
+            if (isMorphed) {
+                var t = Helpers.playerById(morphTargetId);
+                if (t != null && t.Data != null) {
+                    copycat.setLook(t.Data.PlayerName, t.Data.DefaultOutfit.ColorId,
+                        t.Data.DefaultOutfit.HatId, t.Data.DefaultOutfit.VisorId,
+                        t.Data.DefaultOutfit.SkinId, t.Data.DefaultOutfit.PetId);
+                    return;
+                }
             }
+            copycat.setDefaultLook();
         }
 
         private static void DoVent() {
-            // Allow the Copycat to use vents - handled by the vent system
-            // Send the unchecked vent RPC
-            if (AmongUsClient.Instance != null) {
+            // The unchecked-vent RPC is broadcast to every client (target -1), so it must be sent
+            // exactly ONCE - only by the client that owns the Copycat. ApplyUseAbility runs on every
+            // client, so without this guard each client would re-send the vent RPC for the same act.
+            if (!IsLocalCopycat()) return;
+            if (AmongUsClient.Instance != null && copycat != null) {
                 var w = AmongUsClient.Instance.StartRpcImmediately(
                     copycat.NetId, TorVentRpc, SendOption.Reliable, -1);
                 AmongUsClient.Instance.FinishRpcImmediately(w);

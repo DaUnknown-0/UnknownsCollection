@@ -23,23 +23,18 @@ namespace UnknownsCollection {
         public static PlayerControl follower;
         public static bool active;
 
-        // The role the Follower copied from the first dead player
-        public static byte copiedRoleId = byte.MaxValue; // RoleId byte of the copied role, or MaxValue = none
-        public static PlayerControl copiedFrom;           // the dead player we copied
-        private static bool firstDeathProcessed;          // host: has the first death been processed?
+        // Role transfer state
+        public static bool hasCopied;    // host: has the shift happened?
 
         private const byte RpcId = 200;
         private const byte SubSetFollower = 0; // followerId
-        private const byte SubCopyRole = 1;    // roleId(byte), sourcePlayerId(byte)
+        private const byte SubShiftRole = 1;   // followerId, targetId
 
         private static RoleInfo followerInfo;
         public static RoleInfo FollowerInfo() => followerInfo ??= new RoleInfo(
-            "Follower", Color, "Copy the role of the first player to die",
-            "Copy the role of the first player to die", RoleId.Crewmate)
+            "Follower", Color, "Take the role of the first player to die",
+            "Take the role of the first player to die", RoleId.Crewmate)
         { isNeutral = true };
-
-        // Cached copied RoleInfo (built from the received data)
-        private static RoleInfo copiedDisplayInfo;
 
         public static void CreateOptions() {
             try {
@@ -78,41 +73,31 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Follower] SendSetFollower failed: {e}"); }
         }
 
-        private static void SendCopyRole(byte roleId, byte sourcePlayerId) {
+        private static void SendShiftRole(byte followerId, byte targetId) {
             try {
-                var w = BeginRpc(SubCopyRole);
-                w.Write(roleId);
-                w.Write(sourcePlayerId);
+                var w = BeginRpc(SubShiftRole);
+                w.Write(followerId);
+                w.Write(targetId);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                ApplyCopyRole(roleId, sourcePlayerId);
-            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Follower] SendCopyRole failed: {e}"); }
+                ApplyShiftRole(followerId, targetId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Follower] SendShiftRole failed: {e}"); }
         }
 
         private static void ApplySetFollower(byte id) {
             follower = Helpers.playerById(id);
             active = follower != null;
             if (active) UCPromotion.Claim(id);
-            copiedRoleId = byte.MaxValue;
-            copiedFrom = null;
-            copiedDisplayInfo = null;
-            firstDeathProcessed = false;
+            hasCopied = false;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Follower] The Follower is {follower.Data?.PlayerName}.");
         }
 
-        // Build a display RoleInfo from the copied player's actual RoleInfo.
-        private static void ApplyCopyRole(byte roleId, byte sourcePlayerId) {
-            copiedRoleId = roleId;
-            copiedFrom = Helpers.playerById(sourcePlayerId);
-            if (copiedFrom != null) {
-                // Get the dead player's actual role info for display
-                var sourceRoles = RoleInfo.getRoleInfoForPlayer(copiedFrom, false);
-                if (sourceRoles != null && sourceRoles.Count > 0) {
-                    var src = sourceRoles[0];
-                    copiedDisplayInfo = new RoleInfo(src.name, src.color, src.introDescription,
-                        src.shortDescription, RoleId.Crewmate);
-                }
-            }
-            UnknownsCollectionPlugin.Logger?.LogInfo($"[Follower] Copied role of {copiedFrom?.Data?.PlayerName} (roleId={roleId}).");
+        private static void ApplyShiftRole(byte followerId, byte targetId) {
+            var f = Helpers.playerById(followerId);
+            var t = Helpers.playerById(targetId);
+            if (f == null || t == null) return;
+            Shifter.shiftRole(f, t);
+            hasCopied = true;
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Follower] {f.Data?.PlayerName} took the role of {t.Data?.PlayerName} via shiftRole.");
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetFollower(playerId);
@@ -126,10 +111,10 @@ namespace UnknownsCollection {
                     byte subtype = reader.ReadByte();
                     switch (subtype) {
                         case SubSetFollower: ApplySetFollower(reader.ReadByte()); break;
-                        case SubCopyRole: {
-                            byte roleId = reader.ReadByte();
-                            byte sourceId = reader.ReadByte();
-                            ApplyCopyRole(roleId, sourceId);
+                        case SubShiftRole: {
+                            byte fId = reader.ReadByte();
+                            byte tId = reader.ReadByte();
+                            ApplyShiftRole(fId, tId);
                             break;
                         }
                     }
@@ -145,10 +130,7 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 follower = null;
                 active = false;
-                copiedRoleId = byte.MaxValue;
-                copiedFrom = null;
-                copiedDisplayInfo = null;
-                firstDeathProcessed = false;
+                hasCopied = false;
             }
         }
 
@@ -181,21 +163,14 @@ namespace UnknownsCollection {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || follower == null || firstDeathProcessed || target == null) return;
+                    if (!active || follower == null || hasCopied || target == null) return;
 
                     // Don't count if the follower is the target
                     if (target.PlayerId == follower.PlayerId) return;
 
-                    firstDeathProcessed = true;
-
-                    // Get the dead player's RoleId (use the first entry from getRoleInfoForPlayer)
-                    var roles = RoleInfo.getRoleInfoForPlayer(target, false);
-                    if (roles == null || roles.Count == 0) return;
-                    byte rid = (byte)roles[0].roleId;
-
                     UnknownsCollectionPlugin.Logger?.LogInfo(
-                        $"[Follower] First death: {target.Data?.PlayerName} with roleId={rid}, notifying Follower.");
-                    SendCopyRole(rid, target.PlayerId);
+                        $"[Follower] First death: {target.Data?.PlayerName}, shifting role to Follower.");
+                    SendShiftRole(follower.PlayerId, target.PlayerId);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Follower] death detection failed: {e}");
                 }
@@ -208,29 +183,18 @@ namespace UnknownsCollection {
                 try {
                     if (!active || follower == null || p == null || p != follower || __result == null) return;
 
-                    // If we have copied a role, show that instead of "Follower"
-                    if (copiedDisplayInfo != null) {
-                        // Replace the Crewmate entry with our copied display
-                        bool replaced = false;
-                        for (int i = 0; i < __result.Count; i++) {
-                            if (__result[i] != null && __result[i].roleId == RoleId.Crewmate) {
-                                __result[i] = copiedDisplayInfo;
-                                replaced = true;
-                            }
-                        }
-                        if (!replaced) __result.Insert(0, copiedDisplayInfo);
-                        return;
-                    }
+                    // After the shift, the Follower has the real role (set by shiftRole), so let it show naturally.
+                    if (hasCopied) return;
 
                     // Before first death: show as Follower (grey)
-                    bool replacedF = false;
+                    bool replaced = false;
                     for (int i = 0; i < __result.Count; i++) {
                         if (__result[i] != null && __result[i].roleId == RoleId.Crewmate) {
                             __result[i] = FollowerInfo();
-                            replacedF = true;
+                            replaced = true;
                         }
                     }
-                    if (!replacedF) __result.Insert(0, FollowerInfo());
+                    if (!replaced) __result.Insert(0, FollowerInfo());
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Follower] RoleInfo postfix failed: {e}");
                 }

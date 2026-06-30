@@ -181,6 +181,8 @@ namespace UnknownsCollection {
 
         private static void ApplyPassBomb(byte oldCarrierId, byte newCarrierId) {
             if (bombCarrier != null && bombCarrier.PlayerId == oldCarrierId) {
+                // Stop the fuse sound for the old carrier
+                SoundEffectsManager.stop("bombFuseBurning");
                 bombCarrier = Helpers.playerById(newCarrierId);
                 bombDetected = false;
                 bombPlacedAt = Time.time;
@@ -191,6 +193,7 @@ namespace UnknownsCollection {
 
         private static void ApplyExplode(byte victimId) {
             if (bombCarrier != null && bombCarrier.PlayerId == victimId) {
+                SoundEffectsManager.stop("bombFuseBurning");
                 // Red explosion flash for everyone nearby
                 var victim = Helpers.playerById(victimId);
                 if (victim != null) {
@@ -411,7 +414,7 @@ namespace UnknownsCollection {
                               && PlayerControlFixedUpdatePatch.setTarget() != null,
                         () => { },
                         passSprite,
-                        TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
                         __instance, KeyCode.G, false, "PASS");
                     passButton.MaxTimer = 0f;
                     passButton.Timer = 0f;

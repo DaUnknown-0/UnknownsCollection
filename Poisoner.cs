@@ -65,6 +65,9 @@ namespace UnknownsCollection {
         private const byte SubAntidote = 3;       // targetId
         private const byte SubPoisonDeath = 4;    // targetId
 
+        // Unchecked murder RPC byte (from TOR's enum)
+        internal static byte uncheckedMurderRpc = 108;
+
         // ---- Role identity ----
         private static RoleInfo poisonerInfo;
         public static RoleInfo PoisonerInfo() => poisonerInfo ??= new RoleInfo(
@@ -89,7 +92,21 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            try {
+                var torAsm = typeof(CustomOption).Assembly;
+                try {
+                    var rpcEnum = torAsm.GetType("TheOtherRoles.CustomRPC");
+                    if (rpcEnum != null)
+                        uncheckedMurderRpc = (byte)(int)Enum.Parse(rpcEnum, "UncheckedMurderPlayer");
+                } catch (Exception ex) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning(
+                        $"[Poisoner] Could not resolve UncheckedMurderPlayer RPC id, using {uncheckedMurderRpc}: {ex.Message}");
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] TryPatch failed: {e}");
+            }
+        }
 
         // ---- Helpers ----
         private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
@@ -183,9 +200,23 @@ namespace UnknownsCollection {
         private static void ApplyPoisonDeath(byte targetId) {
             var target = Helpers.playerById(targetId);
             if (target == null || target.Data == null) return;
-            target.Data.IsDead = true;
+            RpcUncheckedMurder(target.PlayerId, target.PlayerId);
             poisonedReporters.Remove(targetId);
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Player {targetId} died from poison.");
+        }
+
+        private static void RpcUncheckedMurder(byte sourceId, byte targetId) {
+            try {
+                MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
+                    PlayerControl.LocalPlayer.NetId, uncheckedMurderRpc, SendOption.Reliable, -1);
+                w.Write(sourceId);
+                w.Write(targetId);
+                w.Write((byte)0);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                RPCProcedure.uncheckedMurderPlayer(sourceId, targetId, 0);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] RpcUncheckedMurder failed: {e}");
+            }
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetPoisoner(playerId);
@@ -270,7 +301,7 @@ namespace UnknownsCollection {
         // ---- Report detection: if the body is poisoned, poison the reporter ----
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.ReportDeadBody))]
         static class ReportPatch {
-            public static void Prefix(PlayerControl __instance, [HarmonyArgument(0)] NetworkedPlayerInfo target) {
+            public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] NetworkedPlayerInfo target) {
                 try {
                     if (AmongUsClient.Instance == null) return;
                     if (!active || poisoner == null || target == null) return;

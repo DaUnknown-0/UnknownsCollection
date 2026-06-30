@@ -287,35 +287,12 @@ namespace UnknownsCollection {
                 try {
                     if (!active || __instance == null) return;
 
-                    // Auto-skip for silenced local player: cast a skip vote once when the meeting
-                    // first opens, so the muted player is excluded from the voting tally and the
-                    // meeting can end sooner (they are "already voted").
-                    if (LocalIsSilenced() && !mutesAutoProcessed && __instance.playerStates != null
-                        && __instance.playerStates.Count > 0)
-                    {
-                        // Verify the local player's vote area exists and hasn't voted yet
-                        foreach (var pva in __instance.playerStates) {
-                            if (pva == null) continue;
-                            if ((byte)pva.TargetPlayerId == PlayerControl.LocalPlayer.PlayerId
-                                && !pva.DidVote)
-                            {
-                                __instance.CmdCastVote(byte.MaxValue, byte.MaxValue); // skip
-                                break;
-                            }
-                        }
-                        mutesAutoProcessed = true;
-                    }
-
                     foreach (var pva in __instance.playerStates) {
                         if (pva == null || pva.NameText == null) continue;
                         if (!silencedIds.Contains((byte)pva.TargetPlayerId)) continue;
                         var t = pva.NameText.text;
                         if (!t.Contains("MUTED")) pva.NameText.text = t + Marker;
                     }
-                    // Block the Skip button for a muted local player (unless allowed to skip).
-                    if (LocalIsSilenced() && (CanStillSkip == null || !CanStillSkip.getBool())
-                        && __instance.SkipVoteButton != null)
-                        __instance.SkipVoteButton.gameObject.SetActive(false);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] MeetingUpdate failed: {e}");
                 }

@@ -51,6 +51,10 @@ namespace UnknownsCollection {
 
         private static readonly List<Vector2> recordBuffer = new();
         private static readonly List<bool> ventBuffer = new(); // per-sample "in a vent" flag, parallel to recordBuffer
+
+        // Receiver-side reassembly buffer for the chunked clone-path RPC (see SendSpawnClone).
+        private static readonly List<Vector2> rxPts = new();
+        private static readonly List<bool> rxVnt = new();
         private static bool recording;
         private static float recordStart;
         private static float lastSample;
@@ -130,14 +134,26 @@ namespace UnknownsCollection {
 
         private static void SendSpawnClone(List<Vector2> pts, List<bool> ventFlags) {
             try {
-                var w = BeginRpc(SubSpawnClone);
-                w.Write(pts.Count);
-                for (int i = 0; i < pts.Count; i++) {
-                    w.Write(pts[i].x); w.Write(pts[i].y);
-                    w.Write(i < ventFlags.Count && ventFlags[i]);
+                // A full recording can be up to RecordLength/SampleInterval samples (e.g. 20s/0.1s =
+                // 200) at 9 bytes each (2 floats + 1 bool) ~= 1.8 KB - well over Among Us' per-RPC
+                // packet limit, which would disconnect the sender. So the path is split into chunks
+                // (TOR chunks its option sharing for the same reason). first/last flags let the
+                // receiver reassemble the path and spawn the clone only once it is complete.
+                const int ChunkPoints = 80; // 80 * 9 bytes = 720 B/RPC, safely under the limit
+                int total = pts.Count;
+                for (int start = 0; start < total; start += ChunkPoints) {
+                    int count = Math.Min(ChunkPoints, total - start);
+                    var w = BeginRpc(SubSpawnClone);
+                    w.Write(start == 0);                // first chunk
+                    w.Write(start + count >= total);    // last chunk
+                    w.Write(count);
+                    for (int i = start; i < start + count; i++) {
+                        w.Write(pts[i].x); w.Write(pts[i].y);
+                        w.Write(i < ventFlags.Count && ventFlags[i]);
+                    }
+                    AmongUsClient.Instance.FinishRpcImmediately(w);
                 }
-                AmongUsClient.Instance.FinishRpcImmediately(w);
-                IllusionistClone.Spawn(pts, ventFlags, SampleInterval);
+                IllusionistClone.Spawn(pts, ventFlags, SampleInterval); // sender applies locally
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] SendSpawnClone failed: {e}"); }
         }
 
@@ -183,14 +199,18 @@ namespace UnknownsCollection {
                     switch (subtype) {
                         case SubSetIllusionist: ApplySetIllusionist(reader.ReadByte()); break;
                         case SubSpawnClone: {
+                            bool first = reader.ReadBoolean();
+                            bool last = reader.ReadBoolean();
                             int count = reader.ReadInt32();
-                            var pts = new List<Vector2>(count);
-                            var vnt = new List<bool>(count);
+                            if (first) { rxPts.Clear(); rxVnt.Clear(); }
                             for (int i = 0; i < count; i++) {
-                                pts.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
-                                vnt.Add(reader.ReadBoolean());
+                                rxPts.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
+                                rxVnt.Add(reader.ReadBoolean());
                             }
-                            IllusionistClone.Spawn(pts, vnt, SampleInterval);
+                            if (last) {
+                                IllusionistClone.Spawn(new List<Vector2>(rxPts), new List<bool>(rxVnt), SampleInterval);
+                                rxPts.Clear(); rxVnt.Clear();
+                            }
                             break;
                         }
                         case SubFlash: IllusionistClone.Flash(0.4f); break;
@@ -213,6 +233,8 @@ namespace UnknownsCollection {
                 active = false;
                 recordBuffer.Clear();
                 ventBuffer.Clear();
+                rxPts.Clear();
+                rxVnt.Clear();
                 recording = false;
                 IllusionistClone.Despawn();
             }

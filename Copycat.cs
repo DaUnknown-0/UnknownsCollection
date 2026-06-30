@@ -15,7 +15,6 @@
  *   Camouflage  (RPC 131) - become grey
  *   Morphling   (RPC 130) - sample a player, then morph into them
  *   Vent        (RPC 107) - use vents
- *   Bait        (detect Bait modifier kill) - auto-report when killed
  *   TimeMaster  (RPC 126) - temporary shield
  *   Sheriff     (RPC 108) - shoot attempt (kills Impostors, dies if target is Crew)
  *
@@ -41,12 +40,11 @@ namespace UnknownsCollection {
             Camouflage = 0,
             Morphling = 1,
             Vent = 2,
-            Bait = 3,
-            TimeMaster = 4,
-            Sheriff = 5
+            TimeMaster = 3,
+            Sheriff = 4
         }
 
-        private static readonly string[] AbilityNames = { "CAMO", "MORPH", "VENT", "BAIT", "SHIELD", "SHOOT" };
+        private static readonly string[] AbilityNames = { "CAMO", "MORPH", "VENT", "SHIELD", "SHOOT" };
 
         // ---- Theme ----
         public static readonly Color Color = new Color(0.85f, 0.45f, 0.85f); // purple
@@ -65,9 +63,6 @@ namespace UnknownsCollection {
         // Learned abilities (ordered by learning time)
         private static readonly List<Ability> learnedAbilities = new();
         private static readonly HashSet<Ability> usedAbilities = new();
-
-        // Bait state
-        private static bool baitActive;
 
         // Shield state (TimeMaster copy)
         public static bool shielded;
@@ -95,7 +90,6 @@ namespace UnknownsCollection {
         private const byte SubUseAbility = 1;   // abilityId
         private const byte SubEndCamouflage = 2;
         private const byte SubEndMorph = 3;
-        private const byte SubSetBait = 4;
 
         // ---- Role identity ----
         private static RoleInfo copycatInfo;
@@ -234,7 +228,6 @@ namespace UnknownsCollection {
             if (active) UCPromotion.Claim(id);
             learnedAbilities.Clear();
             usedAbilities.Clear();
-            baitActive = false;
             shielded = false;
             camouflaged = false;
             isMorphed = false;
@@ -250,7 +243,6 @@ namespace UnknownsCollection {
                 case Ability.Camouflage: StartCamouflage(); break;
                 case Ability.Morphling: StartMorph(); break;
                 case Ability.Vent: DoVent(); break;
-                case Ability.Bait: ActivateBait(); break;
                 case Ability.TimeMaster: StartShield(); break;
                 case Ability.Sheriff: DoShoot(); break;
             }
@@ -309,10 +301,6 @@ namespace UnknownsCollection {
             }
         }
 
-        private static void ActivateBait() {
-            baitActive = true;
-        }
-
         private static void StartShield() {
             shielded = true;
             shieldEndTime = Time.time + 5f;
@@ -358,7 +346,6 @@ namespace UnknownsCollection {
                             case SubUseAbility: ApplyUseAbility((Ability)reader.ReadByte()); break;
                             case SubEndCamouflage: EndCamouflage(); break;
                             case SubEndMorph: EndMorph(); break;
-                            case SubSetBait: baitActive = reader.ReadBoolean(); break;
                         }
                         return;
                     }
@@ -375,40 +362,6 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Bait detection via murder ----
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
-        static class MurderPatch {
-            public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
-                try {
-                    if (!active || copycat == null) return;
-                    if (target == null) return;
-
-                    // Check if the victim has the Bait modifier
-                    var roles = RoleInfo.getRoleInfoForPlayer(target, false);
-                    if (roles != null) {
-                        foreach (var ri in roles) {
-                            if (ri != null && ri.roleId == RoleId.Bait) {
-                                LearnAbility(Ability.Bait);
-                                break;
-                            }
-                        }
-                    }
-
-                    // If Copycat is killed and bait is active, trigger report
-                    if (target.PlayerId == copycat.PlayerId && baitActive) {
-                        baitActive = false;
-                        // The killer gets reported - use auto-report logic
-                        var reporter = __instance;
-                        if (reporter != null && AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) {
-                            reporter.CmdReportDeadBody(copycat.Data);
-                        }
-                    }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] MurderPatch failed: {e}");
-                }
-            }
-        }
-
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
             public static void Postfix() {
@@ -416,7 +369,6 @@ namespace UnknownsCollection {
                 active = false;
                 learnedAbilities.Clear();
                 usedAbilities.Clear();
-                baitActive = false;
                 shielded = false;
                 camouflaged = false;
                 isMorphed = false;
@@ -506,9 +458,8 @@ namespace UnknownsCollection {
                     CreateAbilityButton(Ability.Camouflage,  __instance, 0);
                     CreateAbilityButton(Ability.Morphling,   __instance, 1);
                     CreateAbilityButton(Ability.Vent,        __instance, 2);
-                    CreateAbilityButton(Ability.Bait,        __instance, 3);
-                    CreateAbilityButton(Ability.TimeMaster,  __instance, 4);
-                    CreateAbilityButton(Ability.Sheriff,     __instance, 5);
+                    CreateAbilityButton(Ability.TimeMaster,  __instance, 3);
+                    CreateAbilityButton(Ability.Sheriff,     __instance, 4);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] Button creation failed: {e}");
                 }
@@ -516,24 +467,42 @@ namespace UnknownsCollection {
         }
 
         private static void CreateAbilityButton(Ability ability, HudManager __instance, int index) {
-            // All buttons use lowerRowCenter for simplicity; position is not critical for functionality
             var pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter;
             if (index == 0) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft;
             else if (index == 1) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter;
             else if (index == 2) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight;
             else if (index == 3) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft;
             else if (index == 4) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowCenter;
-            else if (index == 5) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowRight;
 
             var button = new TheOtherRoles.Objects.CustomButton(
                 () => OnAbilityClick(ability),
                 () => IsAbilityAvailable(ability),
                 () => IsAbilityVisible(ability),
                 () => { /* on meeting - nothing special */ },
-                cachedButtonSprite,
+                GetAbilitySprite(ability),
                 pos,
                 __instance, KeyCode.None, false, AbilityNames[(int)ability]);
             abilityButtons[ability] = button;
+        }
+
+        private static readonly Dictionary<Ability, Sprite> abilitySpriteCache = new();
+        private static Sprite GetAbilitySprite(Ability ability) {
+            if (abilitySpriteCache.TryGetValue(ability, out var cached)) return cached;
+            string resource = null;
+            switch (ability) {
+                case Ability.Camouflage: resource = "TheOtherRoles.Resources.CamoButton.png"; break;
+                case Ability.Morphling:  resource = "TheOtherRoles.Resources.MorphButton.png"; break;
+                case Ability.Vent:       resource = "TheOtherRoles.Resources.Vent.png"; break;
+                case Ability.TimeMaster: resource = "TheOtherRoles.Resources.TimeShieldButton.png"; break;
+            }
+            if (resource != null) {
+                var spr = Helpers.loadSpriteFromResources(resource, 115f);
+                if (spr != null) {
+                    abilitySpriteCache[ability] = spr;
+                    return spr;
+                }
+            }
+            return cachedButtonSprite;
         }
 
         private static bool IsAbilityAvailable(Ability ability) {
@@ -545,7 +514,6 @@ namespace UnknownsCollection {
             switch (ability) {
                 case Ability.Sheriff: return currentTarget != null;
                 case Ability.Morphling: return currentMorphTarget != null;
-                case Ability.Bait: return !baitActive;
                 case Ability.Camouflage: return !camouflaged;
                 case Ability.TimeMaster: return !shielded;
                 default: return true;

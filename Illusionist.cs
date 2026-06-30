@@ -318,8 +318,8 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    Sprite sprite = __instance.KillButton != null && __instance.KillButton.graphic != null
-                        ? __instance.KillButton.graphic.sprite : null;
+                    var recordSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.SampleButton.png", 115f);
+                    var playbackSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.MorphButton.png", 115f);
 
                     recordButton = new TheOtherRoles.Objects.CustomButton(
                         () => { // OnClick: toggle recording
@@ -334,7 +334,7 @@ namespace UnknownsCollection {
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove,
                         () => { },
-                        sprite,
+                        recordSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft,
                         __instance, KeyCode.R, false, "RECORD");
                     recordButton.MaxTimer = 0f;
@@ -350,7 +350,7 @@ namespace UnknownsCollection {
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove,
                         () => { },
-                        sprite,
+                        playbackSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
                         __instance, KeyCode.F, false, "PLAYBACK");
                     playbackButton.MaxTimer = PlaybackCooldown != null ? PlaybackCooldown.getFloat() : 30f;

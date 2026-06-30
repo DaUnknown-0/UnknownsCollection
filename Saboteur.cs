@@ -730,8 +730,7 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    Sprite sprite = __instance.KillButton != null && __instance.KillButton.graphic != null
-                        ? __instance.KillButton.graphic.sprite : null;
+                    var sabotageSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.HackerButton.png", 115f);
                     Sprite trapSprite = Trapper.getButtonSprite();
 
                     sabotageButton = new TheOtherRoles.Objects.CustomButton(
@@ -750,7 +749,7 @@ namespace UnknownsCollection {
                               && tokens >= (SabotageTokenCost != null ? Mathf.RoundToInt(SabotageTokenCost.getFloat()) : 1),
                         () => PlayerControl.LocalPlayer.CanMove && FindUsableConsoleInRange() != null,
                         () => { },
-                        sprite,
+                        sabotageSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
                         __instance,
                         KeyCode.F,

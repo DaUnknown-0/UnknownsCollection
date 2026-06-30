@@ -150,6 +150,7 @@ namespace UnknownsCollection {
                 originalSpeed = PlayerControl.LocalPlayer.MyPhysics.Speed;
                 float mult = SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.5f;
                 PlayerControl.LocalPlayer.MyPhysics.Speed = originalSpeed * mult;
+                if (scoutButton != null) scoutButton.Timer = dur;
             }
         }
 
@@ -160,6 +161,7 @@ namespace UnknownsCollection {
                 PlayerControl.LocalPlayer.MyPhysics.Speed = originalSpeed;
             }
             currentAlpha = 1f;
+            if (scoutButton != null) scoutButton.Timer = scoutButton.MaxTimer;
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetScout(playerId);
@@ -226,8 +228,7 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    Sprite sprite = __instance.KillButton != null && __instance.KillButton.graphic != null
-                        ? __instance.KillButton.graphic.sprite : null;
+                    var sprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.InvisButton.png", 115f);
                     scoutButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
                             if (abilityActive) return;
@@ -246,8 +247,7 @@ namespace UnknownsCollection {
                             }
                         },
                         () => active && IsLocalScout()
-                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
-                              && !abilityActive,
+                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove && !abilityActive,
                         () => { abilityActive = false; abilityEndTime = 0; currentAlpha = 1f; },
                         sprite,
@@ -313,12 +313,21 @@ namespace UnknownsCollection {
             try {
                 if (player == null || player.cosmetics == null) return;
                 alpha = Mathf.Clamp01(alpha);
-                foreach (var r in player.cosmetics.GetComponentsInChildren<Renderer>()) {
-                    if (r != null && r.material != null) {
-                        Color c = r.material.color;
-                        c.a = alpha;
-                        r.material.color = c;
-                    }
+                player.cosmetics.SetHatAndVisorAlpha(alpha);
+                if (player.cosmetics.currentBodySprite != null && player.cosmetics.currentBodySprite.BodySprite != null) {
+                    var c = player.cosmetics.currentBodySprite.BodySprite.color;
+                    c.a = alpha;
+                    player.cosmetics.currentBodySprite.BodySprite.color = c;
+                }
+                if (player.cosmetics.skin != null && player.cosmetics.skin.layer != null) {
+                    var c = player.cosmetics.skin.layer.color;
+                    c.a = alpha;
+                    player.cosmetics.skin.layer.color = c;
+                }
+                if (player.cosmetics.nameText != null) {
+                    var c = player.cosmetics.nameText.color;
+                    c.a = alpha;
+                    player.cosmetics.nameText.color = c;
                 }
             } catch { }
         }

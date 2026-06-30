@@ -350,8 +350,7 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    Sprite sprite = __instance.KillButton != null && __instance.KillButton.graphic != null
-                        ? __instance.KillButton.graphic.sprite : null;
+                    var sprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.CurseButton.png", 115f);
                     silenceButton = new TheOtherRoles.Objects.CustomButton(
                         () => { // OnClick
                             if (currentTarget == null || marksLeftThisRound <= 0) return;

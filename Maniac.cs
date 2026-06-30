@@ -374,8 +374,8 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    Sprite sprite = __instance.KillButton != null && __instance.KillButton.graphic != null
-                        ? __instance.KillButton.graphic.sprite : null;
+                    var bombSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.Bomb_Button_Plant.png", 115f);
+                    var passSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.Bomb_Button_Defuse.png", 115f);
 
                     bombButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
@@ -391,7 +391,7 @@ namespace UnknownsCollection {
                         () => PlayerControl.LocalPlayer.CanMove
                               && PlayerControlFixedUpdatePatch.setTarget(true) != null,
                         () => { },
-                        sprite,
+                        bombSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
                         __instance, KeyCode.F, false, "BOMB");
                     bombButton.MaxTimer = BombCooldown != null ? BombCooldown.getFloat() : 25f;
@@ -410,7 +410,7 @@ namespace UnknownsCollection {
                         () => PlayerControl.LocalPlayer.CanMove
                               && PlayerControlFixedUpdatePatch.setTarget(true) != null,
                         () => { },
-                        sprite,
+                        passSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
                         __instance, KeyCode.G, false, "PASS");
                     passButton.MaxTimer = 0f;

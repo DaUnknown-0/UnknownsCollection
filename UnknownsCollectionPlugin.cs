@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.0.1.6";
+    public const string PluginVersion = "1.1.0.0";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
@@ -57,6 +57,10 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte BugRpcId = 198;
     public const byte ManiacRpcId = 199;
     public const byte FollowerRpcId = 200;
+    public const byte ShadeRpcId = 201;
+    public const byte CopycatRpcId = 202;
+    public const byte ScoutRpcId = 203;
+    public const byte BeaconRpcId = 204;
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -125,6 +129,22 @@ public class UnknownsCollectionPlugin : BasePlugin
         // The Follower role (Neutral). Copy the role of the first player to die.
         Follower.CreateOptions();
         Follower.TryPatch(harmony);
+
+        // The Shade role (Impostor). Victim's body disappears; others find it by proximity.
+        Shade.CreateOptions();
+        Shade.TryPatch(harmony);
+
+        // The Copycat role (Neutral). Copies witnessed abilities, wins with winning team if alive.
+        Copycat.CreateOptions();
+        Copycat.TryPatch(harmony);
+
+        // The Scout role (Crewmate). Goes transparent and fast; lights don't affect during ability.
+        Scout.CreateOptions();
+        Scout.TryPatch(harmony);
+
+        // The Beacon role (Crewmate). Lights never affect them; nearby crew share their vision.
+        Beacon.CreateOptions();
+        Beacon.TryPatch(harmony);
 
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line + UCOptionsPatch).

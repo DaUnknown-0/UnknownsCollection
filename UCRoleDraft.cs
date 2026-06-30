@@ -45,6 +45,10 @@ namespace UnknownsCollection {
         public const byte BugDraftId = 207;
         public const byte ManiacDraftId = 208;
         public const byte FollowerDraftId = 209;
+        public const byte ShadeDraftId = 210;
+        public const byte CopycatDraftId = 211;
+        public const byte ScoutDraftId = 212;
+        public const byte BeaconDraftId = 213;
 
         // ---- Draft entry table (all UC roles) ----
         private class Entry {
@@ -80,6 +84,14 @@ namespace UnknownsCollection {
                      true,  () => Maniac.SpawnRate,      () => Maniac.SpawnMinPlayers,      Maniac.MarkFromDraft),
                 Make(FollowerDraftId,    "Follower",    Follower.Color,      "Copy the role of the first player to die",
                      false, () => Follower.SpawnRate,    () => Follower.SpawnMinPlayers,    Follower.MarkFromDraft),
+                Make(ShadeDraftId,       "Shade",       Palette.ImpostorRed, "Victim's body vanishes; others can find it by proximity",
+                     true,  () => Shade.SpawnRate,       () => Shade.SpawnMinPlayers,       Shade.MarkFromDraft),
+                Make(CopycatDraftId,     "Copycat",     Copycat.Color,       "Copy abilities you witness and win with the winners",
+                     false, () => Copycat.SpawnRate,     () => Copycat.SpawnMinPlayers,     Copycat.MarkFromDraft),
+                Make(ScoutDraftId,       "Scout",       Scout.Color,         "Go transparent and fast; lights don't affect you",
+                     false, () => Scout.SpawnRate,       () => Scout.SpawnMinPlayers,       Scout.MarkFromDraft),
+                Make(BeaconDraftId,      "Beacon",      Beacon.Color,        "Lights never affect you; crew shares your vision",
+                     false, () => Beacon.SpawnRate,      () => Beacon.SpawnMinPlayers,      Beacon.MarkFromDraft),
             };
             return entries;
         }

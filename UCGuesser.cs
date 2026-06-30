@@ -57,6 +57,19 @@ namespace UnknownsCollection {
         private static bool FollowerGuessable() =>
             Follower.SpawnRate != null && Follower.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
+        private static bool ShadeGuessable() =>
+            Shade.SpawnRate != null && Shade.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+        private static bool CopycatGuessable() =>
+            Copycat.SpawnRate != null && Copycat.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+        private static bool ScoutGuessable() =>
+            Scout.SpawnRate != null && Scout.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+        private static bool BeaconGuessable() =>
+            Beacon.SpawnRate != null && Beacon.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod()
+            && !(Beacon.NotGuessable != null && Beacon.NotGuessable.getBool());
 
         private static void Sync(bool add) {
             // Impostor roles — insert after the base Impostor entry
@@ -66,11 +79,15 @@ namespace UnknownsCollection {
             SetEntry(Silencer.SilencerInfo(), add && SilencerGuessable(),   RoleInfo.impostor);
             SetEntry(Illusionist.IllusionistInfo(), add && IllusionistGuessable(), RoleInfo.impostor);
             SetEntry(Maniac.ManiacInfo(),     add && ManiacGuessable(),      RoleInfo.impostor);
+            SetEntry(Shade.ShadeInfo(),       add && ShadeGuessable(),        RoleInfo.impostor);
             // Crew / Neutral roles — insert after the base Crewmate entry
             SetEntry(Siphoner.SiphonerInfo(), add && SiphonerGuessable(),   RoleInfo.crewmate);
             SetEntry(Witness.WitnessInfo(),   add && WitnessGuessable(),    RoleInfo.crewmate);
             SetEntry(Bug.BugInfo(),           add && BugGuessable(),        RoleInfo.crewmate);
             SetEntry(Follower.FollowerInfo(), add && FollowerGuessable(),   RoleInfo.crewmate);
+            SetEntry(Copycat.CopycatInfo(),   add && CopycatGuessable(),    RoleInfo.crewmate);
+            SetEntry(Scout.ScoutInfo(),       add && ScoutGuessable(),      RoleInfo.crewmate);
+            SetEntry(Beacon.BeaconInfo(),     add && BeaconGuessable(),     RoleInfo.crewmate);
         }
 
         private static void SetEntry(RoleInfo ri, bool want, RoleInfo after) {

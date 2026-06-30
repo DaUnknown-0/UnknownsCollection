@@ -5,7 +5,7 @@
 /*
  * UCPromotion - shared pick-arbiter for the Unknown's Collection "layered" roles.
  *
- * Several UC roles are display-tags promoted over a plain TOR Impostor (Tesla, Saboteur, Corrupter,
+ * Several UC roles are display-tags promoted over a plain TOR Impostor (Tesla, Saboteur, Poisoner,
  * Silencer, Illusionist) or a plain Crewmate (Siphoner, Witness). Each role's host-authoritative pick
  * (IntroCutscene.OnDestroy) must avoid landing two UC roles on the SAME player. Instead of every role
  * knowing about every other, they all funnel through this tiny claim registry:

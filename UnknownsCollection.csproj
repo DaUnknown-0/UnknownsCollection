@@ -17,6 +17,7 @@
          = AssemblyName). Headerless 2-channel signed 32-bit PCM LE @ 48 kHz; loaded by TeslaSound. -->
     <ItemGroup>
         <EmbeddedResource Include="Resources\tesla_warning.raw" />
+        <EmbeddedResource Include="Resources\bug_effect.raw" />
     </ItemGroup>
 
     <ItemGroup>

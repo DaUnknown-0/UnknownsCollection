@@ -106,9 +106,9 @@ public class UnknownsCollectionPlugin : BasePlugin
         Witness.CreateOptions();
         Witness.TryPatch(harmony);
 
-        // The Corrupter role (Impostor). Kills lay hallucination zones (fake drifting players for crew).
-        Corrupter.CreateOptions();
-        Corrupter.TryPatch(harmony);
+        // The Poisoner role (Impostor). Kills poison bodies; reporter dies after X meetings unless saved by Medic.
+        Poisoner.CreateOptions();
+        Poisoner.TryPatch(harmony);
 
         // The Illusionist role (Impostor). Records a path and replays it as an unkillable shielded clone.
         Illusionist.CreateOptions();

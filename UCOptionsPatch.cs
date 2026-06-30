@@ -16,7 +16,6 @@ namespace UnknownsCollection {
     public static class UCOptionsPatch {
         private static FieldInfo torPopUpField;
         private static FieldInfo torButtonPrefabField;
-        private static bool registered;
 
         private static GameObject ucPopUp;
         private static TextMeshPro ucTitleTemplate;
@@ -36,7 +35,6 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(OptionsMenuBehaviour), nameof(OptionsMenuBehaviour.Start))]
         public static void OptionsMenuStartPostfix(OptionsMenuBehaviour __instance) {
             try {
-                if (registered) return;
                 if (__instance.CensorChatButton == null) return;
                 ResolveTORFields();
 
@@ -49,7 +47,6 @@ namespace UnknownsCollection {
                     var tb = child.GetComponent<ToggleButtonBehaviour>();
                     if (tb?.Text?.text?.Contains("Mod Options") == true) {
                         HookModOptionsButton(tb, __instance);
-                        registered = true;
                         break;
                     }
                 }

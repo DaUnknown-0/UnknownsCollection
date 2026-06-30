@@ -33,8 +33,8 @@ namespace UnknownsCollection {
         private static bool SaboteurGuessable() =>
             Saboteur.SpawnRate != null && Saboteur.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
-        private static bool CorrupterGuessable() =>
-            Corrupter.SpawnRate != null && Corrupter.SpawnRate.getSelection() > 0
+        private static bool PoisonerGuessable() =>
+            Poisoner.SpawnRate != null && Poisoner.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
         private static bool SilencerGuessable() =>
             Silencer.SpawnRate != null && Silencer.SpawnRate.getSelection() > 0
@@ -75,7 +75,7 @@ namespace UnknownsCollection {
             // Impostor roles — insert after the base Impostor entry
             SetEntry(Tesla.TeslaInfo(),       add && TeslaGuessable(),       RoleInfo.impostor);
             SetEntry(Saboteur.SaboteurInfo(), add && SaboteurGuessable(),    RoleInfo.impostor);
-            SetEntry(Corrupter.CorrupterInfo(), add && CorrupterGuessable(), RoleInfo.impostor);
+            SetEntry(Poisoner.PoisonerInfo(), add && PoisonerGuessable(), RoleInfo.impostor);
             SetEntry(Silencer.SilencerInfo(), add && SilencerGuessable(),   RoleInfo.impostor);
             SetEntry(Illusionist.IllusionistInfo(), add && IllusionistGuessable(), RoleInfo.impostor);
             SetEntry(Maniac.ManiacInfo(),     add && ManiacGuessable(),      RoleInfo.impostor);

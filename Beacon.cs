@@ -42,9 +42,9 @@ namespace UnknownsCollection {
         public static PlayerControl beacon;
         public static bool active;
 
-        // ---- Shared-vision LightSource (second fog-of-war circle for nearby crewmates) ----
-        private static GameObject sharedLightGo;
-        private static LightSource sharedLight;
+        // Shared vision: tracks whether local crewmate's light is boosted near Beacon
+        private static float originalViewDistance;
+        private static bool isViewBoosted;
 
         // ---- Custom RPC (204) subtypes ----
         private const byte RpcId = 204;
@@ -172,30 +172,30 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Second LightSource at Beacon's position for nearby crewmates ----
+        // ---- Boost nearby crewmate's own LightSource when near the Beacon ----
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {
                     if (!active || beacon == null) {
-                        DestroySharedLight();
+                        RestoreViewDistance();
                         return;
                     }
 
                     var me = PlayerControl.LocalPlayer;
-                    if (me == null || me.Data == null || me.Data.Role == null) {
-                        if (sharedLightGo != null) sharedLightGo.SetActive(false);
+                    if (me == null || me.Data == null || me.Data.Role == null || me.lightSource == null) {
+                        RestoreViewDistance();
                         return;
                     }
 
-                    // Impostors, dead players, and the Beacon itself don't get a second circle
+                    // Impostors, dead, and the Beacon itself don't get boosted vision
                     if (me.Data.Role.IsImpostor || me.Data.IsDead || me.Data.Disconnected || me.PlayerId == beacon.PlayerId) {
-                        if (sharedLightGo != null) sharedLightGo.SetActive(false);
+                        RestoreViewDistance();
                         return;
                     }
 
                     if (!IsAlive(beacon)) {
-                        if (sharedLightGo != null) sharedLightGo.SetActive(false);
+                        RestoreViewDistance();
                         return;
                     }
 
@@ -203,34 +203,28 @@ namespace UnknownsCollection {
                     float dist = Vector2.Distance(beacon.GetTruePosition(), me.GetTruePosition());
 
                     if (dist <= shareDist && ShipStatus.Instance != null) {
-                        if (sharedLightGo == null || sharedLight == null) {
-                            if (sharedLightGo != null) UnityEngine.Object.Destroy(sharedLightGo);
-                            sharedLightGo = new GameObject("BeaconSharedLight");
-                            UnityEngine.Object.DontDestroyOnLoad(sharedLightGo);
-                            sharedLight = sharedLightGo.AddComponent<LightSource>();
-                            sharedLight.Initialize(Vector3.zero);
-                            float radius = ShipStatus.Instance.MaxLightRadius
-                                * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
-                            sharedLight.SetViewDistance(radius);
-                            sharedLight.SetupLightingForGameplay(false, 0f, null);
+                        float boostRadius = ShipStatus.Instance.MaxLightRadius
+                            * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
+                        if (!isViewBoosted) {
+                            originalViewDistance = me.lightSource.ViewDistance;
+                            isViewBoosted = true;
                         }
-
-                        sharedLightGo.transform.position = beacon.GetTruePosition();
-                        sharedLightGo.SetActive(true);
+                        me.lightSource.ViewDistance = Mathf.Max(me.lightSource.ViewDistance, boostRadius);
                     } else {
-                        if (sharedLightGo != null) sharedLightGo.SetActive(false);
+                        RestoreViewDistance();
                     }
                 } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Beacon] HudUpdate shared light failed: {e}");
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Beacon] HudUpdate failed: {e}");
                 }
             }
-        }
 
-        private static void DestroySharedLight() {
-            if (sharedLightGo != null) {
-                UnityEngine.Object.Destroy(sharedLightGo);
-                sharedLightGo = null;
-                sharedLight = null;
+            private static void RestoreViewDistance() {
+                if (isViewBoosted) {
+                    var me = PlayerControl.LocalPlayer;
+                    if (me != null && me.lightSource != null)
+                        me.lightSource.ViewDistance = originalViewDistance;
+                    isViewBoosted = false;
+                }
             }
         }
 

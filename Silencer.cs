@@ -253,7 +253,7 @@ namespace UnknownsCollection {
                     wasInMeeting = nowMeeting;
 
                     UpdateTargeting();
-                    if (ShowInGameMarker == null || ShowInGameMarker.getBool()) ShowInGameMarkers();
+                    // Marker only appears during meetings (see MeetingHud.Update)
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] HudUpdate failed: {e}");
                 }

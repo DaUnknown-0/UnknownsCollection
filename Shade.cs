@@ -42,12 +42,15 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, Vector2> hiddenBodies = new();
         // PlayerId -> DeadBody reference, for showing/hiding
         private static readonly Dictionary<byte, DeadBody> hiddenBodyRefs = new();
+        // PlayerId -> Time.time when body was revealed (for auto-report after 2s)
+        private static readonly Dictionary<byte, float> revealedBodies = new();
 
-        // ---- Custom RPC (201) subtypes ----
+        // ---- Custom RPC (205) subtypes ----
         private const byte RpcId = 205;
         private const byte SubSetShade = 0;
         private const byte SubHideBody = 1;   // victimId, posX, posY
         private const byte SubRevealBody = 2; // victimId
+        private const byte SubAutoReport = 3; // victimId, reporterId
 
         // ---- Role identity ----
         private static RoleInfo shadeInfo;
@@ -139,8 +142,26 @@ namespace UnknownsCollection {
             } catch { }
         }
 
+        private static void SendAutoReport(byte victimId, byte reporterId) {
+            try {
+                var w = BeginRpc(SubAutoReport);
+                w.Write(victimId);
+                w.Write(reporterId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyAutoReport(victimId, reporterId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Shade] SendAutoReport failed: {e}"); }
+        }
+
+        private static void ApplyAutoReport(byte victimId, byte reporterId) {
+            var reporter = Helpers.playerById(reporterId);
+            var victim = Helpers.playerById(victimId);
+            if (reporter == null || victim == null || victim.Data == null) return;
+            reporter.CmdReportDeadBody(victim.Data);
+        }
+
         private static void ApplyRevealBody(byte victimId) {
             hiddenBodies.Remove(victimId);
+            revealedBodies[victimId] = Time.time;
             try {
                 if (hiddenBodyRefs.TryGetValue(victimId, out var db) && db != null) {
                     db.gameObject.SetActive(true);
@@ -172,6 +193,12 @@ namespace UnknownsCollection {
                         case SubRevealBody:
                             ApplyRevealBody(reader.ReadByte());
                             break;
+                        case SubAutoReport: {
+                            byte vid = reader.ReadByte();
+                            byte rid = reader.ReadByte();
+                            ApplyAutoReport(vid, rid);
+                            break;
+                        }
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Shade] HandleRpc failed: {e}");
@@ -187,6 +214,7 @@ namespace UnknownsCollection {
                 active = false;
                 hiddenBodies.Clear();
                 hiddenBodyRefs.Clear();
+                revealedBodies.Clear();
             }
         }
 
@@ -238,31 +266,67 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || shade == null || hiddenBodies.Count == 0) return;
+                    if (!active || shade == null) return;
 
-                    float findDist = FindDistance != null ? FindDistance.getFloat() : 1.5f;
-
-                    // Check each alive player against each hidden body
-                    var toReveal = new List<byte>();
-                    foreach (var pc in PlayerControl.AllPlayerControls) {
-                        if (pc == null || !IsAlive(pc)) continue;
-                        if (pc.PlayerId == shade.PlayerId) continue; // shade cannot trigger reveal
-
-                        Vector2 pcPos = pc.GetTruePosition();
-                        foreach (var kvp in hiddenBodies) {
-                            if (Vector2.Distance(pcPos, kvp.Value) <= findDist) {
-                                toReveal.Add(kvp.Key);
+                    // Reveal hidden bodies when a non-Shade player walks near
+                    if (hiddenBodies.Count > 0) {
+                        float findDist = FindDistance != null ? FindDistance.getFloat() : 1.5f;
+                        var toReveal = new List<byte>();
+                        foreach (var pc in PlayerControl.AllPlayerControls) {
+                            if (pc == null || !IsAlive(pc)) continue;
+                            if (pc.PlayerId == shade.PlayerId) continue;
+                            Vector2 pcPos = pc.GetTruePosition();
+                            foreach (var kvp in hiddenBodies) {
+                                if (Vector2.Distance(pcPos, kvp.Value) <= findDist)
+                                    toReveal.Add(kvp.Key);
                             }
+                        }
+                        foreach (byte vid in toReveal) {
+                            SendRevealBody(vid);
+                            UnknownsCollectionPlugin.Logger?.LogInfo($"[Shade] Body of player {vid} revealed by proximity.");
                         }
                     }
 
-                    foreach (byte vid in toReveal) {
-                        SendRevealBody(vid);
-                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Shade] Body of player {vid} revealed by proximity.");
+                    // Auto-report revealed bodies after 2 seconds
+                    if (revealedBodies.Count > 0) {
+                        var toReport = new List<KeyValuePair<byte, byte>>();
+                        foreach (var kvp in revealedBodies) {
+                            if (Time.time - kvp.Value >= 2f) {
+                                // Find nearest alive player to be the reporter
+                                var pos = Helpers.playerById(kvp.Key)?.GetTruePosition() ?? Vector2.zero;
+                                byte reporterId = byte.MaxValue;
+                                float closest = float.MaxValue;
+                                foreach (var pc in PlayerControl.AllPlayerControls) {
+                                    if (pc == null || !IsAlive(pc)) continue;
+                                    float d = Vector2.Distance(pc.GetTruePosition(), pos);
+                                    if (d < closest) { closest = d; reporterId = pc.PlayerId; }
+                                }
+                                if (reporterId != byte.MaxValue)
+                                    toReport.Add(new KeyValuePair<byte, byte>(kvp.Key, reporterId));
+                            }
+                        }
+                        foreach (var r in toReport) {
+                            revealedBodies.Remove(r.Key);
+                            SendAutoReport(r.Key, r.Value);
+                        }
                     }
                 } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Shade] HudUpdate proximity check failed: {e}");
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Shade] HudUpdate failed: {e}");
                 }
+            }
+        }
+
+        // ---- Meeting: delete hidden body objects ----
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
+        static class MeetingStartPatch {
+            public static void Postfix() {
+                if (!active) return;
+                foreach (var kvp in hiddenBodyRefs) {
+                    if (kvp.Value != null) UnityEngine.Object.Destroy(kvp.Value.gameObject);
+                }
+                hiddenBodyRefs.Clear();
+                hiddenBodies.Clear();
+                revealedBodies.Clear();
             }
         }
 

@@ -37,7 +37,7 @@ namespace UnknownsCollection {
         // Sentinel RoleId bytes - TOR's RoleId enum only runs 0..56, so 200-206 are free and stable.
         public const byte TeslaDraftId = 200;
         public const byte SaboteurDraftId = 201;
-        public const byte CorrupterDraftId = 202;
+        public const byte PoisonerDraftId = 202;
         public const byte SilencerDraftId = 203;
         public const byte IllusionistDraftId = 204;
         public const byte SiphonerDraftId = 205;
@@ -68,8 +68,8 @@ namespace UnknownsCollection {
                      true,  () => Tesla.SpawnRate,       () => Tesla.SpawnMinPlayers,       Tesla.MarkFromDraft),
                 Make(SaboteurDraftId,    "Saboteur",    Palette.ImpostorRed, "Sabotage a task or lay a trap",
                      true,  () => Saboteur.SpawnRate,    () => Saboteur.SpawnMinPlayers,    Saboteur.MarkFromDraft),
-                Make(CorrupterDraftId,   "Corrupter",   Palette.ImpostorRed, "Your kills haunt the area with false visions",
-                     true,  () => Corrupter.SpawnRate,   () => Corrupter.SpawnMinPlayers,   Corrupter.MarkFromDraft),
+                Make(PoisonerDraftId,   "Poisoner",   Palette.ImpostorRed, "Your kills poison the reporter; the Medic can save them",
+                     true,  () => Poisoner.SpawnRate,   () => Poisoner.SpawnMinPlayers,   Poisoner.MarkFromDraft),
                 Make(SilencerDraftId,    "Silencer",    Palette.ImpostorRed, "Mute a player for the next meeting",
                      true,  () => Silencer.SpawnRate,    () => Silencer.SpawnMinPlayers,    Silencer.MarkFromDraft),
                 Make(IllusionistDraftId, "Illusionist", Palette.ImpostorRed, "Record a path and replay it as an unkillable clone",

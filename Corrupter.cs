@@ -3,18 +3,17 @@
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
 /*
- * The Corrupter (Impostor)
+ * The Poisoner (Impostor)
  *
- * A normal TOR Impostor is silently promoted to "The Corrupter" at game start (host-authoritative pick,
- * broadcast via RPC 193). Whenever the Corrupter kills, a "corruption zone" is laid at the body. Living
- * crew who walk INTO that zone see drifting, flickering copies of real players (see CorruptionZone) -
- * pure local hallucinations meant to confuse witnesses. Zones expire after a while and are cleared at
- * every meeting.
+ * A normal TOR Impostor is silently promoted to "The Poisoner" at game start (host-authoritative pick,
+ * broadcast via RPC 193). When the Poisoner kills, the victim's body becomes poisoned. The next player
+ * who reports that body becomes poisoned themselves. After X meetings, the poisoned reporter dies unless
+ * saved by the Medic's Antidote ability.
  *
- * ARCHITECTURE mirrors Tesla/Saboteur: own RoleInfo tag over the real Impostor role, a small custom RPC
- * (193), client-side FX. Gated by the mod-wide No-Start handshake (everyone has the mod).
+ * The Medic gets an Antidote button when a reporter is poisoned, and can cure them once per round
+ * (configurable).
  *
- * Options live in the 1430-1437 block. See ID-Registry.md.
+ * Options live in the 1430-1434 block. See ID-Registry.md.
  */
 
 using System;
@@ -29,84 +28,80 @@ using static TheOtherRoles.TheOtherRoles;
 using Types = TheOtherRoles.CustomOption.CustomOptionType;
 
 namespace UnknownsCollection {
-    public static class Corrupter {
+    public static class Poisoner {
         // ---- Theme ----
-        public static readonly Color Color = Palette.ImpostorRed; // impostor role -> red role tag
+        public static readonly Color Color = Palette.ImpostorRed;
 
-        // ---- Options (IDs 1430-1437) ----
-        public static CustomOption SpawnRate;        // 1430 (header) - impostor role chance
-        public static CustomOption SpawnMinPlayers;  // 1431 - minimum LOBBY players to spawn
-        public static CustomOption ZoneRadius;        // 1432 - zone disc radius (world units)
-        public static CustomOption ZoneDuration;      // 1433 - zone lifetime (seconds)
-        public static CustomOption MaxZones;          // 1434 - max simultaneously active zones
-        public static CustomOption FiguresPerZone;    // 1435 - fake figures per zone
-        public static CustomOption DriftSpeed;        // 1436 - figure drift / flicker speed
-        public static CustomOption ImpostorsSeeZones; // 1437 - impostors also see the figures
+        // ---- Options (IDs 1430-1434) ----
+        public static CustomOption SpawnRate;             // 1430 (header)
+        public static CustomOption SpawnMinPlayers;       // 1431
+        public static CustomOption PoisonDeathMeetings;   // 1432 - meetings before poisoned reporter dies
+        public static CustomOption AntidoteCharges;       // 1433 - how many times Medic can cure
+        public static CustomOption MaxPoisonedPerRound;   // 1434 - max poisoned bodies per round
 
         // ---- Runtime state ----
-        public static PlayerControl corrupter;
+        public static PlayerControl poisoner;
         public static bool active;
 
-        // ---- Custom RPC (193) subtypes ----
-        private const byte RpcId = 193; // == UnknownsCollectionPlugin.CorrupterRpcId
-        private const byte SubSetCorrupter = 0; // corrupterId
-        private const byte SubAddZone = 1;      // x, y
-        private const byte SubClearZones = 2;   // (none)
+        // Poisoned bodies (victim PlayerId)
+        private static readonly HashSet<byte> poisonedBodies = new();
+        // Poisoned reporters: reporterId -> meetings since poisoned
+        private static readonly Dictionary<byte, int> poisonedReporters = new();
+        // Bodies poisoned this round (reset each meeting)
+        private static readonly HashSet<byte> bodiesPoisonedThisRound = new();
+        private static int meetingCount; // tracks meetings since game start
 
-        // ---- Option accessors (used by CorruptionZone) ----
-        public static float ZoneRadiusValue() => ZoneRadius != null ? ZoneRadius.getFloat() : 2.5f;
-        public static float ZoneDurationValue() => ZoneDuration != null ? ZoneDuration.getFloat() : 30f;
-        public static int MaxZonesValue() => MaxZones != null ? Mathf.RoundToInt(MaxZones.getFloat()) : 3;
-        public static int FiguresPerZoneValue() => FiguresPerZone != null ? Mathf.RoundToInt(FiguresPerZone.getFloat()) : 3;
-        public static float DriftSpeedValue() => DriftSpeed != null ? DriftSpeed.getFloat() : 0.6f;
-        public static bool ImpostorsSeeZonesValue() => ImpostorsSeeZones != null && ImpostorsSeeZones.getBool();
+        // Antidote button
+        private static int antidoteUsesLeft;
+        private static TheOtherRoles.Objects.CustomButton antidoteButton;
+        private static PlayerControl antidoteTarget;
+
+        // ---- Custom RPC (193) subtypes ----
+        private const byte RpcId = 193;
+        private const byte SubSetPoisoner = 0;
+        private const byte SubMarkBody = 1;      // victimId
+        private const byte SubPoisonReporter = 2; // reporterId
+        private const byte SubAntidote = 3;       // targetId
+        private const byte SubPoisonDeath = 4;    // targetId
 
         // ---- Role identity ----
-        private static RoleInfo corrupterInfo;
-        public static RoleInfo CorrupterInfo() => corrupterInfo ??= new RoleInfo(
-            "Corrupter", Color, "Your kills haunt the area with false visions",
-            "Your kills haunt the area with false visions", RoleId.Impostor);
+        private static RoleInfo poisonerInfo;
+        public static RoleInfo PoisonerInfo() => poisonerInfo ??= new RoleInfo(
+            "Poisoner", Color, "Your kills poison the reporter; the Medic can save them",
+            "Your kills poison the reporter; the Medic can save them", RoleId.Impostor);
 
-        // ====================================================================
-        // Options
-        // ====================================================================
         public static void CreateOptions() {
             try {
-                SpawnRate = CustomOption.Create(1430, Types.Impostor, "Corrupter",
+                SpawnRate = CustomOption.Create(1430, Types.Impostor, "Poisoner",
                     CustomOptionHolder.rates, null, true);
-                SpawnMinPlayers = CustomOption.Create(1431, Types.Impostor, "Corrupter Minimum Players To Spawn",
+                SpawnMinPlayers = CustomOption.Create(1431, Types.Impostor, "Poisoner Minimum Players To Spawn",
                     6f, 4f, 15f, 1f, SpawnRate);
-                ZoneRadius = CustomOption.Create(1432, Types.Impostor, "Corruption Zone Radius",
-                    2.5f, 1f, 6f, 0.5f, SpawnRate);
-                ZoneDuration = CustomOption.Create(1433, Types.Impostor, "Corruption Zone Duration",
-                    30f, 5f, 90f, 5f, SpawnRate);
-                MaxZones = CustomOption.Create(1434, Types.Impostor, "Corrupter Max Active Zones",
-                    3f, 1f, 8f, 1f, SpawnRate);
-                FiguresPerZone = CustomOption.Create(1435, Types.Impostor, "Fake Figures Per Zone",
-                    3f, 1f, 6f, 1f, SpawnRate);
-                DriftSpeed = CustomOption.Create(1436, Types.Impostor, "Figure Drift / Flicker Speed",
-                    0.6f, 0.1f, 2f, 0.1f, SpawnRate);
-                ImpostorsSeeZones = CustomOption.Create(1437, Types.Impostor, "Impostors Also See The Figures",
-                    false, SpawnRate);
-                UnknownsCollectionPlugin.Logger?.LogInfo("[Corrupter] Options created.");
+                PoisonDeathMeetings = CustomOption.Create(1432, Types.Impostor, "Poison Death After Meetings",
+                    2f, 1f, 5f, 1f, SpawnRate);
+                AntidoteCharges = CustomOption.Create(1433, Types.Impostor, "Medic Antidote Uses Per Round",
+                    1f, 0f, 5f, 1f, SpawnRate);
+                MaxPoisonedPerRound = CustomOption.Create(1434, Types.Impostor, "Max Poisoned Bodies Per Round",
+                    3f, 1f, 5f, 1f, SpawnRate);
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Poisoner] Options created.");
             } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[Corrupter] CreateOptions failed: {e}");
+                UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] CreateOptions failed: {e}");
             }
         }
 
-        public static void TryPatch(Harmony harmony) { /* all patches are attribute-based */ }
+        public static void TryPatch(Harmony harmony) { }
 
-        // ====================================================================
-        // Helpers
-        // ====================================================================
+        // ---- Helpers ----
+        private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
         private static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
         private static int LobbyPlayerCount() =>
             PlayerControl.AllPlayerControls.ToArray().Count(p => p != null && p.Data != null && !p.Data.Disconnected);
 
-        // ====================================================================
-        // Custom RPC senders (each applies locally too)
-        // ====================================================================
+        private static int AntidoteChargesValue() => AntidoteCharges != null ? Mathf.RoundToInt(AntidoteCharges.getFloat()) : 1;
+        private static int MaxPoisonedValue() => MaxPoisonedPerRound != null ? Mathf.RoundToInt(MaxPoisonedPerRound.getFloat()) : 3;
+        private static int PoisonDeathValue() => PoisonDeathMeetings != null ? Mathf.RoundToInt(PoisonDeathMeetings.getFloat()) : 2;
+
+        // ---- RPC ----
         private static MessageWriter BeginRpc(byte subtype) {
             MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
                 PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
@@ -114,38 +109,87 @@ namespace UnknownsCollection {
             return w;
         }
 
-        public static void SendSetCorrupter(byte id) {
+        public static void SendSetPoisoner(byte id) {
             try {
-                var w = BeginRpc(SubSetCorrupter);
+                var w = BeginRpc(SubSetPoisoner);
                 w.Write(id);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                ApplySetCorrupter(id);
-            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Corrupter] SendSetCorrupter failed: {e}"); }
+                ApplySetPoisoner(id);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] SendSetPoisoner failed: {e}"); }
         }
 
-        private static void SendAddZone(float x, float y) {
+        private static void SendMarkBody(byte victimId) {
             try {
-                var w = BeginRpc(SubAddZone);
-                w.Write(x);
-                w.Write(y);
+                var w = BeginRpc(SubMarkBody);
+                w.Write(victimId);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                CorruptionZone.Place(x, y);
-            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Corrupter] SendAddZone failed: {e}"); }
+                ApplyMarkBody(victimId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] SendMarkBody failed: {e}"); }
         }
 
-        // ---- Appliers (run on every client) ----
-        private static void ApplySetCorrupter(byte id) {
-            corrupter = Helpers.playerById(id);
-            active = corrupter != null;
+        private static void SendPoisonReporter(byte reporterId) {
+            try {
+                var w = BeginRpc(SubPoisonReporter);
+                w.Write(reporterId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyPoisonReporter(reporterId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] SendPoisonReporter failed: {e}"); }
+        }
+
+        private static void SendAntidote(byte targetId) {
+            try {
+                var w = BeginRpc(SubAntidote);
+                w.Write(targetId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyAntidote(targetId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] SendAntidote failed: {e}"); }
+        }
+
+        private static void SendPoisonDeath(byte targetId) {
+            try {
+                var w = BeginRpc(SubPoisonDeath);
+                w.Write(targetId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyPoisonDeath(targetId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] SendPoisonDeath failed: {e}"); }
+        }
+
+        // ---- Appliers ----
+        private static void ApplySetPoisoner(byte id) {
+            poisoner = Helpers.playerById(id);
+            active = poisoner != null;
             if (active) UCPromotion.Claim(id);
-            if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Corrupter] The Corrupter is {corrupter.Data?.PlayerName}.");
+            if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] The Poisoner is {poisoner.Data?.PlayerName}.");
         }
 
-        public static void MarkFromDraft(byte playerId) => ApplySetCorrupter(playerId);
+        private static void ApplyMarkBody(byte victimId) {
+            if (active) poisonedBodies.Add(victimId);
+            bodiesPoisonedThisRound.Add(victimId);
+        }
 
-        // ====================================================================
-        // RPC receiver
-        // ====================================================================
+        private static void ApplyPoisonReporter(byte reporterId) {
+            if (!active || reporterId == byte.MaxValue) return;
+            if (!poisonedReporters.ContainsKey(reporterId))
+                poisonedReporters[reporterId] = 0;
+        }
+
+        private static void ApplyAntidote(byte targetId) {
+            poisonedReporters.Remove(targetId);
+            antidoteUsesLeft--;
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Antidote used on player {targetId}.");
+        }
+
+        private static void ApplyPoisonDeath(byte targetId) {
+            var target = Helpers.playerById(targetId);
+            if (target == null || target.Data == null) return;
+            target.Data.IsDead = true;
+            poisonedReporters.Remove(targetId);
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Player {targetId} died from poison.");
+        }
+
+        public static void MarkFromDraft(byte playerId) => ApplySetPoisoner(playerId);
+
+        // ---- RPC handler ----
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
         [HarmonyPriority(Priority.High)]
         static class HandleRpcPatch {
@@ -154,32 +198,35 @@ namespace UnknownsCollection {
                 try {
                     byte subtype = reader.ReadByte();
                     switch (subtype) {
-                        case SubSetCorrupter: ApplySetCorrupter(reader.ReadByte()); break;
-                        case SubAddZone: { float x = reader.ReadSingle(); float y = reader.ReadSingle(); CorruptionZone.Place(x, y); break; }
-                        case SubClearZones: CorruptionZone.Clear(); break;
+                        case SubSetPoisoner: ApplySetPoisoner(reader.ReadByte()); break;
+                        case SubMarkBody: ApplyMarkBody(reader.ReadByte()); break;
+                        case SubPoisonReporter: ApplyPoisonReporter(reader.ReadByte()); break;
+                        case SubAntidote: ApplyAntidote(reader.ReadByte()); break;
+                        case SubPoisonDeath: ApplyPoisonDeath(reader.ReadByte()); break;
                     }
                 } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Corrupter] HandleRpc failed: {e}");
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] HandleRpc failed: {e}");
                 }
                 return false;
             }
         }
 
-        // ====================================================================
-        // Round reset
-        // ====================================================================
+        // ---- Round reset ----
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
             public static void Postfix() {
-                corrupter = null;
+                poisoner = null;
                 active = false;
-                CorruptionZone.Clear();
+                poisonedBodies.Clear();
+                poisonedReporters.Clear();
+                bodiesPoisonedThisRound.Clear();
+                meetingCount = 0;
+                antidoteUsesLeft = 0;
+                antidoteButton = null;
             }
         }
 
-        // ====================================================================
-        // Game start: host picks the Corrupter among plain Impostors and broadcasts it.
-        // ====================================================================
+        // ---- Game start ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
         [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
@@ -196,64 +243,186 @@ namespace UnknownsCollection {
 
                     var candidates = PlayerControl.AllPlayerControls.ToArray().Where(UCPromotion.IsPlainImpostor).ToList();
                     if (candidates.Count == 0) return;
-                    SendSetCorrupter(candidates[rnd.Next(candidates.Count)].PlayerId);
+                    SendSetPoisoner(candidates[rnd.Next(candidates.Count)].PlayerId);
                 } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Corrupter] IntroEnd pick failed: {e}");
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] IntroEnd pick failed: {e}");
                 }
             }
         }
 
-        // ====================================================================
-        // Kill detection (host): lay a zone at the body of every Corrupter kill.
-        // ====================================================================
+        // ---- Murder: mark body as poisoned ----
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
         static class MurderPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || corrupter == null || __instance == null || target == null) return;
-                    if (__instance.PlayerId != corrupter.PlayerId) return;
-                    Vector2 at = target.GetTruePosition();
-                    SendAddZone(at.x, at.y);
+                    if (!active || poisoner == null || target == null) return;
+                    if (__instance.PlayerId != poisoner.PlayerId) return;
+                    if (bodiesPoisonedThisRound.Count >= MaxPoisonedValue()) return;
+                    SendMarkBody(target.PlayerId);
                 } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Corrupter] kill->zone failed: {e}");
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] MurderPatch failed: {e}");
                 }
             }
         }
 
-        // ====================================================================
-        // Per-frame figure update + clear zones at every meeting.
-        // ====================================================================
-        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        static class HudUpdatePatch {
-            public static void Postfix() {
-                try { CorruptionZone.Update(); } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Corrupter] zone update failed: {e}"); }
+        // ---- Report detection: if the body is poisoned, poison the reporter ----
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.ReportDeadBody))]
+        static class ReportPatch {
+            public static void Prefix(PlayerControl __instance, [HarmonyArgument(0)] GameData.PlayerInfo target) {
+                try {
+                    if (AmongUsClient.Instance == null) return;
+                    if (!active || poisoner == null || target == null) return;
+                    if (!poisonedBodies.Contains(target.PlayerId)) return;
+                    if (!IsAlive(__instance)) return;
+                    SendPoisonReporter(__instance.PlayerId);
+                    poisonedBodies.Remove(target.PlayerId);
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] ReportPatch failed: {e}");
+                }
             }
         }
 
+        // ---- Meeting start: increment meeting counter, check for poison deaths ----
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
         static class MeetingStartPatch {
-            public static void Postfix() { CorruptionZone.Clear(); }
+            public static void Postfix() {
+                try {
+                    if (!active || poisoner == null) return;
+
+                    // Reset round tracking
+                    bodiesPoisonedThisRound.Clear();
+
+                    // Refill antidote charges
+                    antidoteUsesLeft = AntidoteChargesValue();
+
+                    // Increment meeting counter for poisoned reporters
+                    meetingCount++;
+                    int delay = PoisonDeathValue();
+                    var toKill = new List<byte>();
+                    foreach (var kvp in poisonedReporters) {
+                        int meetingsSince = meetingCount - kvp.Value;
+                        if (meetingsSince >= delay) {
+                            toKill.Add(kvp.Key);
+                        }
+                    }
+
+                    // Schedule deaths for after the meeting
+                    // We use the meeting end patch to actually kill them
+                    _pendingPoisonDeaths = toKill;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] MeetingStartPatch failed: {e}");
+                }
+            }
         }
 
-        // ====================================================================
-        // Role identity: show the Corrupter as its own role over the Impostor entry.
-        // ====================================================================
+        private static List<byte> _pendingPoisonDeaths = new();
+
+        // ---- Meeting end: execute pending poison deaths ----
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
+        static class MeetingClosePatch {
+            public static void Postfix() {
+                try {
+                    if (!active || poisoner == null || _pendingPoisonDeaths.Count == 0) return;
+                    if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+
+                    foreach (byte id in _pendingPoisonDeaths) {
+                        // Don't kill if they were cured during the meeting
+                        if (!poisonedReporters.ContainsKey(id)) continue;
+                        SendPoisonDeath(id);
+                    }
+                    _pendingPoisonDeaths.Clear();
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] MeetingClosePatch failed: {e}");
+                }
+            }
+        }
+
+        // ---- Antidote button for Medic ----
+        private static PlayerControl FindMedic() {
+            foreach (var p in PlayerControl.AllPlayerControls) {
+                if (p == null) continue;
+                if (p.PlayerId == Medic.medic?.PlayerId) return p;
+            }
+            return null;
+        }
+
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
+        [HarmonyPriority(Priority.Low)]
+        static class HudStartPatch {
+            public static void Postfix(HudManager __instance) {
+                try {
+                    var sprite = __instance.KillButton != null && __instance.KillButton.graphic != null
+                        ? __instance.KillButton.graphic.sprite : null;
+                    antidoteButton = new TheOtherRoles.Objects.CustomButton(
+                        () => {
+                            if (antidoteTarget == null || antidoteUsesLeft <= 0) return;
+                            SendAntidote(antidoteTarget.PlayerId);
+                            antidoteButton.Timer = 2f;
+                        },
+                        () => active && poisonedReporters.Count > 0 && FindMedic() != null
+                              && PlayerControl.LocalPlayer != null
+                              && PlayerControl.LocalPlayer.PlayerId == Medic.medic?.PlayerId
+                              && !PlayerControl.LocalPlayer.Data.IsDead
+                              && antidoteUsesLeft > 0,
+                        () => PlayerControl.LocalPlayer.CanMove && antidoteTarget != null && !InMeeting(),
+                        () => { },
+                        sprite,
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowRight,
+                        __instance, KeyCode.G, false, "ANTIDOTE");
+                    antidoteButton.MaxTimer = 0f;
+                    antidoteButton.Timer = 0f;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] Antidote button failed: {e}");
+                }
+            }
+        }
+
+        // ---- Medics's antidote targeting (update every frame) ----
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        static class HudUpdatePatch {
+            public static void Postfix() {
+                try {
+                    if (!active || poisonedReporters.Count == 0) return;
+                    if (PlayerControl.LocalPlayer == null) return;
+                    if (PlayerControl.LocalPlayer.PlayerId != Medic.medic?.PlayerId) return;
+                    if (PlayerControl.LocalPlayer.Data == null || PlayerControl.LocalPlayer.Data.IsDead) return;
+
+                    // Find nearest poisoned reporter
+                    antidoteTarget = null;
+                    float closest = 2f;
+                    foreach (var kvp in poisonedReporters) {
+                        var p = Helpers.playerById(kvp.Key);
+                        if (p == null || !IsAlive(p)) continue;
+                        float d = Vector2.Distance(PlayerControl.LocalPlayer.GetTruePosition(), p.GetTruePosition());
+                        if (d < closest) { closest = d; antidoteTarget = p; }
+                    }
+
+                    if (antidoteTarget != null && antidoteButton != null) {
+                        PlayerControlFixedUpdatePatch.setPlayerOutline(antidoteTarget, Color.green);
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] HudUpdate failed: {e}");
+                }
+            }
+        }
+
+        // ---- Role identity ----
         [HarmonyPatch(typeof(RoleInfo), nameof(RoleInfo.getRoleInfoForPlayer))]
         static class RoleInfoPatch {
             public static void Postfix(PlayerControl p, ref List<RoleInfo> __result) {
                 try {
-                    if (!active || corrupter == null || p == null || p != corrupter || __result == null) return;
+                    if (!active || poisoner == null || p == null || p != poisoner || __result == null) return;
                     bool replaced = false;
                     for (int i = 0; i < __result.Count; i++) {
                         if (__result[i] != null && __result[i].roleId == RoleId.Impostor) {
-                            __result[i] = CorrupterInfo();
+                            __result[i] = PoisonerInfo();
                             replaced = true;
                         }
                     }
-                    if (!replaced) __result.Insert(0, CorrupterInfo());
+                    if (!replaced) __result.Insert(0, PoisonerInfo());
                 } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Corrupter] RoleInfo postfix failed: {e}");
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] RoleInfo postfix failed: {e}");
                 }
             }
         }

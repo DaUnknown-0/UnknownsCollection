@@ -183,9 +183,7 @@ namespace UnknownsCollection {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || follower == null || firstDeathProcessed || target == null) return;
 
-                    // Only process the first actual death (a non-dead -> becomes dead transition)
-                    if (target.Data != null && target.Data.IsDead) return;
-                    // Don't count if the follower caused the death or is the target
+                    // Don't count if the follower is the target
                     if (target.PlayerId == follower.PlayerId) return;
 
                     firstDeathProcessed = true;

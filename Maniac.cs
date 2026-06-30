@@ -171,10 +171,10 @@ namespace UnknownsCollection {
             if (bombCarrier != null && bombCarrier.PlayerId == carrierId) {
                 bombDetected = true;
                 bombDetectedAt = Time.time;
-                // Show a red flash to the carrier as warning
+                // Play bomb warning sound for the carrier
                 if (PlayerControl.LocalPlayer != null
                     && PlayerControl.LocalPlayer.PlayerId == carrierId)
-                    Helpers.showFlash(new Color(1f, 0.2f, 0.2f, 0.8f), 0.5f);
+                    SoundEffectsManager.play("bombFuseBurning");
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb detected by carrier {bombCarrier.Data?.PlayerName}.");
             }
         }
@@ -400,7 +400,7 @@ namespace UnknownsCollection {
                     // PASS button shown to the bomb carrier
                     passButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
-                            var target = PlayerControlFixedUpdatePatch.setTarget(true);
+                            var target = PlayerControlFixedUpdatePatch.setTarget();
                             if (target == null || bombCarrier == null) return;
                             SendPassBomb(bombCarrier.PlayerId, target.PlayerId);
                             passButton.Timer = 2f;
@@ -408,7 +408,7 @@ namespace UnknownsCollection {
                         () => active && LocalHasBomb()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove
-                              && PlayerControlFixedUpdatePatch.setTarget(true) != null,
+                              && PlayerControlFixedUpdatePatch.setTarget() != null,
                         () => { },
                         passSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,

@@ -51,11 +51,15 @@ namespace UnknownsCollection {
         private static float currentAlpha = 1f;
         private static bool wasAbilityActive;
 
+        // Synced transparency alpha from RPC (for non-Scout clients)
+        private static float syncedScoutAlpha = 1f;
+
         // ---- Custom RPC (203) subtypes ----
         private const byte RpcId = 203;
         private const byte SubSetScout = 0;
         private const byte SubActivate = 1;
         private const byte SubDeactivate = 2;
+        private const byte SubTransparency = 3; // alpha(float) — broadcast to sync transparency on Scout to others
 
         // ---- Role identity ----
         private static RoleInfo scoutInfo;
@@ -131,6 +135,15 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Scout] SendDeactivate failed: {e}"); }
         }
 
+        private static void SendTransparency(float alpha) {
+            try {
+                var w = BeginRpc(SubTransparency);
+                w.Write(alpha);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyTransparency(alpha);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Scout] SendTransparency failed: {e}"); }
+        }
+
         private static void ApplySetScout(byte id) {
             scout = Helpers.playerById(id);
             active = scout != null;
@@ -151,6 +164,9 @@ namespace UnknownsCollection {
                 float mult = SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.5f;
                 PlayerControl.LocalPlayer.MyPhysics.Speed = originalSpeed * mult;
                 if (scoutButton != null) scoutButton.Timer = dur;
+                // Broadcast transparency to other clients
+                float alpha = GetTransparency();
+                SendTransparency(alpha);
             }
         }
 
@@ -162,6 +178,16 @@ namespace UnknownsCollection {
             }
             currentAlpha = 1f;
             if (scoutButton != null) scoutButton.Timer = scoutButton.MaxTimer;
+            if (IsLocalScout()) {
+                SendTransparency(1f);
+            }
+        }
+
+        private static void ApplyTransparency(float alpha) {
+            syncedScoutAlpha = alpha;
+            if (!IsLocalScout() && scout != null) {
+                SetPlayerAlpha(scout, alpha);
+            }
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetScout(playerId);
@@ -177,6 +203,7 @@ namespace UnknownsCollection {
                         case SubSetScout: ApplySetScout(reader.ReadByte()); break;
                         case SubActivate: ApplyActivate(); break;
                         case SubDeactivate: ApplyDeactivate(); break;
+                        case SubTransparency: ApplyTransparency(reader.ReadSingle()); break;
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Scout] HandleRpc failed: {e}");
@@ -249,7 +276,7 @@ namespace UnknownsCollection {
                         () => active && IsLocalScout()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove && !abilityActive,
-                        () => { abilityActive = false; abilityEndTime = 0; currentAlpha = 1f; },
+                        () => { abilityActive = false; abilityEndTime = 0; currentAlpha = 1f; if (IsLocalScout()) SendTransparency(1f); },
                         sprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
                         __instance, KeyCode.F, false, "SCOUT");
@@ -294,6 +321,9 @@ namespace UnknownsCollection {
                         float targetAlpha = abilityActive ? GetTransparency() : 1f;
                         currentAlpha = Mathf.Lerp(currentAlpha, targetAlpha, Time.deltaTime * 8f);
                         SetPlayerAlpha(PlayerControl.LocalPlayer, currentAlpha);
+                    } else if (syncedScoutAlpha < 1f) {
+                        // Apply synced transparency from RPC to Scout's visuals
+                        SetPlayerAlpha(scout, syncedScoutAlpha);
                     }
 
                     // Button timer management

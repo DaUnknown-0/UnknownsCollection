@@ -47,17 +47,21 @@ namespace UnknownsCollection {
         public static CustomOption WarnImpostor;      // 1466 - drained Impostor sees a warning flash
         public static CustomOption AffectSabotage;    // 1467 - also drain sabotage power (hold the sabotage cd)
         public static CustomOption SabotageHold;      // 1468 - seconds the sabotage cooldown is held while draining
+        public static CustomOption DrainCooldown;      // 1469 - cooldown after draining ends
 
         // ---- Runtime state ----
         public static PlayerControl siphoner;
         public static bool active;
         private static float lastDrainTime;
+        private static bool drainActive;
+        private static TheOtherRoles.Objects.CustomButton drainButton;
 
         // ---- Custom RPC (196) subtypes ----
         private const byte RpcId = 196; // == UnknownsCollectionPlugin.SiphonerRpcId
         private const byte SubSetSiphoner = 0;  // siphonerId
         private const byte SubDrain = 1;        // impostorId, penalty(float)
         private const byte SubSabotageHold = 2; // seconds(float) - block sabotage until Time.time+seconds
+        private const byte SubToggleDrain = 3;  // active(bool) - toggle drain on/off
 
         // Cross-plugin sabotage-block channel (AppDomain shared data, no hard dependency). Useful TOR
         // Stuff's Sabotage Tuning reads this same key and honours the block instead of fighting our
@@ -94,6 +98,8 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 SabotageHold = CustomOption.Create(1468, Types.Crewmate, "Sabotage Blocked While Draining (sec)",
                     8f, 1f, 30f, 1f, AffectSabotage);
+                DrainCooldown = CustomOption.Create(1469, Types.Crewmate, "Siphoner Drain Cooldown",
+                    20f, 5f, 60f, 2.5f, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Siphoner] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] CreateOptions failed: {e}");
@@ -110,6 +116,8 @@ namespace UnknownsCollection {
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
         private static int LobbyPlayerCount() =>
             PlayerControl.AllPlayerControls.ToArray().Count(p => p != null && p.Data != null && !p.Data.Disconnected);
+        public static bool IsLocalSiphoner() =>
+            siphoner != null && PlayerControl.LocalPlayer != null && siphoner.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
         private static float Range() => DrainRange != null ? DrainRange.getFloat() : 2f;
         private static float Penalty() => PenaltyPerTick != null ? PenaltyPerTick.getFloat() : 3f;
@@ -168,6 +176,20 @@ namespace UnknownsCollection {
             try { AppDomain.CurrentDomain.SetData(SabBlockKey, Time.time + seconds); } catch { }
         }
 
+        private static void SendToggleDrain(bool on) {
+            try {
+                var w = BeginRpc(SubToggleDrain);
+                w.Write(on);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyToggleDrain(on);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] SendToggleDrain failed: {e}"); }
+        }
+
+        private static void ApplyToggleDrain(bool on) {
+            drainActive = on;
+            if (!on) lastDrainTime = 0f;
+        }
+
         // ---- Appliers (run on every client) ----
         private static void ApplySetSiphoner(byte id) {
             siphoner = Helpers.playerById(id);
@@ -211,6 +233,7 @@ namespace UnknownsCollection {
                             break;
                         }
                         case SubSabotageHold: ApplySabotageHold(reader.ReadSingle()); break;
+                        case SubToggleDrain: ApplyToggleDrain(reader.ReadBoolean()); break;
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] HandleRpc failed: {e}");
@@ -228,6 +251,8 @@ namespace UnknownsCollection {
                 siphoner = null;
                 active = false;
                 lastDrainTime = 0f;
+                drainActive = false;
+                drainButton = null;
             }
         }
 
@@ -258,6 +283,43 @@ namespace UnknownsCollection {
         }
 
         // ====================================================================
+        // Button: toggle drain on/off
+        // ====================================================================
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
+        [HarmonyPriority(Priority.Low)]
+        static class HudStartPatch {
+            public static void Postfix(HudManager __instance) {
+                try {
+                    var sprite = __instance.KillButton != null && __instance.KillButton.graphic != null
+                        ? __instance.KillButton.graphic.sprite : null;
+                    drainButton = new TheOtherRoles.Objects.CustomButton(
+                        () => {
+                            if (!active || !IsLocalSiphoner()) return;
+                            bool newState = !drainActive;
+                            SendToggleDrain(newState);
+                            if (newState) {
+                                drainButton.Timer = 0f;
+                            } else {
+                                float cd = DrainCooldown != null ? DrainCooldown.getFloat() : 20f;
+                                drainButton.Timer = cd;
+                            }
+                        },
+                        () => active && IsLocalSiphoner()
+                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
+                        () => PlayerControl.LocalPlayer.CanMove,
+                        () => { drainActive = false; drainButton.Timer = drainButton.MaxTimer; },
+                        sprite,
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
+                        __instance, KeyCode.F, false, "DRAIN");
+                    drainButton.MaxTimer = DrainCooldown != null ? DrainCooldown.getFloat() : 20f;
+                    drainButton.Timer = 5f;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] Button creation failed: {e}");
+                }
+            }
+        }
+
+        // ====================================================================
         // Host-authoritative proximity drain (runs only on the host, throttled by the tick interval).
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
@@ -265,7 +327,7 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || InMeeting() || !IsAlive(siphoner)) return;
+                    if (!active || InMeeting() || !IsAlive(siphoner) || !drainActive) return;
                     if (Time.time - lastDrainTime < Interval()) return;
                     lastDrainTime = Time.time;
 

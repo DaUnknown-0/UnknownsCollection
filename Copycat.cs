@@ -334,12 +334,12 @@ namespace UnknownsCollection {
 
         // ---- RPC handlers ----
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.Low)] // after TOR's own handlers
+        [HarmonyPriority(Priority.High)]
         static class HandleRpcPatch {
-            public static void Postfix(byte callId, MessageReader reader) {
+            public static bool Prefix(byte callId, MessageReader reader) {
                 try {
                     if (callId == RpcId) {
-                        // Our own RPC
+                        // Our own RPC — handle and suppress original to prevent anti-cheat kick
                         byte subtype = reader.ReadByte();
                         switch (subtype) {
                             case SubSetCopycat: ApplySetCopycat(reader.ReadByte()); break;
@@ -347,18 +347,20 @@ namespace UnknownsCollection {
                             case SubEndCamouflage: EndCamouflage(); break;
                             case SubEndMorph: EndMorph(); break;
                         }
-                        return;
+                        return false;
                     }
 
-                    // Track ability usage for learning
-                    if (!active || copycat == null) return;
-                    var ability = RpcToAbility(callId);
-                    if (ability != null) {
-                        LearnAbility(ability.Value);
+                    // Track ability usage for learning (Prefix: can check callId without consuming reader)
+                    if (active && copycat != null) {
+                        var ability = RpcToAbility(callId);
+                        if (ability != null) {
+                            LearnAbility(ability.Value);
+                        }
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] HandleRpc failed: {e}");
                 }
+                return true;
             }
         }
 

@@ -132,45 +132,12 @@ namespace UnknownsCollection {
         public static bool IsLocalBug() =>
             bug != null && PlayerControl.LocalPlayer != null && bug.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
+        // ---- Glitch sound (embedded raw PCM, like TeslaSound) ----
+        private static AudioClip glitchClip;
+
         private static AudioClip GetGlitchClip() {
             if (glitchClip != null) return glitchClip;
-            try {
-                string dllDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                string wavPath = Path.Combine(dllDir, "sfx_similar.wav");
-                if (!File.Exists(wavPath)) {
-                    wavPath = Path.Combine(Directory.GetParent(dllDir)?.FullName ?? dllDir, "sfx_similar.wav");
-                }
-                if (File.Exists(wavPath)) {
-                    byte[] wavBytes = File.ReadAllBytes(wavPath);
-                    int channels = wavBytes[22];
-                    int sampleRate = BitConverter.ToInt32(wavBytes, 24);
-                    int bitsPerSample = BitConverter.ToInt16(wavBytes, 34);
-                    int offset = 12;
-                    int dataSize = 0, dataOffset = 0;
-                    while (offset < wavBytes.Length - 8) {
-                        string chunkId = System.Text.Encoding.ASCII.GetString(wavBytes, offset, 4);
-                        int chunkSize = BitConverter.ToInt32(wavBytes, offset + 4);
-                        if (chunkId == "data") { dataOffset = offset + 8; dataSize = chunkSize; break; }
-                        offset += 8 + chunkSize;
-                    }
-                    if (dataSize > 0) {
-                        int bytesPerSample = bitsPerSample / 8;
-                        int sampleCount = dataSize / bytesPerSample;
-                        float[] samples = new float[sampleCount];
-                        for (int i = 0; i < sampleCount; i++) {
-                            if (bytesPerSample == 2)
-                                samples[i] = BitConverter.ToInt16(wavBytes, dataOffset + i * 2) / 32768f;
-                            else
-                                samples[i] = (wavBytes[dataOffset + i] - 128) / 128f;
-                        }
-                        glitchClip = AudioClip.Create("BugGlitch", sampleCount / channels, channels, sampleRate, false);
-                        glitchClip.SetData(samples, 0);
-                        UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Glitch sound loaded.");
-                    }
-                }
-            } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogWarning($"[Bug] Could not load glitch sound: {e.Message}");
-            }
+            glitchClip = BugSound.LoadClip();
             return glitchClip;
         }
 

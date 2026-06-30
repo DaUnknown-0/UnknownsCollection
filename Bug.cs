@@ -185,6 +185,7 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 bug = null;
                 active = false;
+                bugPlayerId = byte.MaxValue;
                 triggerBugWin = false;
             }
         }

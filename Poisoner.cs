@@ -188,7 +188,7 @@ namespace UnknownsCollection {
         private static void ApplyPoisonReporter(byte reporterId) {
             if (!active || reporterId == byte.MaxValue) return;
             if (!poisonedReporters.ContainsKey(reporterId))
-                poisonedReporters[reporterId] = 0;
+                poisonedReporters[reporterId] = meetingCount;
         }
 
         private static void ApplyAntidote(byte targetId) {

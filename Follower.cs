@@ -157,22 +157,56 @@ namespace UnknownsCollection {
             }
         }
 
+        // Shared "first death" handling for both detection paths below (kill and exile) so the same
+        // player can never be counted twice as the first death.
+        private static void HandleFirstDeath(PlayerControl target) {
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+            if (!active || follower == null || hasCopied || target == null) return;
+
+            // Don't count if the follower is the target
+            if (target.PlayerId == follower.PlayerId) return;
+
+            UnknownsCollectionPlugin.Logger?.LogInfo(
+                $"[Follower] First death: {target.Data?.PlayerName}, shifting role to Follower.");
+            SendShiftRole(follower.PlayerId, target.PlayerId);
+        }
+
         // Detect first death (host): when someone dies for the first time, tell the Follower
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
         static class MurderPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
-                    if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || follower == null || hasCopied || target == null) return;
-
-                    // Don't count if the follower is the target
-                    if (target.PlayerId == follower.PlayerId) return;
-
-                    UnknownsCollectionPlugin.Logger?.LogInfo(
-                        $"[Follower] First death: {target.Data?.PlayerName}, shifting role to Follower.");
-                    SendShiftRole(follower.PlayerId, target.PlayerId);
+                    HandleFirstDeath(target);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Follower] death detection failed: {e}");
+                }
+            }
+        }
+
+        // Exile also counts as a death. Mirrors TOR's own exile hook (TheOtherRoles.Patches.
+        // ExileControllerPatch.ExileControllerWrapUpPatch), which patches both ExileController.WrapUp
+        // (regular maps) and AirshipExileController.WrapUpAndSpawn (Airship) and reads the exiled
+        // player off __instance.initData.networkedPlayer.Object — the same fields used here.
+        [HarmonyPatch(typeof(ExileController), nameof(ExileController.WrapUp))]
+        static class ExileWrapUpPatch {
+            public static void Postfix(ExileController __instance) {
+                try {
+                    var networkedPlayer = __instance?.initData.networkedPlayer;
+                    HandleFirstDeath(networkedPlayer != null ? networkedPlayer.Object : null);
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Follower] exile death detection failed: {e}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(AirshipExileController), nameof(AirshipExileController.WrapUpAndSpawn))]
+        static class AirshipExileWrapUpPatch {
+            public static void Postfix(AirshipExileController __instance) {
+                try {
+                    var networkedPlayer = __instance?.initData.networkedPlayer;
+                    HandleFirstDeath(networkedPlayer != null ? networkedPlayer.Object : null);
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Follower] exile death detection failed: {e}");
                 }
             }
         }

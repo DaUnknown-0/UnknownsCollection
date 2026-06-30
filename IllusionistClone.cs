@@ -33,6 +33,7 @@
 using System;
 using System.Collections.Generic;
 using PowerTools;
+using TMPro;
 using UnityEngine;
 using TheOtherRoles;
 using static TheOtherRoles.TheOtherRoles;
@@ -53,6 +54,9 @@ namespace UnknownsCollection {
         private static SpriteAnim skinAnim;          // plays the skin's matching Idle/Run/EnterVent/ExitVent
         private static AnimationClip sIdle, sRun, sEnter, sExit;
         private static bool useSkinAnim;             // true once the skin SpriteAnim + clips are confirmed working
+
+        private static TextMeshPro colorBlindSrc;     // live colorblind-mode color-name label (CosmeticsLayer.colorBlindText)
+        private static TextMeshPro colorBlindClone;   // its standalone clone, kept in sync each frame
 
         private static Transform[] cosmeticTransforms; // transforms of cosmetics (hat, visor) that need to move with vents
         private static Vector3[] cosmeticOriginalPos;  // original localPosition for each cosmetic, parallel to cosmeticTransforms
@@ -158,6 +162,26 @@ namespace UnknownsCollection {
                 }
                 cosmeticTransforms = cosmeticList.ToArray();
                 cosmeticOriginalPos = cosmeticPosList.ToArray();
+
+                // Colorblind-mode color-name label: not a SpriteRenderer, so it is invisible to the snapshot
+                // above. It is a standalone leaf TextMeshPro object (unlike CosmeticsLayer/PlayerControl, its
+                // Awake/OnEnable do not re-initialize cosmetics), so cloning the live GameObject directly is
+                // safe here. Visibility/text are re-synced every frame from the live label in MirrorAppearance().
+                try {
+                    colorBlindSrc = cos.colorBlindText;
+                    if (colorBlindSrc != null) {
+                        var textGo = UnityEngine.Object.Instantiate(colorBlindSrc.gameObject, go.transform);
+                        textGo.transform.localPosition = colorBlindSrc.transform.position - bodyWorld;
+                        textGo.transform.localRotation = colorBlindSrc.transform.rotation;
+                        textGo.transform.localScale = colorBlindSrc.transform.lossyScale;
+                        colorBlindClone = textGo.GetComponent<TextMeshPro>();
+                        textGo.SetActive(false); // MirrorAppearance() turns it on if/when the option is live
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Illusionist] colorblind-text clone failed: {e}");
+                    colorBlindSrc = null;
+                    colorBlindClone = null;
+                }
 
                 path = new List<Vector2>(points);
                 vents = ventFlags != null ? new List<bool>(ventFlags) : new List<bool>();
@@ -327,6 +351,9 @@ namespace UnknownsCollection {
         private static void SetVisibleAll(bool on) {
             if (renderers == null) return;
             foreach (var r in renderers) if (r != null) r.gameObject.SetActive(on);
+            // The colorblind label is not part of `renderers`; hide it with the rest of the figure while
+            // vented. MirrorAppearance() re-shows it (if still appropriate) once the figure is out again.
+            if (colorBlindClone != null && !on) colorBlindClone.gameObject.SetActive(false);
         }
 
         // Move cosmetics (hat, visor) down/up during vent animations so they follow the body sprite
@@ -384,7 +411,23 @@ namespace UnknownsCollection {
                 if (!animDriven) c.sprite = s.sprite;            // body/skin sprites are animation-driven
                 c.color = s.color;
                 c.flipX = false;
+                // CosmeticsLayer.SetCosmeticZIndices() recomputes hat/visor/skin sort order on the live
+                // player (e.g. on body-type or vent-related changes), so a one-time copy at Spawn() can go
+                // stale and show the hat front/back layers in the wrong order. Re-sync every frame instead.
+                c.sortingLayerID = s.sortingLayerID;
+                c.sortingOrder = s.sortingOrder;
                 try { c.material.CopyPropertiesFromMaterial(s.material); } catch { }
+            }
+
+            if (colorBlindClone != null && colorBlindSrc != null) {
+                try {
+                    bool show = src.cosmetics.showColorBlindText && colorBlindSrc.gameObject.activeInHierarchy;
+                    colorBlindClone.gameObject.SetActive(show);
+                    if (show) {
+                        colorBlindClone.text = colorBlindSrc.text;
+                        colorBlindClone.color = colorBlindSrc.color;
+                    }
+                } catch { }
             }
         }
 
@@ -452,6 +495,8 @@ namespace UnknownsCollection {
             useSkinAnim = false;
             cosmeticTransforms = null;
             cosmeticOriginalPos = null;
+            colorBlindSrc = null;
+            colorBlindClone = null;
             ventAnimProgress = 0f;
             ventAnimStartTime = 0f;
             ventPhase = VentPhase.Out;

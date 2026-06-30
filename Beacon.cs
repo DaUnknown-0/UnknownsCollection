@@ -7,10 +7,11 @@
  *
  * A normal TOR Crewmate is silently promoted to "The Beacon" at game start (host-authoritative pick,
  * broadcast via RPC 204). The Beacon is never affected by lights sabotage (always has full vision).
- * Additionally, any crewmate within ShareRadius of the Beacon gets a second LightSource at the Beacon's
- * position — a true fog-of-war shared vision circle. The crewmate sees their own normal vision circle
- * AND an extra circle centered on the Beacon. The second LightSource is created via AddComponent and
- * configured through its public API (SetViewDistance, SetupLightingForGameplay).
+ * Additionally, any crewmate within ShareRadius of the Beacon AND with a clear line of sight to the
+ * Beacon (no wall in between, mirroring Witness.CanSee) shares that full vision: ShipStatus.
+ * CalculateLightRadius is patched so the crewmate's own radius is boosted to the Beacon's full radius
+ * while in range and visible (LightPatch below) - Among Us only ever renders a single vision circle
+ * centered on the local player, so there is no way to give a separate circle around the Beacon itself.
  *
  * Options live in the 1540-1543 block. See ID-Registry.md.
  */
@@ -41,10 +42,6 @@ namespace UnknownsCollection {
         // ---- Runtime state ----
         public static PlayerControl beacon;
         public static bool active;
-
-        // Shared vision: no separate LightSource; nearby crewmates are boosted
-        // via CalculateLightRadius instead.
-        private static void DestroySharedLight() { }
 
         // ---- Custom RPC (204) subtypes ----
         private const byte RpcId = 204;
@@ -81,6 +78,19 @@ namespace UnknownsCollection {
         public static bool IsLocalBeacon() =>
             beacon != null && PlayerControl.LocalPlayer != null && beacon.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
+        // Within ShareRadius AND a clear line of sight to the Beacon (no wall in between) - mirrors
+        // Witness.CanSee so a crewmate on the other side of a wall doesn't get the vision boost.
+        private static bool CanSeeBeacon(PlayerControl crew) {
+            Vector2 from = crew.GetTruePosition();
+            Vector2 to = beacon.GetTruePosition();
+            Vector2 dir = to - from;
+            float mag = dir.magnitude;
+            float shareDist = ShareRadius != null ? ShareRadius.getFloat() : 15f;
+            if (mag > shareDist) return false;
+            if (mag < 0.05f) return true;
+            return !PhysicsHelpers.AnyNonTriggersBetween(from, dir.normalized, mag, Constants.ShipAndObjectsMask);
+        }
+
         private static MessageWriter BeginRpc(byte subtype) {
             MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
                 PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
@@ -101,7 +111,6 @@ namespace UnknownsCollection {
             beacon = Helpers.playerById(id);
             active = beacon != null;
             if (active) UCPromotion.Claim(id);
-            DestroySharedLight();
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Beacon] The Beacon is {beacon.Data?.PlayerName}.");
         }
 
@@ -127,7 +136,6 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 beacon = null;
                 active = false;
-                DestroySharedLight();
             }
         }
 
@@ -169,14 +177,12 @@ namespace UnknownsCollection {
                         return;
                     }
 
-                    // Boost nearby non-impostor crewmates
+                    // Boost nearby non-impostor crewmates - only while they actually have a clear line of
+                    // sight to the Beacon (not just in range), so a wall between them still blocks it.
                     if (p.Role != null && !p.Role.IsImpostor && !p.IsDead && !p.Disconnected) {
                         var crew = Helpers.playerById(p.PlayerId);
-                        if (crew != null) {
-                            float shareDist = ShareRadius != null ? ShareRadius.getFloat() : 15f;
-                            float dist = Vector2.Distance(beacon.GetTruePosition(), crew.GetTruePosition());
-                            if (dist <= shareDist)
-                                __result = Mathf.Max(__result, fullRadius);
+                        if (crew != null && CanSeeBeacon(crew)) {
+                            __result = Mathf.Max(__result, fullRadius);
                         }
                     }
                 } catch (Exception e) {

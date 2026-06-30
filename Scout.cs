@@ -276,7 +276,7 @@ namespace UnknownsCollection {
                         () => active && IsLocalScout()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove && !abilityActive,
-                        () => { abilityActive = false; abilityEndTime = 0; currentAlpha = 1f; if (IsLocalScout()) SendTransparency(1f); },
+                        () => { if (IsLocalScout()) SendDeactivate(); },
                         sprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
                         __instance, KeyCode.F, false, "SCOUT");
@@ -296,12 +296,15 @@ namespace UnknownsCollection {
                     if (!active || scout == null) return;
                     bool local = IsLocalScout();
 
-                    // Timer check (host-side: auto-end)
+                    // Timer check: the Scout's own client is the authority for its timer (the button's
+                    // hasButton gate is IsLocalScout()-only), broadcasting via RPC so non-host scouts also
+                    // sync everyone else. The host still covers it as a fallback so play continues even if
+                    // the Scout disconnects mid-effect.
                     if (abilityActive && Time.time >= abilityEndTime) {
-                        if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) {
+                        if (local) {
                             SendDeactivate();
-                        } else if (local) {
-                            ApplyDeactivate();
+                        } else if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) {
+                            SendDeactivate();
                         }
                     }
 

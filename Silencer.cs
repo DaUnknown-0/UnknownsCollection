@@ -8,9 +8,11 @@
  * A normal TOR Impostor is silently promoted to "The Silencer" at game start (host-authoritative pick,
  * broadcast via RPC 194). During a round the Silencer marks a victim with a SILENCE button (cooldown +
  * a per-round budget). A marked player is MUTED in the NEXT meeting: they cannot vote (vote area click
- * + skip blocked) and cannot chat (SendChat blocked). To make the mute obvious to EVERYONE - so the
- * victim can also mute their voice client - a red mute marker is shown next to their name both in-game
- * and on their meeting vote area. The mute lasts exactly one meeting and is cleared when it ends.
+ * + skip blocked) and cannot chat (SendChat blocked) - they are excluded from the meeting entirely
+ * rather than having a vote cast on their behalf, so the vote can also end early without waiting on
+ * them (see MissedVote in MeetingUpdatePatch). To make the mute obvious to EVERYONE - so the victim can
+ * also mute their voice client - a red mute marker is shown next to their name both in-game and on
+ * their meeting vote area. The mute lasts exactly one meeting and is cleared when it ends.
  *
  * ARCHITECTURE mirrors the Tesla/Saboteur: brand-new role built WITHOUT touching TOR source - own
  * RoleInfo tag over the real Impostor role, a CustomButton, a small custom RPC (194), client-side
@@ -278,8 +280,18 @@ namespace UnknownsCollection {
             }
         }
 
+        // A muted player can never cast a real vote (VoteSelectPatch blocks the click), so without this
+        // their PlayerVoteArea.VotedFor would sit at HasNotVoted (255) forever and TOR's "everyone voted"
+        // check (MeetingPatch.cs: playerStates.All(ps => ps.AmDead || ps.DidVote)) would never trigger an
+        // early end while they're alive. MissedVote (254) is the vanilla "this player didn't vote" sentinel
+        // - it makes DidVote true (excluding them from that check) while staying excluded from the actual
+        // tally (MeetingPatch.cs CalculateVotes explicitly skips 252/254/255). We deliberately do NOT use
+        // SkippedVote (253): that one IS counted as a real Skip vote in the tally.
+        private const byte MissedVote = 254;
+
         // ====================================================================
-        // Meeting: show the mute marker on vote areas + disable the skip button for a muted local player.
+        // Meeting: show the mute marker on vote areas, mark muted players as "missed vote" so the meeting
+        // can end early without them, and disable the skip button for a muted local player.
         // ====================================================================
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Update))]
         static class MeetingUpdatePatch {
@@ -288,8 +300,9 @@ namespace UnknownsCollection {
                     if (!active || __instance == null) return;
 
                     foreach (var pva in __instance.playerStates) {
-                        if (pva == null || pva.NameText == null) continue;
-                        if (!silencedIds.Contains((byte)pva.TargetPlayerId)) continue;
+                        if (pva == null || !silencedIds.Contains(pva.TargetPlayerId)) continue;
+                        if (pva.VotedFor == byte.MaxValue) pva.VotedFor = MissedVote; // exclude from "all voted"
+                        if (pva.NameText == null) continue;
                         var t = pva.NameText.text;
                         if (!t.Contains("MUTED")) pva.NameText.text = t + Marker;
                     }
@@ -304,6 +317,26 @@ namespace UnknownsCollection {
         [HarmonyPriority(Priority.High)]
         static class VoteSelectPatch {
             static bool Prefix() => !LocalIsSilenced();
+        }
+
+        // Block a muted local player from confirming a Skip vote (unless CanStillSkip is enabled).
+        // The Skip "button" is a PlayerVoteArea like any other, with the reserved candidate id 253
+        // (see UsefulTORStuff/TiebreakerMultiple.cs: "252/253(skip)/254/255 are not player votes").
+        // We gate MeetingHud.CastVote - the method both player-target and skip votes funnel through -
+        // instead of the Skip area's own click handler, since that handler isn't reliably identifiable
+        // from the managed assembly (it resolves into native IL2CPP code with no decompilable C# body).
+        // Only the LOCAL player's own skip attempt (srcPlayerId == local player) is suppressed, so this
+        // never interferes with the host applying OTHER players' votes through the same method.
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CastVote))]
+        [HarmonyPriority(Priority.High)]
+        static class SkipVotePatch {
+            private const byte SkipVoteCandidateId = 253;
+            static bool Prefix([HarmonyArgument(0)] byte srcPlayerId, [HarmonyArgument(1)] byte suspectIdx) {
+                if (suspectIdx != SkipVoteCandidateId) return true; // not a Skip vote — don't touch normal votes
+                if (CanStillSkip == null || CanStillSkip.getBool()) return true;
+                if (PlayerControl.LocalPlayer == null || srcPlayerId != PlayerControl.LocalPlayer.PlayerId) return true;
+                return !LocalIsSilenced();
+            }
         }
 
         // Block a muted local player from chatting (during the meeting where they are muted).

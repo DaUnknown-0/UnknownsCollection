@@ -210,9 +210,17 @@ namespace UnknownsCollection {
         private static void ApplyClear() => ClearBomb();
 
         private static void ClearBomb() {
+            RemoveBombTag(bombCarrier);
             bombCarrier = null;
             bombDetected = false;
             bombKillUsed = false;
+        }
+
+        private static void RemoveBombTag(PlayerControl carrier) {
+            if (carrier == null || carrier.cosmetics?.nameText == null) return;
+            var t = carrier.cosmetics.nameText.text;
+            int tagStart = t.IndexOf(" <color=#FF0000><b>[BOMB!]</b></color>", StringComparison.Ordinal);
+            if (tagStart >= 0) carrier.cosmetics.nameText.text = t.Substring(0, tagStart);
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetManiac(playerId);
@@ -283,7 +291,10 @@ namespace UnknownsCollection {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || bombCarrier == null || !IsAlive(bombCarrier) || InMeeting()) {
-                        if (bombCarrier != null && InMeeting()) ClearBomb();
+                        // Clear on any disqualifying state (meeting start, or the carrier dying some
+                        // other way) so the Maniac can plant a new bomb right away instead of being
+                        // stuck until the next meeting.
+                        if (bombCarrier != null) ClearBomb();
                         return;
                     }
 

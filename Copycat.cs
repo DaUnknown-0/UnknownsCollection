@@ -87,7 +87,7 @@ namespace UnknownsCollection {
         // ---- Custom RPC (202) subtypes ----
         private const byte RpcId = 206;
         private const byte SubSetCopycat = 0;
-        private const byte SubUseAbility = 1;   // abilityId
+        private const byte SubUseAbility = 1;   // abilityId, targetId (targetId = byte.MaxValue when unused)
         private const byte SubEndCamouflage = 2;
         private const byte SubEndMorph = 3;
 
@@ -213,12 +213,13 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] SendSetCopycat failed: {e}"); }
         }
 
-        private static void SendUseAbility(Ability ability) {
+        private static void SendUseAbility(Ability ability, byte targetId = byte.MaxValue) {
             try {
                 var w = BeginRpc(SubUseAbility);
                 w.Write((byte)ability);
+                w.Write(targetId);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                ApplyUseAbility(ability);
+                ApplyUseAbility(ability, targetId);
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] SendUseAbility failed: {e}"); }
         }
 
@@ -235,7 +236,7 @@ namespace UnknownsCollection {
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] The Copycat is {copycat.Data?.PlayerName}.");
         }
 
-        private static void ApplyUseAbility(Ability ability) {
+        private static void ApplyUseAbility(Ability ability, byte targetId = byte.MaxValue) {
             if (!active || copycat == null) return;
             if (!IsAlive(copycat)) return;
 
@@ -244,7 +245,7 @@ namespace UnknownsCollection {
                 case Ability.Morphling: StartMorph(); break;
                 case Ability.Vent: DoVent(); break;
                 case Ability.TimeMaster: StartShield(); break;
-                case Ability.Sheriff: DoShoot(); break;
+                case Ability.Sheriff: DoShoot(targetId); break;
             }
 
             if (!usedAbilities.Contains(ability)) {
@@ -326,9 +327,27 @@ namespace UnknownsCollection {
             shieldEndTime = Time.time + 5f;
         }
 
-        private static void DoShoot() {
-            // Sheriff shoot: the copycat clicks the button while targeting a player
-            // This is handled in the button onClick via targeting
+        // Runs on every client via ApplyUseAbility (SubUseAbility RPC), like every other ability - this
+        // is what makes the kill happen regardless of whether the Copycat itself is the host. The raw
+        // TOR RPC (108) must still only be sent once, by the Copycat's own client (mirrors DoVent).
+        private static void DoShoot(byte targetId) {
+            var target = Helpers.playerById(targetId);
+            if (target == null || target.Data == null || copycat == null) return;
+            bool targetIsImpostor = target.Data.Role != null && target.Data.Role.IsImpostor;
+
+            if (IsLocalCopycat() && AmongUsClient.Instance != null) {
+                var w = AmongUsClient.Instance.StartRpcImmediately(
+                    target.NetId, TorSheriffRpc, SendOption.Reliable, -1);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+            }
+
+            if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) {
+                if (targetIsImpostor) {
+                    target.Data.IsDead = true;
+                } else {
+                    copycat.Data.IsDead = true;
+                }
+            }
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetCopycat(playerId);
@@ -363,7 +382,12 @@ namespace UnknownsCollection {
                         byte subtype = reader.ReadByte();
                         switch (subtype) {
                             case SubSetCopycat: ApplySetCopycat(reader.ReadByte()); break;
-                            case SubUseAbility: ApplyUseAbility((Ability)reader.ReadByte()); break;
+                            case SubUseAbility: {
+                                var ability = (Ability)reader.ReadByte();
+                                byte targetId = reader.ReadByte();
+                                ApplyUseAbility(ability, targetId);
+                                break;
+                            }
                             case SubEndCamouflage: EndCamouflage(); break;
                             case SubEndMorph: EndMorph(); break;
                         }
@@ -554,8 +578,7 @@ namespace UnknownsCollection {
             switch (ability) {
                 case Ability.Sheriff:
                     if (currentTarget == null) return;
-                    // Perform sheriff check
-                    PerformSheriffKill(currentTarget);
+                    SendUseAbility(ability, currentTarget.PlayerId);
                     break;
                 case Ability.Morphling:
                     if (currentMorphTarget == null) return;
@@ -566,26 +589,6 @@ namespace UnknownsCollection {
                     SendUseAbility(ability);
                     break;
             }
-        }
-
-        private static void PerformSheriffKill(PlayerControl target) {
-            if (target == null || target.Data == null) return;
-            bool targetIsImpostor = target.Data.Role != null && target.Data.Role.IsImpostor;
-            if (targetIsImpostor) {
-                // Kill the target
-                if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) {
-                    target.Data.IsDead = true;
-                    AmongUsClient.Instance.FinishRpcImmediately(
-                        AmongUsClient.Instance.StartRpcImmediately(
-                            target.NetId, TorSheriffRpc, SendOption.Reliable, -1));
-                }
-            } else {
-                // Kill the Copycat instead
-                if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) {
-                    copycat.Data.IsDead = true;
-                }
-            }
-            usedAbilities.Add(Ability.Sheriff);
         }
 
         // ---- Task management ----

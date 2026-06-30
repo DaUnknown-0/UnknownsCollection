@@ -56,7 +56,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte WitnessRpcId = 197;
     public const byte BugRpcId = 198;
     public const byte ManiacRpcId = 199;
-    public const byte FollowerRpcId = 200;
+    public const byte FollowerRpcId = 207; // 200 conflicts with another DaUnknown mod's reserved range
     public const byte ShadeRpcId = 205;   // 201 conflicts with Chance.ChaosRpcId
     public const byte CopycatRpcId = 206; // 202 conflicts with Chance.ChaosModifierClearRpcId
     public const byte ScoutRpcId = 203;

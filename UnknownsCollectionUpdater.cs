@@ -123,6 +123,13 @@ namespace UnknownsCollection {
             }
 
             var asset = release.Assets.Find(FilterPluginAsset);
+            if (asset == null) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"Update download: release {release?.Tag} has no '{PluginAssetName}' asset — aborting.");
+                _updateState = 3;
+                if (!managerMode) { popup.TextAreaTMP.text = "Update wasn't successful\nTry again later,\nor update manually."; button.SetActive(true); }
+                _busy = false;
+                yield break;
+            }
             var www = new UnityWebRequest();
             www.SetMethod(UnityWebRequest.UnityWebRequestMethod.Get);
             www.SetUrl(asset.DownloadUrl);

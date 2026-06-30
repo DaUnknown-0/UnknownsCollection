@@ -490,9 +490,16 @@ namespace UnknownsCollection {
             // Sanity: the reported position must match the stored console.
             if (Vector2.Distance(new Vector2(x, y), new Vector2(sabotagedX, sabotagedY)) > 1.0f) return;
 
+            if (!IsAlive(saboteur)) {
+                // The Saboteur died before the sabotage was completed - the trap has no one to attribute
+                // the kill to, so it fizzles instead of making the victim "murder" themselves.
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Saboteur] kill request ignored: Saboteur is dead.");
+                return;
+            }
+
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request ACCEPTED for victim {victim.Data?.PlayerName}.");
             killUsedThisRound = true;
-            byte killerId = IsAlive(saboteur) ? saboteur.PlayerId : victimId;
+            byte killerId = saboteur.PlayerId;
             SendKillFx(victimId);                 // FX first (everywhere)
             RpcUncheckedMurder(killerId, victimId);
             SendClearSabotage();                  // consume the sabotage
@@ -625,7 +632,8 @@ namespace UnknownsCollection {
                 float d = Vector2.Distance(me.GetTruePosition(), new Vector2(sabotagedX, sabotagedY));
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[Saboteur] task step completed (prog {lastProgress}->{prog}); dist to sabotaged console = {d:F2} (need <=2.0)");
-                if (d <= 2.0f) SendRequestKill(me.PlayerId, sabotagedX, sabotagedY);
+                Vector2 truePos = me.GetTruePosition();
+                if (d <= 2.0f) SendRequestKill(me.PlayerId, truePos.x, truePos.y);
             }
             lastProgress = prog;
             progressInit = true;

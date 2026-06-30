@@ -295,6 +295,11 @@ namespace UnknownsCollection {
                     foreach (var p in PlayerControl.AllPlayerControls) {
                         if (p == null || p.Data == null || p.Data.Role == null) continue;
                         if (p.Data.Role.IsImpostor) continue;       // killers/impostors don't count as witnesses
+                        // Neutral roles (Jester, Jackal, Bug, Copycat, ...) aren't crewmates either - only
+                        // a genuine crewmate may be the "sole crewmate witness" (mirrors UCPromotion's
+                        // plain-crewmate check / RoleInfo.isNeutral, the project's standard crew/neutral split).
+                        var info = RoleInfo.getRoleInfoForPlayer(p, false).FirstOrDefault();
+                        if (info != null && info.isNeutral) continue;
                         if (!IsAlive(p)) continue;                  // the victim (now dead) is excluded
                         if (CanSee(p, at)) seers.Add(p.PlayerId);
                     }

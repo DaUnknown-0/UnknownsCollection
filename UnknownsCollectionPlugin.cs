@@ -49,7 +49,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte TeslaRpcId = 190;
     public const byte VersionHandshakeRpcId = 191;
     public const byte SaboteurRpcId = 192;
-    public const byte CorrupterRpcId = 193;
+    public const byte PoisonerRpcId = 193;
     public const byte SilencerRpcId = 194;
     public const byte IllusionistRpcId = 195;
     public const byte SiphonerRpcId = 196;

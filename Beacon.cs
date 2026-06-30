@@ -42,9 +42,9 @@ namespace UnknownsCollection {
         public static PlayerControl beacon;
         public static bool active;
 
-        // Shared vision: tracks whether local crewmate's light is boosted near Beacon
-        private static float originalViewDistance;
-        private static bool isViewBoosted;
+        // Shared vision: no separate LightSource; nearby crewmates are boosted
+        // via CalculateLightRadius instead.
+        private static void DestroySharedLight() { }
 
         // ---- Custom RPC (204) subtypes ----
         private const byte RpcId = 204;
@@ -154,76 +154,33 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Light radius: Beacon always has full vision (its own circle). ----
-        //      The crewmate's own circle is NOT modified — they keep their normal
-        //      vision radius.  The second circle is a separate LightSource managed
-        //      by HudManager.Update below.
+        // ---- Light radius: Beacon always has full vision; nearby crewmates share it. ----
         [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.CalculateLightRadius))]
         static class LightPatch {
             public static void Postfix(ref float __result, ShipStatus __instance, [HarmonyArgument(0)] NetworkedPlayerInfo p) {
                 try {
-                    if (!active || beacon == null || p == null) return;
-                    if (p.PlayerId == beacon.PlayerId && IsAlive(beacon)) {
-                        __result = __instance.MaxLightRadius * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
+                    if (!active || beacon == null || p == null || !IsAlive(beacon)) return;
+
+                    float fullRadius = __instance.MaxLightRadius
+                        * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
+
+                    if (p.PlayerId == beacon.PlayerId) {
+                        __result = fullRadius;
+                        return;
+                    }
+
+                    // Boost nearby non-impostor crewmates
+                    if (p.Role != null && !p.Role.IsImpostor && !p.IsDead && !p.Disconnected) {
+                        var crew = Helpers.playerById(p.PlayerId);
+                        if (crew != null) {
+                            float shareDist = ShareRadius != null ? ShareRadius.getFloat() : 15f;
+                            float dist = Vector2.Distance(beacon.GetTruePosition(), crew.GetTruePosition());
+                            if (dist <= shareDist)
+                                __result = Mathf.Max(__result, fullRadius);
+                        }
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Beacon] LightPatch failed: {e}");
-                }
-            }
-        }
-
-        // ---- Boost nearby crewmate's own LightSource when near the Beacon ----
-        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        static class HudUpdatePatch {
-            public static void Postfix() {
-                try {
-                    if (!active || beacon == null) {
-                        RestoreViewDistance();
-                        return;
-                    }
-
-                    var me = PlayerControl.LocalPlayer;
-                    if (me == null || me.Data == null || me.Data.Role == null || me.lightSource == null) {
-                        RestoreViewDistance();
-                        return;
-                    }
-
-                    // Impostors, dead, and the Beacon itself don't get boosted vision
-                    if (me.Data.Role.IsImpostor || me.Data.IsDead || me.Data.Disconnected || me.PlayerId == beacon.PlayerId) {
-                        RestoreViewDistance();
-                        return;
-                    }
-
-                    if (!IsAlive(beacon)) {
-                        RestoreViewDistance();
-                        return;
-                    }
-
-                    float shareDist = ShareRadius != null ? ShareRadius.getFloat() : 15f;
-                    float dist = Vector2.Distance(beacon.GetTruePosition(), me.GetTruePosition());
-
-                    if (dist <= shareDist && ShipStatus.Instance != null) {
-                        float boostRadius = ShipStatus.Instance.MaxLightRadius
-                            * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
-                        if (!isViewBoosted) {
-                            originalViewDistance = me.lightSource.ViewDistance;
-                            isViewBoosted = true;
-                        }
-                        me.lightSource.ViewDistance = Mathf.Max(me.lightSource.ViewDistance, boostRadius);
-                    } else {
-                        RestoreViewDistance();
-                    }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Beacon] HudUpdate failed: {e}");
-                }
-            }
-
-            private static void RestoreViewDistance() {
-                if (isViewBoosted) {
-                    var me = PlayerControl.LocalPlayer;
-                    if (me != null && me.lightSource != null)
-                        me.lightSource.ViewDistance = originalViewDistance;
-                    isViewBoosted = false;
                 }
             }
         }

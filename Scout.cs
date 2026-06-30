@@ -313,7 +313,7 @@ namespace UnknownsCollection {
             try {
                 if (player == null || player.cosmetics == null) return;
                 alpha = Mathf.Clamp01(alpha);
-                player.cosmetics.SetHatAndVisorAlpha(alpha);
+                player.SetHatAndVisorAlpha(alpha);
                 if (player.cosmetics.currentBodySprite != null && player.cosmetics.currentBodySprite.BodySprite != null) {
                     var c = player.cosmetics.currentBodySprite.BodySprite.color;
                     c.a = alpha;

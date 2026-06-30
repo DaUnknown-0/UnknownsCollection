@@ -133,8 +133,6 @@ namespace UnknownsCollection {
             bug != null && PlayerControl.LocalPlayer != null && bug.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
         // ---- Glitch sound (embedded raw PCM, like TeslaSound) ----
-        private static AudioClip glitchClip;
-
         private static AudioClip GetGlitchClip() {
             if (glitchClip != null) return glitchClip;
             glitchClip = BugSound.LoadClip();

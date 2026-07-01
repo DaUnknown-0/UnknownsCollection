@@ -153,10 +153,12 @@ namespace UnknownsCollection {
         }
 
         private static void ApplyAutoReport(byte victimId, byte reporterId) {
-            var reporter = Helpers.playerById(reporterId);
+            // Only the reporter's OWN client issues the report command — CmdReportDeadBody is a client
+            // command, so running it on every client fired the report (and started the meeting) N times.
+            if (PlayerControl.LocalPlayer == null || PlayerControl.LocalPlayer.PlayerId != reporterId) return;
             var victim = Helpers.playerById(victimId);
-            if (reporter == null || victim == null || victim.Data == null) return;
-            reporter.CmdReportDeadBody(victim.Data);
+            if (victim == null || victim.Data == null) return;
+            PlayerControl.LocalPlayer.CmdReportDeadBody(victim.Data);
         }
 
         private static void ApplyRevealBody(byte victimId) {
@@ -251,6 +253,13 @@ namespace UnknownsCollection {
                     if (__instance.PlayerId != shade.PlayerId) return; // only Shade's kills
                     if (!IsAlive(shade)) return;
 
+                    // A Bait must stay findable so its own auto-report (which exposes the killer) still
+                    // fires: don't hide a Bait's body — let TOR's Bait mechanic run on the visible body.
+                    if (Bait.bait != null && Bait.bait.Any(x => x != null && x.PlayerId == target.PlayerId)) {
+                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Shade] Victim {target.Data?.PlayerName} is a Bait — body left visible.");
+                        return;
+                    }
+
                     Vector2 pos = target.GetTruePosition();
                     SendHideBody(target.PlayerId, pos);
                     UnknownsCollectionPlugin.Logger?.LogInfo($"[Shade] Body of {target.Data?.PlayerName} hidden at {pos}.");
@@ -277,7 +286,7 @@ namespace UnknownsCollection {
                             if (pc.PlayerId == shade.PlayerId) continue;
                             Vector2 pcPos = pc.GetTruePosition();
                             foreach (var kvp in hiddenBodies) {
-                                if (Vector2.Distance(pcPos, kvp.Value) <= findDist)
+                                if (Vector2.Distance(pcPos, kvp.Value) <= findDist && !toReveal.Contains(kvp.Key))
                                     toReveal.Add(kvp.Key);
                             }
                         }
@@ -298,6 +307,7 @@ namespace UnknownsCollection {
                                 float closest = float.MaxValue;
                                 foreach (var pc in PlayerControl.AllPlayerControls) {
                                     if (pc == null || !IsAlive(pc)) continue;
+                                    if (pc.PlayerId == shade.PlayerId) continue; // the Shade never auto-reports its own kill
                                     float d = Vector2.Distance(pc.GetTruePosition(), pos);
                                     if (d < closest) { closest = d; reporterId = pc.PlayerId; }
                                 }

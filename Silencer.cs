@@ -58,10 +58,6 @@ namespace UnknownsCollection {
         // Players muted for the CURRENT/NEXT meeting (set when marked, cleared at meeting end).
         public static readonly HashSet<byte> silencedIds = new();
 
-        // Tracks whether muted players' auto-skip has been processed for the current meeting.
-        // Reset on meeting end alongside silencedIds.
-        private static bool mutesAutoProcessed;
-
         private static PlayerControl currentTarget; // local Silencer's outlined victim candidate
         private static bool wasInMeeting;
 
@@ -208,7 +204,6 @@ namespace UnknownsCollection {
                 silencedIds.Clear();
                 currentTarget = null;
                 wasInMeeting = false;
-                mutesAutoProcessed = false;
             }
         }
 
@@ -242,7 +237,13 @@ namespace UnknownsCollection {
         // ====================================================================
         // Meeting end edge (every client): clear the one-meeting mute + refill the per-round budget.
         // ====================================================================
+        // Low priority so this runs AFTER TOR's own HudManager.Update postfix, which fully rebuilds every
+        // player's cosmetics.nameText AND every meeting PlayerVoteArea.NameText each frame
+        // (HudManagerUpdatePatch.resetNameTagsAndColors). Both mute markers are (re)appended here, in the
+        // SAME method TOR rebuilds them, so they can't be silently overwritten by an unpredictable
+        // cross-MonoBehaviour Update() order (which is what happened with the old MeetingHud.Update marker).
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        [HarmonyPriority(Priority.Low)]
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {
@@ -250,12 +251,11 @@ namespace UnknownsCollection {
                     if (wasInMeeting && !nowMeeting) {
                         silencedIds.Clear();              // mute lasts exactly one meeting
                         marksLeftThisRound = TargetsPerRoundValue();
-                        mutesAutoProcessed = false;
                     }
                     wasInMeeting = nowMeeting;
 
                     UpdateTargeting();
-                    // Marker only appears during meetings (see MeetingHud.Update)
+                    ApplyMuteMarkers();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] HudUpdate failed: {e}");
                 }
@@ -269,42 +269,53 @@ namespace UnknownsCollection {
             if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, MarkColor);
         }
 
-        // Append the red mute marker to every muted player's in-game name (visible to all).
-        private static void ShowInGameMarkers() {
-            if (!active || silencedIds.Count == 0 || InMeeting()) return;
+        // Append the red mute marker to every muted player's name so EVERYONE can see who is muted (and
+        // mute their voice client). Re-applied every frame right after TOR's name rebuild; TOR resets the
+        // base text each frame, so the marker never stacks and vanishes on its own once the mute clears.
+        // - In a meeting: mark the vote areas (always - core to the feature).
+        // - In-game: mark the world name tag, gated on the "Show Mute Marker In-Game" option.
+        private static void ApplyMuteMarkers() {
+            if (!active || silencedIds.Count == 0) return;
+
+            if (MeetingHud.Instance != null) {
+                foreach (var pva in MeetingHud.Instance.playerStates) {
+                    if (pva == null || pva.NameText == null || !silencedIds.Contains(pva.TargetPlayerId)) continue;
+                    if (!pva.NameText.text.Contains("MUTED")) pva.NameText.text += Marker;
+                }
+                return;
+            }
+
+            if (ShowInGameMarker == null || !ShowInGameMarker.getBool()) return;
             foreach (var p in PlayerControl.AllPlayerControls) {
                 if (p == null || p.cosmetics == null || p.cosmetics.nameText == null) continue;
                 if (!silencedIds.Contains(p.PlayerId)) continue;
-                var t = p.cosmetics.nameText.text;
-                if (!t.Contains("MUTED")) p.cosmetics.nameText.text = t + Marker;
+                if (!p.cosmetics.nameText.text.Contains("MUTED")) p.cosmetics.nameText.text += Marker;
             }
         }
 
         // A muted player can never cast a real vote (VoteSelectPatch blocks the click), so without this
         // their PlayerVoteArea.VotedFor would sit at HasNotVoted (255) forever and TOR's "everyone voted"
         // check (MeetingPatch.cs: playerStates.All(ps => ps.AmDead || ps.DidVote)) would never trigger an
-        // early end while they're alive. MissedVote (254) is the vanilla "this player didn't vote" sentinel
-        // - it makes DidVote true (excluding them from that check) while staying excluded from the actual
-        // tally (MeetingPatch.cs CalculateVotes explicitly skips 252/254/255). We deliberately do NOT use
-        // SkippedVote (253): that one IS counted as a real Skip vote in the tally.
-        private const byte MissedVote = 254;
+        // early end while they're alive. We use DeadVote (252): DidVote is true (so they're excluded from
+        // that check) and CalculateVotes explicitly skips 252/254/255 (so it's not tallied). We deliberately
+        // do NOT use MissedVote (254): TOR rewrites 254 -> self-vote in CheckForEndVoting when the host has
+        // "Block Skipping In Emergency Meetings" + "No Vote Is Self Vote" both on, which would wrongly count
+        // a muted player as self-voting. 253 (Skip) is counted, and 255 makes DidVote false - both unusable.
+        private const byte MissedVote = 252;
 
         // ====================================================================
-        // Meeting: show the mute marker on vote areas, mark muted players as "missed vote" so the meeting
-        // can end early without them, and disable the skip button for a muted local player.
+        // Meeting: mark muted players as "voted" (DeadVote sentinel) so the meeting can end early without
+        // waiting on them. The visible [MUTED] name tag is applied in HudUpdatePatch (same method TOR
+        // rebuilds vote-area names), and the skip block is in SkipVotePatch.
         // ====================================================================
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Update))]
         static class MeetingUpdatePatch {
             public static void Postfix(MeetingHud __instance) {
                 try {
                     if (!active || __instance == null) return;
-
                     foreach (var pva in __instance.playerStates) {
                         if (pva == null || !silencedIds.Contains(pva.TargetPlayerId)) continue;
                         if (pva.VotedFor == byte.MaxValue) pva.VotedFor = MissedVote; // exclude from "all voted"
-                        if (pva.NameText == null) continue;
-                        var t = pva.NameText.text;
-                        if (!t.Contains("MUTED")) pva.NameText.text = t + Marker;
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] MeetingUpdate failed: {e}");
@@ -319,14 +330,19 @@ namespace UnknownsCollection {
             static bool Prefix() => !LocalIsSilenced();
         }
 
-        // Block a muted local player from confirming a Skip vote (unless CanStillSkip is enabled).
+        // Block a muted player from confirming a Skip vote (unless CanStillSkip is enabled).
         // The Skip "button" is a PlayerVoteArea like any other, with the reserved candidate id 253
         // (see UsefulTORStuff/TiebreakerMultiple.cs: "252/253(skip)/254/255 are not player votes").
         // We gate MeetingHud.CastVote - the method both player-target and skip votes funnel through -
         // instead of the Skip area's own click handler, since that handler isn't reliably identifiable
         // from the managed assembly (it resolves into native IL2CPP code with no decompilable C# body).
-        // Only the LOCAL player's own skip attempt (srcPlayerId == local player) is suppressed, so this
-        // never interferes with the host applying OTHER players' votes through the same method.
+        // CastVote(byte srcPlayerId, byte suspectPlayerId) is host-authoritative: a remote client's Skip
+        // click only reaches CmdCastVote -> RPC -> the HOST's CastVote(srcPlayerId=remote, 253); it never
+        // runs on the voter's own machine unless that voter IS the host. So gating on
+        // "srcPlayerId == LocalPlayer" only ever caught the host muting itself - every muted non-host
+        // player could still skip. Gate on IsSilenced(srcPlayerId) instead: this covers every muted
+        // player's skip attempt (including the host's own) since the check now runs where CastVote
+        // actually executes with authority.
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CastVote))]
         [HarmonyPriority(Priority.High)]
         static class SkipVotePatch {
@@ -334,8 +350,7 @@ namespace UnknownsCollection {
             static bool Prefix([HarmonyArgument(0)] byte srcPlayerId, [HarmonyArgument(1)] byte suspectIdx) {
                 if (suspectIdx != SkipVoteCandidateId) return true; // not a Skip vote — don't touch normal votes
                 if (CanStillSkip == null || CanStillSkip.getBool()) return true;
-                if (PlayerControl.LocalPlayer == null || srcPlayerId != PlayerControl.LocalPlayer.PlayerId) return true;
-                return !LocalIsSilenced();
+                return !IsSilenced(srcPlayerId);
             }
         }
 

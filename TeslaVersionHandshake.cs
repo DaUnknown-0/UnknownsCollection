@@ -33,6 +33,26 @@ namespace UnknownsCollection {
             try { return BuildMismatchMessage() == ""; } catch { return false; }
         }
 
+        // True if any of the 14 mod-gated Unknown's Collection roles is enabled. Used to scope the
+        // "everyone has the mod" gate (lobby warning + start block) to lobbies that actually need it -
+        // a pure vanilla/TOR round must not be blocked just because a client is missing this mod.
+        public static bool AnyUCRoleEnabled() {
+            return (Tesla.SpawnRate != null && Tesla.SpawnRate.getSelection() > 0) ||
+                   (Saboteur.SpawnRate != null && Saboteur.SpawnRate.getSelection() > 0) ||
+                   (Poisoner.SpawnRate != null && Poisoner.SpawnRate.getSelection() > 0) ||
+                   (Silencer.SpawnRate != null && Silencer.SpawnRate.getSelection() > 0) ||
+                   (Illusionist.SpawnRate != null && Illusionist.SpawnRate.getSelection() > 0) ||
+                   (Siphoner.SpawnRate != null && Siphoner.SpawnRate.getSelection() > 0) ||
+                   (Witness.SpawnRate != null && Witness.SpawnRate.getSelection() > 0) ||
+                   (Bug.SpawnRate != null && Bug.SpawnRate.getSelection() > 0) ||
+                   (Maniac.SpawnRate != null && Maniac.SpawnRate.getSelection() > 0) ||
+                   (Follower.SpawnRate != null && Follower.SpawnRate.getSelection() > 0) ||
+                   (Shade.SpawnRate != null && Shade.SpawnRate.getSelection() > 0) ||
+                   (Copycat.SpawnRate != null && Copycat.SpawnRate.getSelection() > 0) ||
+                   (Scout.SpawnRate != null && Scout.SpawnRate.getSelection() > 0) ||
+                   (Beacon.SpawnRate != null && Beacon.SpawnRate.getSelection() > 0);
+        }
+
         public static void ShareVersion() {
             if (AmongUsClient.Instance == null || PlayerControl.LocalPlayer == null) return;
             var v = UnknownsCollectionPlugin.Version;
@@ -114,8 +134,8 @@ namespace UnknownsCollection {
             public static void Postfix() { versionSent = false; }
         }
 
-        // Share once per lobby; (host-only) warn on TOR's GameStartText when the Tesla option is ON
-        // but someone is missing the mod - the role then will NOT spawn (Tesla.cs gates on this).
+        // Share once per lobby; (host-only) warn on TOR's GameStartText when any UC role is ON
+        // but someone is missing the mod - these roles then will NOT spawn/start (gated on EveryoneHasMod()).
         [HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.Update))]
         [HarmonyPriority(Priority.Low)]
         static class GameStartManagerUpdatePatch {
@@ -126,9 +146,7 @@ namespace UnknownsCollection {
 
                 var text = __instance.GameStartText;
                 if (text == null) return;
-                bool teslaOn = Tesla.SpawnRate != null && Tesla.SpawnRate.getSelection() > 0;
-                bool saboteurOn = Saboteur.SpawnRate != null && Saboteur.SpawnRate.getSelection() > 0;
-                if ((!teslaOn && !saboteurOn) || EveryoneHasMod()) return;
+                if (!AnyUCRoleEnabled() || EveryoneHasMod()) return;
                 string marker = "Unknown's Collection";
                 if (text.text != null && text.text.Contains(marker)) return;
 
@@ -147,14 +165,16 @@ namespace UnknownsCollection {
             }
         }
 
-        // Block the game start while not every player has the same Unknown's Collection build. Host-
-        // only (only the host can begin); the lobby warning above tells everyone why. Returning false
-        // suppresses GameStartManager.BeginGame, exactly like the lobby password gate.
+        // Block the game start while not every player has the same Unknown's Collection build - but
+        // only if a UC role is actually enabled; otherwise a modless friend must be able to join a
+        // pure vanilla/TOR round. Host-only (only the host can begin); the lobby warning above tells
+        // everyone why. Returning false suppresses GameStartManager.BeginGame, exactly like the lobby
+        // password gate.
         [HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.BeginGame))]
         static class BeginGameGatePatch {
             public static bool Prefix() {
                 if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return true;
-                if (EveryoneHasMod()) return true;
+                if (EveryoneHasMod() || !AnyUCRoleEnabled()) return true;
 
                 try {
                     var hud = HudManager.Instance;

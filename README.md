@@ -1,51 +1,74 @@
 # Unknown's Collection
 
-A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds **custom roles** to
+A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds **14 custom roles** to
 [The Other Roles](https://github.com/TheOtherRolesAU/TheOtherRoles) (TOR) for *Among Us*.
 
 Each role is layered on top of TOR purely through Harmony patches — **the original TOR source is never
 modified**. The plugin only takes a hard dependency on TheOtherRoles.
 
-> First role: **The Tesla** (Impostor).
+> The roles are client-side, so the lobby can only start when **every player runs the same Unknown's
+> Collection version** (the host gets a warning otherwise). All Impostor roles are also pickable in TOR's
+> **Role Draft**.
 
 ---
 
-## ⚡ The Tesla (Impostor)
+## Roles
 
-A normal Impostor is secretly promoted to *The Tesla* at the start of the game. Instead of (or in
-addition to) sneaking around for kills, the Tesla can **charge two players** and lethally pull them
-together.
+### Impostor
 
-**How it works**
+- **The Tesla** — Charges exactly two players during a meeting (one **+**, one **−**). While the charged
+  pair stays too close, a hidden countdown drains; separating pauses it, a meeting refills it. At zero,
+  both die. Victims see a `⚡ charged` / pulsing `⚡ danger` warning but never the exact timer.
+  *Options:* trigger distance, countdown seconds, min alive players, can-charge-self, self-charge-kills,
+  grace after meeting.
+- **The Saboteur** — Once per round: sabotage a task console (lethal when the victim completes it, with a
+  crew search/defuse counterplay) or lay an invisible stun trap. *Options:* tokens per round, task/trap
+  costs, extra kill cooldown, trap count/stun/limp, crew search & defuse, min-alive gates.
+- **The Silencer** — Marks a victim with the SILENCE button; the marked player is **muted** in the next
+  meeting (no vote, no chat) and shown a red `[MUTED]` tag in-game and on their vote area so everyone can
+  also mute their voice client. *Options:* mark cooldown, targets per round, muted-can-still-skip,
+  show-in-game-marker.
+- **The Poisoner** — Kills poison the victim's body; the next player to **report** a poisoned body becomes
+  poisoned and dies after **X meetings** unless cured by the **Medic's Antidote**. The doomed reporter
+  gets a private "you don't feel so good" message in the meeting. *Options:* poison death after meetings
+  (min 2), Medic antidote uses per round, max poisoned bodies per round.
+- **The Illusionist** — Records a movement path and replays it as an **unkillable, shielded clone** that
+  fools would-be killers. *Options:* max recording length, playback cooldown, blocked-kill-costs-cooldown,
+  clone-shield-visible-to-everyone.
+- **The Maniac** — Plants a bomb on a player; the bomb can be **passed** to a nearby player before it
+  detonates, killing whoever holds it at the end. *Options:* bomb cooldown, unaware delay, pass window,
+  explosion range.
+- **The Shade** — Kills make the victim's body **vanish**; others find it by walking close, then it
+  auto-reports. Bait victims stay visible so their own report still exposes the killer. *Options:* find
+  distance.
 
-- During a **meeting**, the Tesla opens a Swapper-style selection and charges exactly **two** players:
-  one **positive (+)**, one **negative (−)**. Never the same person twice, and never more than two
-  charged players at once.
-- While the charged pair stays **too close together**, a hidden **countdown** drains.
-  - Moving apart **pauses** the countdown (it does **not** refill).
-  - It only resets to full **in a meeting**.
-- If the countdown hits **zero**, **both charged players die**.
+### Crewmate
 
-**What the victims see** (client-side, no exact timer by design)
+- **The Siphoner** — Toggles a DRAIN aura: a nearby Impostor's kill cooldown is held at full (and, for a
+  while after, a lingering deficit) so they can't kill; optionally also holds the sabotage cooldown.
+  *Options:* drain range, penalty per tick, tick interval, scale-with-distance, warn drained impostor,
+  also-drain-sabotage + block seconds, drain cooldown.
+- **The Witness** — If the Witness is the **sole living crewmate who sees a kill** (in range + clear line
+  of sight), the killer is noted: their name glows red for the Witness; if the Witness dies and their body
+  is reported, everyone sees the note; if the Witness survives to the meeting, anonymous notes go to a few
+  random players. *Options:* sight range factor, red name permanent, note recipients.
+- **The Scout** — Activatable ability: go **transparent and fast**, and lights/sabotage don't reduce
+  vision while it's active. *Options:* ability duration, cooldown, speed multiplier, transparency.
+- **The Beacon** — Lights never reduce the Beacon's vision, and nearby crewmates **share the Beacon's full
+  vision**. *Options:* share radius, not-guessable.
 
-- A persistent **`⚡ charged`** indicator while they hold a charge.
-- When they get within trigger distance of their partner: a **pulsing red `⚡ danger`** warning,
-  electric **spark particles**, and a **warning sound** — but never the remaining seconds.
+### Neutral
 
-### Options (Impostor tab)
+- **The Bug** — **Survive to the end to win alone**: when any team would win while the Bug is alive, the
+  Bug hijacks the win. *Options:* min players; optional glitchy win-screen effects.
+- **The Follower** — Takes over the **full role of the first player to die** (team, ability and win
+  condition — including Impostor/Neutral). *Options:* min players.
+- **The Copycat** — **Learns abilities by witnessing them** — Camouflage, Morph, Shield (unkillable),
+  Shoot (Sheriff-style, backfires on Crew) and Vent (vent access). Each learned ability is a button; the
+  Copycat wins **with the winning team** if alive and it used enough abilities. *Options:* max stored
+  abilities, has tasks, abilities needed to win.
 
-| Option | Default | Description |
-|---|---|---|
-| Tesla | Off | Spawn chance for the role. |
-| Tesla Minimum Players To Spawn | 6 | The role won't be assigned below this lobby size. |
-| Tesla Charge Trigger Distance | 1.5 | How close (world units) the pair must be to drain the countdown. |
-| Tesla Charge Countdown (sec) | 5 | Time the pair can stay close before they die. |
-| Tesla Minimum Alive Players For Charges | 4 | Below this many alive players, charges become harmless. |
-| Tesla Can Charge Itself | Off | Allow the Tesla to pick its own row as one pole. |
-| Self-Charge Also Kills The Tesla | On | If self-charged and triggered, whether the Tesla dies too. |
-
-> The Tesla is a client-side role: the lobby can only be started when **all players run the same
-> Unknown's Collection version** (host gets a warning otherwise).
+Every role also has the two standard options: a **spawn chance** and a **minimum lobby size to spawn**.
 
 ---
 
@@ -54,7 +77,7 @@ together.
 1. Install [BepInEx (IL2CPP)](https://github.com/BepInEx/BepInEx) and
    [The Other Roles](https://github.com/TheOtherRolesAU/TheOtherRoles).
 2. Drop `UnknownsCollection.dll` into `Among Us/BepInEx/plugins/` (next to `TheOtherRoles.dll`).
-3. Launch the game. Every player who should see the role needs the mod (same version).
+3. Launch the game. Every player who should see the roles needs the mod (same version).
 
 ---
 

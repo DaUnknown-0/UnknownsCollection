@@ -75,6 +75,21 @@ namespace UnknownsCollection {
         private static bool progressInit;          // lastProgress has a valid baseline
         private static Console[] consoleCache;      // task consoles on the map (collected lazily per round)
 
+        // Distance tolerance for "is the player at the sabotaged console" checks. Console transforms sit
+        // ~1.5 units from the spot a player actually stands to use them (see FindUsableConsoleInRange, which
+        // uses the same Mathf.Max(UsableDistance, 1.5f) reasoning), so a tight tolerance made the HOST reject
+        // legitimate kills in the 1.0-2.0 band while the victim's own client had already fired the request.
+        // Both the client-side trigger (VictimPoll) and the host-side validation (HostHandleRequestKill)
+        // share this single constant so they can never drift apart again.
+        private const float SabotageKillDistanceTolerance = 2.0f;
+
+        // ---- Kill-cooldown penalty state (see ApplyKillFx / MurderPlayerPenaltyPatch) ----
+        // The penalty must be applied AFTER the murder actually happens (vanilla PlayerControl.MurderPlayer
+        // resets the killer's cooldown as part of the kill), so we only record the request here and consume
+        // it from the MurderPlayer Postfix below, matched by victim id to be safe.
+        private static bool pendingKillPenalty;
+        private static byte pendingKillPenaltyVictimId;
+
         // ---- Custom RPC (192) subtypes ----
         private const byte RpcId = 192; // == UnknownsCollectionPlugin.SaboteurRpcId
         private const byte SubSetSaboteur = 0;        // saboteurId
@@ -320,6 +335,8 @@ namespace UnknownsCollection {
                 progressInit = false;
                 lastProgress = 0;
                 consoleCache = null;
+                pendingKillPenalty = false;
+                killHoldUntil = 0f;
                 SaboteurTrap.Clear();
                 SaboteurScanUI.Close();
             }
@@ -460,16 +477,59 @@ namespace UnknownsCollection {
         private static void ApplyKillFx(byte victimId) {
             var victim = Helpers.playerById(victimId);
             SaboteurKillFx.Play(victim);
-            // The Saboteur pays a kill-cooldown penalty for the sabotage kill.
+            // The Saboteur pays a kill-cooldown penalty for the sabotage kill - but NOT here: this FX RPC
+            // is sent (and locally applied) BEFORE RpcUncheckedMurder (see HostHandleRequestKill), and
+            // PlayerControl.MurderPlayer's vanilla body resets the killer's cooldown to the normal
+            // KillCooldown as part of every kill. Applying the penalty now would just get overwritten a
+            // moment later. Record the pending penalty instead; MurderPlayerPenaltyPatch below applies it
+            // once the murder has actually happened.
             if (IsLocalSaboteur() && saboteur != null) {
+                pendingKillPenalty = true;
+                pendingKillPenaltyVictimId = victimId;
+            }
+        }
+
+        // Impostor-side: Time.time until which the Saboteur's kill timer is pinned at full (extra cooldown).
+        private static float killHoldUntil;
+
+        // Arms the sabotage-kill cooldown penalty AFTER the murder actually happened. Harmony runs all
+        // Postfixes (ours and TOR's own MurderPlayerPatch) strictly after the original MurderPlayer body,
+        // so the vanilla cooldown reset (killTimer = KillCooldown) has already happened by now.
+        //
+        // We can't just add to killTimer: TOR's SetKillTimer prefix hard-clamps it to the base KillCooldown,
+        // and AU re-clamps every frame as it ticks the timer down, so a direct field write above base is
+        // gone within a frame (that was the original bug). Instead we arm a timed HOLD and pin the timer at
+        // full until it expires (enforced per-frame in KillPenaltyHold), giving `penalty` seconds of real
+        // extra cooldown.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
+        static class MurderPlayerPenaltyPatch {
+            public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
+                    if (!pendingKillPenalty || target == null || target.PlayerId != pendingKillPenaltyVictimId) return;
+                    pendingKillPenalty = false;
+                    if (!IsLocalSaboteur() || saboteur == null || __instance == null
+                        || __instance.PlayerId != saboteur.PlayerId) return;
+
                     float penalty = KillCooldownPenalty != null ? KillCooldownPenalty.getFloat() : 0f;
-                    if (penalty > 0f)
-                        saboteur.SetKillTimer(Mathf.Max(saboteur.killTimer, 0f) + penalty);
+                    if (penalty <= 0f) return;
+                    killHoldUntil = Time.time + penalty;
+                    float baseCd = GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown;
+                    if (baseCd > 0f) saboteur.SetKillTimer(baseCd); // SetKillTimer (not raw field) also syncs the KillButton cooldown UI
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[Saboteur] kill-cd penalty failed: {e.Message}");
                 }
             }
+        }
+
+        // Per-frame: keep the Saboteur's kill timer pinned at the base cooldown until the penalty hold
+        // expires. (Setting to base is what TOR's clamp allows; without this AU would tick it straight down.)
+        private static void KillPenaltyHold() {
+            if (killHoldUntil <= 0f) return;
+            if (!IsLocalSaboteur() || saboteur == null || !IsAlive(saboteur)) { killHoldUntil = 0f; return; }
+            if (InMeeting()) { killHoldUntil = 0f; return; } // meetings reset kill cooldowns anyway
+            if (Time.time >= killHoldUntil) { killHoldUntil = 0f; return; }
+            float baseCd = GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown;
+            if (baseCd > 0f) saboteur.SetKillTimer(baseCd); // SetKillTimer (not raw field) also syncs the KillButton cooldown UI
         }
 
         // Host-authoritative: validate a completion request, then kill + clear (once per round).
@@ -487,8 +547,10 @@ namespace UnknownsCollection {
             var victim = Helpers.playerById(victimId);
             if (!IsAlive(victim)) return;
             if (victim.Data.Role != null && victim.Data.Role.IsImpostor) return; // impostors don't trigger it
-            // Sanity: the reported position must match the stored console.
-            if (Vector2.Distance(new Vector2(x, y), new Vector2(sabotagedX, sabotagedY)) > 1.0f) return;
+            // Sanity: the reported position must match the stored console. Same tolerance the victim's own
+            // client used to decide whether to send the request (SabotageKillDistanceTolerance) - keeping
+            // them equal is the whole point, see the constant's comment.
+            if (Vector2.Distance(new Vector2(x, y), new Vector2(sabotagedX, sabotagedY)) > SabotageKillDistanceTolerance) return;
 
             if (!IsAlive(saboteur)) {
                 // The Saboteur died before the sabotage was completed - the trap has no one to attribute
@@ -629,11 +691,27 @@ namespace UnknownsCollection {
 
             int prog = LocalTaskProgress();
             if (progressInit && prog > lastProgress) {
+                // LocalTaskProgress() sums progress over ALL of the player's tasks, so "a step just
+                // completed" alone does not tell us it was the SABOTAGED console specifically - there is no
+                // per-step "which console produced this" API to check that exactly (PlayerTask/
+                // NormalPlayerTask expose taskStep, not the console/object that incremented it). The
+                // tightest binding we can do with reasonable effort: also require that the console the
+                // player could ACTUALLY use right now (same helper the Saboteur uses to pick a console to
+                // mark) IS the sabotaged one, by position. This still can't rule out the edge case of some
+                // other task's step ticking over in the same frame the player happens to be standing at the
+                // sabotaged console without touching it, but it rules out the far more common case of a
+                // step completing anywhere else on the map.
+                var nearConsole = FindUsableConsoleInRange();
+                bool atSabotagedConsole = nearConsole != null && Vector2.Distance(
+                    (Vector2)nearConsole.transform.position, new Vector2(sabotagedX, sabotagedY)) < 0.01f;
                 float d = Vector2.Distance(me.GetTruePosition(), new Vector2(sabotagedX, sabotagedY));
                 UnknownsCollectionPlugin.Logger?.LogInfo(
-                    $"[Saboteur] task step completed (prog {lastProgress}->{prog}); dist to sabotaged console = {d:F2} (need <=2.0)");
-                Vector2 truePos = me.GetTruePosition();
-                if (d <= 2.0f) SendRequestKill(me.PlayerId, truePos.x, truePos.y);
+                    $"[Saboteur] task step completed (prog {lastProgress}->{prog}); dist to sabotaged console = {d:F2} " +
+                    $"(need <={SabotageKillDistanceTolerance:F1}), atSabotagedConsole={atSabotagedConsole}");
+                if (atSabotagedConsole && d <= SabotageKillDistanceTolerance) {
+                    Vector2 truePos = me.GetTruePosition();
+                    SendRequestKill(me.PlayerId, truePos.x, truePos.y);
+                }
             }
             lastProgress = prog;
             progressInit = true;
@@ -674,7 +752,7 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class SabotageHudUpdatePatch {
             public static void Postfix() {
-                try { VictimPoll(); SaboteurTrap.Update(); SaboteurScanUI.Update(); PlaceSearchButton(); Diag(); }
+                try { VictimPoll(); KillPenaltyHold(); SaboteurTrap.Update(); SaboteurScanUI.Update(); PlaceSearchButton(); Diag(); }
                 catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] HUD poll failed: {e}"); }
             }
         }

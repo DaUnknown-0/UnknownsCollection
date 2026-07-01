@@ -185,6 +185,14 @@ namespace UnknownsCollection {
 
                 path = new List<Vector2>(points);
                 vents = ventFlags != null ? new List<bool>(ventFlags) : new List<bool>();
+                // A 1-sample recording has no second point to interpolate towards: Update() would see
+                // i (0) >= path.Count - 1 (0) on the very first frame and despawn before the clone is ever
+                // visible. Duplicate the single sample so there is always at least one interval-long segment
+                // to play back (a static "clone" for one interval, then despawn as usual).
+                if (path.Count < 2) {
+                    path.Add(path[0]);
+                    if (vents.Count > 0) vents.Add(vents[0]);
+                }
                 interval = Mathf.Max(sampleInterval, 0.02f);
                 startTime = Time.time;
                 ventPhase = (vents.Count > 0 && vents[0]) ? VentPhase.In : VentPhase.Out;

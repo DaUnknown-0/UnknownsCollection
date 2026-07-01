@@ -46,11 +46,12 @@ namespace UnknownsCollection {
 
         // Poisoned bodies (victim PlayerId)
         private static readonly HashSet<byte> poisonedBodies = new();
-        // Poisoned reporters: reporterId -> meetings since poisoned
+        // Poisoned reporters: reporterId -> meetings REMAINING until death (counts down each meeting).
+        // A countdown avoids the ordering race an absolute meeting counter had (report stamp vs. the
+        // meeting-start increment could land in either order on the host).
         private static readonly Dictionary<byte, int> poisonedReporters = new();
         // Bodies poisoned this round (reset each meeting)
         private static readonly HashSet<byte> bodiesPoisonedThisRound = new();
-        private static int meetingCount; // tracks meetings since game start
 
         // Antidote button
         private static int antidoteUsesLeft;
@@ -65,9 +66,6 @@ namespace UnknownsCollection {
         private const byte SubAntidote = 3;       // targetId
         private const byte SubPoisonDeath = 4;    // targetId
 
-        // Unchecked murder RPC byte (from TOR's enum)
-        internal static byte uncheckedMurderRpc = 108;
-
         // ---- Role identity ----
         private static RoleInfo poisonerInfo;
         public static RoleInfo PoisonerInfo() => poisonerInfo ??= new RoleInfo(
@@ -80,8 +78,10 @@ namespace UnknownsCollection {
                     CustomOptionHolder.rates, null, true);
                 SpawnMinPlayers = CustomOption.Create(1431, Types.Impostor, "Poisoner Minimum Players To Spawn",
                     6f, 4f, 15f, 1f, SpawnRate);
+                // Minimum is 2: with a 1-meeting delay the reporter would die at the close of the very
+                // meeting their report triggered, leaving the Medic no free-roam round to cure them.
                 PoisonDeathMeetings = CustomOption.Create(1432, Types.Impostor, "Poison Death After Meetings",
-                    2f, 1f, 5f, 1f, SpawnRate);
+                    2f, 2f, 5f, 1f, SpawnRate);
                 AntidoteCharges = CustomOption.Create(1433, Types.Impostor, "Medic Antidote Uses Per Round",
                     1f, 0f, 5f, 1f, SpawnRate);
                 MaxPoisonedPerRound = CustomOption.Create(1434, Types.Impostor, "Max Poisoned Bodies Per Round",
@@ -92,21 +92,9 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) {
-            try {
-                var torAsm = typeof(CustomOption).Assembly;
-                try {
-                    var rpcEnum = torAsm.GetType("TheOtherRoles.CustomRPC");
-                    if (rpcEnum != null)
-                        uncheckedMurderRpc = (byte)(int)Enum.Parse(rpcEnum, "UncheckedMurderPlayer");
-                } catch (Exception ex) {
-                    UnknownsCollectionPlugin.Logger?.LogWarning(
-                        $"[Poisoner] Could not resolve UncheckedMurderPlayer RPC id, using {uncheckedMurderRpc}: {ex.Message}");
-                }
-            } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] TryPatch failed: {e}");
-            }
-        }
+        // Poison deaths are applied locally on each client via RPCProcedure.uncheckedMurderPlayer
+        // (distributed by our own SubPoisonDeath RPC), so no reflection/RPC-byte resolution is needed.
+        public static void TryPatch(Harmony harmony) { }
 
         // ---- Helpers ----
         private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
@@ -187,8 +175,9 @@ namespace UnknownsCollection {
 
         private static void ApplyPoisonReporter(byte reporterId) {
             if (!active || reporterId == byte.MaxValue) return;
+            // Start the countdown: the reporter dies after this many meetings (decremented each meeting).
             if (!poisonedReporters.ContainsKey(reporterId))
-                poisonedReporters[reporterId] = meetingCount;
+                poisonedReporters[reporterId] = PoisonDeathValue();
         }
 
         private static void ApplyAntidote(byte targetId) {
@@ -199,24 +188,15 @@ namespace UnknownsCollection {
 
         private static void ApplyPoisonDeath(byte targetId) {
             var target = Helpers.playerById(targetId);
-            if (target == null || target.Data == null) return;
-            RpcUncheckedMurder(target.PlayerId, target.PlayerId);
-            poisonedReporters.Remove(targetId);
-            UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Player {targetId} died from poison.");
-        }
-
-        private static void RpcUncheckedMurder(byte sourceId, byte targetId) {
-            try {
-                MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                    PlayerControl.LocalPlayer.NetId, uncheckedMurderRpc, SendOption.Reliable, -1);
-                w.Write(sourceId);
-                w.Write(targetId);
-                w.Write((byte)0);
-                AmongUsClient.Instance.FinishRpcImmediately(w);
-                RPCProcedure.uncheckedMurderPlayer(sourceId, targetId, 0);
-            } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] RpcUncheckedMurder failed: {e}");
+            if (target != null && target.Data != null) {
+                // Apply the kill LOCALLY only. SendPoisonDeath already broadcast SubPoisonDeath to every
+                // client, so each client runs this exactly once and murders locally exactly once.
+                // (Previously this re-broadcast an UncheckedMurder RPC from EVERY client, so one poison
+                // death produced N duplicate corpses and N bogus entries in GameHistory.deadPlayers.)
+                RPCProcedure.uncheckedMurderPlayer(targetId, targetId, 0);
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Player {targetId} died from poison.");
             }
+            poisonedReporters.Remove(targetId);
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetPoisoner(playerId);
@@ -252,9 +232,10 @@ namespace UnknownsCollection {
                 poisonedBodies.Clear();
                 poisonedReporters.Clear();
                 bodiesPoisonedThisRound.Clear();
-                meetingCount = 0;
+                _pendingPoisonDeaths.Clear();
                 antidoteUsesLeft = 0;
                 antidoteButton = null;
+                antidoteTarget = null;
             }
         }
 
@@ -303,7 +284,11 @@ namespace UnknownsCollection {
         static class ReportPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] NetworkedPlayerInfo target) {
                 try {
-                    if (AmongUsClient.Instance == null) return;
+                    // Host-only: ReportDeadBody runs on the host for a normal report, but the Bait/Mayor
+                    // bypass paths call it on EVERY client — without this gate each client would broadcast
+                    // its own SendPoisonReporter (redundant RPC storm). SendPoisonReporter is a single-
+                    // broadcaster like the rest of the role (mirrors Witness's ReportPatch).
+                    if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || poisoner == null || target == null) return;
                     if (!poisonedBodies.Contains(target.PlayerId)) return;
                     if (!IsAlive(__instance)) return;
@@ -316,6 +301,28 @@ namespace UnknownsCollection {
         }
 
         // ---- Meeting start: increment meeting counter, check for poison deaths ----
+        // Random "you feel unwell" flavour shown locally to a poisoned reporter during a meeting.
+        private static readonly string[] SickMessages = {
+            "You're not feeling so good... something is wrong with you.",
+            "Ugh... your stomach is turning. You don't feel well at all.",
+            "A cold sweat runs down your back — something is very wrong.",
+            "You feel dizzy and weak. Was it something you touched?",
+            "Your vision blurs for a second. You really don't feel so good.",
+            "Something is coursing through you. You feel sick to your core.",
+            "Your hands are trembling and your throat feels tight...",
+            "A wave of nausea hits you. You should have never reported that body.",
+        };
+
+        private static void ShowSickMessageIfPoisoned() {
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (me == null || me.Data == null || me.Data.IsDead) return;
+                if (!poisonedReporters.ContainsKey(me.PlayerId)) return;
+                string msg = SickMessages[UnityEngine.Random.Range(0, SickMessages.Length)];
+                HudManager.Instance?.Chat?.AddChat(me, msg); // local-only display, only the victim sees it
+            } catch { }
+        }
+
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
         static class MeetingStartPatch {
             public static void Postfix() {
@@ -328,20 +335,23 @@ namespace UnknownsCollection {
                     // Refill antidote charges
                     antidoteUsesLeft = AntidoteChargesValue();
 
-                    // Increment meeting counter for poisoned reporters
-                    meetingCount++;
-                    int delay = PoisonDeathValue();
+                    // Count down every poisoned reporter by one meeting; schedule deaths at zero. Runs on
+                    // every client so the countdown stays in sync; only the host acts on the list (in
+                    // MeetingClosePatch). Dead reporters (voted/killed meanwhile) are simply dropped.
                     var toKill = new List<byte>();
-                    foreach (var kvp in poisonedReporters) {
-                        int meetingsSince = meetingCount - kvp.Value;
-                        if (meetingsSince >= delay) {
-                            toKill.Add(kvp.Key);
-                        }
+                    foreach (byte id in poisonedReporters.Keys.ToList()) {
+                        var p = Helpers.playerById(id);
+                        if (p == null || !IsAlive(p)) { poisonedReporters.Remove(id); continue; }
+                        int remaining = poisonedReporters[id] - 1;
+                        poisonedReporters[id] = remaining;
+                        if (remaining <= 0) toKill.Add(id);
                     }
 
-                    // Schedule deaths for after the meeting
-                    // We use the meeting end patch to actually kill them
+                    // Executed after the meeting closes (see MeetingClosePatch).
                     _pendingPoisonDeaths = toKill;
+
+                    // Tell the local player if they are the poisoned one.
+                    ShowSickMessageIfPoisoned();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] MeetingStartPatch failed: {e}");
                 }
@@ -359,8 +369,11 @@ namespace UnknownsCollection {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
 
                     foreach (byte id in _pendingPoisonDeaths) {
-                        // Don't kill if they were cured during the meeting
+                        // Don't kill if they were cured during the meeting...
                         if (!poisonedReporters.ContainsKey(id)) continue;
+                        // ...or if they already died some other way (avoids a duplicate corpse).
+                        var p = Helpers.playerById(id);
+                        if (p == null || !IsAlive(p)) { poisonedReporters.Remove(id); continue; }
                         SendPoisonDeath(id);
                     }
                     _pendingPoisonDeaths.Clear();

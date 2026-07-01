@@ -8,6 +8,7 @@ using System.Linq;
 using HarmonyLib;
 using Hazel;
 using UnityEngine;
+using AmongUs.GameOptions; // RoleTypes (vanilla team change for the takeover)
 using TheOtherRoles;
 using TheOtherRoles.Utilities;
 using static TheOtherRoles.TheOtherRoles;
@@ -26,7 +27,9 @@ namespace UnknownsCollection {
         // Role transfer state
         public static bool hasCopied;    // host: has the shift happened?
 
-        private const byte RpcId = 200;
+        // 207, NOT 200: 200/201/202 clash with other DaUnknown mods' reserved RPC ranges (see the
+        // UnknownsCollectionPlugin RPC-id block). Reference the shared constant so it can never drift again.
+        private const byte RpcId = UnknownsCollectionPlugin.FollowerRpcId;
         private const byte SubSetFollower = 0; // followerId
         private const byte SubShiftRole = 1;   // followerId, targetId
 
@@ -91,13 +94,52 @@ namespace UnknownsCollection {
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Follower] The Follower is {follower.Data?.PlayerName}.");
         }
 
+        // Full role takeover: the Follower BECOMES the dead player's role (team + ability + win con),
+        // not the narrow, swap-only TOR Shifter (which handled ~22 crew roles and no-op'd on plain
+        // crew/impostor/neutrals). Mirrors the Chance modifier's reassign (erasePlayerRoles -> setRole)
+        // plus TOR's Thief team change (RoleManager.SetRole). Runs locally on EVERY client, because our
+        // SubShiftRole RPC is broadcast to all and UC is gated on everyone-has-the-mod.
         private static void ApplyShiftRole(byte followerId, byte targetId) {
             var f = Helpers.playerById(followerId);
             var t = Helpers.playerById(targetId);
-            if (f == null || t == null) return;
-            Shifter.shiftRole(f, t);
+            if (f == null || t == null || f.Data == null || t.Data == null) return;
+
+            // Dead player's primary role (modifiers excluded). For a plain crew/impostor or a UC custom
+            // role (whose RoleInfo reports Crewmate/Impostor) this stays Crewmate/Impostor -> team-only copy.
+            var info = RoleInfo.getRoleInfoForPlayer(t, false).FirstOrDefault();
+            RoleId roleId = info != null ? info.roleId : RoleId.Crewmate;
+            bool targetIsImpostor = t.Data.Role != null && t.Data.Role.IsImpostor;
+
+            try {
+                // 1. Clear the Follower's current TOR role (keeps vanilla team + modifiers).
+                RPCProcedure.erasePlayerRoles(followerId);
+
+                // 2. Only change the vanilla team for an impostor takeover (kill button + impostor win).
+                //    For crew/neutral roles the Follower is already a vanilla Crewmate (it was picked from
+                //    plain crewmates and erasePlayerRoles keeps the team), so we must NOT re-SetRole here:
+                //    re-assigning the same vanilla role re-runs role init on remote clients for no gain
+                //    (TOR's own thiefStealsRole likewise only SetRoles in the impostor branch).
+                if (targetIsImpostor) {
+                    RoleManager.Instance.SetRole(f, RoleTypes.Impostor);
+                    if (f == PlayerControl.LocalPlayer && HudManager.Instance != null && HudManager.Instance.KillButton != null)
+                        HudManager.Instance.KillButton.SetCoolDown(
+                            f.killTimer, GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown);
+                }
+
+                // 3. Copy the specific TOR role (plain Crewmate/Impostor have no role static to set).
+                if (roleId != RoleId.Crewmate && roleId != RoleId.Impostor)
+                    RPCProcedure.setRole((byte)roleId, followerId);
+
+                // 4. Fresh cooldowns for the player who just changed role (local only).
+                if (f == PlayerControl.LocalPlayer)
+                    TheOtherRoles.Objects.CustomButton.ResetAllCooldowns();
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Follower] role takeover failed: {e}");
+            }
+
             hasCopied = true;
-            UnknownsCollectionPlugin.Logger?.LogInfo($"[Follower] {f.Data?.PlayerName} took the role of {t.Data?.PlayerName} via shiftRole.");
+            UnknownsCollectionPlugin.Logger?.LogInfo(
+                $"[Follower] {f.Data?.PlayerName} took over the role of {t.Data?.PlayerName} ({roleId}).");
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetFollower(playerId);
@@ -163,8 +205,9 @@ namespace UnknownsCollection {
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
             if (!active || follower == null || hasCopied || target == null) return;
 
-            // Don't count if the follower is the target
-            if (target.PlayerId == follower.PlayerId) return;
+            // Don't count if the follower is the target, or if the follower itself is already dead
+            // (a dead Follower can't take over a role — otherwise we'd point a role static at a corpse).
+            if (target.PlayerId == follower.PlayerId || !IsAlive(follower)) return;
 
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Follower] First death: {target.Data?.PlayerName}, shifting role to Follower.");
@@ -207,6 +250,22 @@ namespace UnknownsCollection {
                     HandleFirstDeath(networkedPlayer != null ? networkedPlayer.Object : null);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Follower] exile death detection failed: {e}");
+                }
+            }
+        }
+
+        // The Follower is neutral until it copies a role, so strip its tasks from the crew task-win total
+        // (like Bug/Copycat). After the takeover (hasCopied) its tasks count per the new role again.
+        [HarmonyPatch(typeof(GameData), nameof(GameData.RecomputeTaskCounts))]
+        static class TaskPatch {
+            public static void Postfix(GameData __instance) {
+                try {
+                    if (!active || hasCopied || follower == null || follower.Data == null) return;
+                    var (completed, total) = TasksHandler.taskInfo(follower.Data);
+                    __instance.TotalTasks -= total;
+                    __instance.CompletedTasks -= completed;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Follower] TaskPatch failed: {e}");
                 }
             }
         }

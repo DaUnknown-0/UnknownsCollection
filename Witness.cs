@@ -43,7 +43,7 @@ namespace UnknownsCollection {
         private static readonly Color RedName = new Color(1f, 0.18f, 0.18f);
         private const float BaseSight = 5f; // world units that "factor 1.0" maps to
 
-        // ---- Options (IDs 1470-1475) ----
+        // ---- Options (IDs 1470-1474) ----
         public static CustomOption SpawnRate;        // 1470 (header) - crew role chance
         public static CustomOption SpawnMinPlayers;  // 1471 - minimum LOBBY players to spawn
         public static CustomOption SightFactor;       // 1472 - sight range factor (x BaseSight)
@@ -315,8 +315,11 @@ namespace UnknownsCollection {
 
         // ====================================================================
         // Body report (host): if the reported body is the noted killer, queue the public reveal.
+        // We hook ReportDeadBody (NOT CmdReportDeadBody): CmdReportDeadBody runs on the REPORTER's own
+        // client, so a host-gated patch there only fired when the host personally reported. ReportDeadBody
+        // is the host-authoritative method that runs on the host for EVERY report (__instance = reporter).
         // ====================================================================
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.CmdReportDeadBody))]
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.ReportDeadBody))]
         static class ReportPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] NetworkedPlayerInfo target) {
                 try {
@@ -368,8 +371,16 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     bool nowMeeting = InMeeting();
-                    if (wasInMeeting && !nowMeeting && (RedNamePermanent == null || !RedNamePermanent.getBool()))
+                    if (wasInMeeting && !nowMeeting && (RedNamePermanent == null || !RedNamePermanent.getBool())
+                        && !redNameExpired) {
                         redNameExpired = true;
+                        // We stop tinting the killer's name now, so restore it once — otherwise the last
+                        // red frame would stick forever (the HUD loop doesn't reset name colours itself).
+                        if (IsLocalWitness() && HasNote()) {
+                            var k = Helpers.playerById(noteKillerId);
+                            if (k != null && k.cosmetics?.nameText != null) k.cosmetics.nameText.color = Color.white;
+                        }
+                    }
                     wasInMeeting = nowMeeting;
 
                     if (!IsLocalWitness() || !HasNote() || redNameExpired || InMeeting()) return;

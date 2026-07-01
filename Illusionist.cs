@@ -305,7 +305,10 @@ namespace UnknownsCollection {
                 try {
                     if (!active || !IllusionistClone.IsActive()) return true;
                     var me = PlayerControl.LocalPlayer;
-                    if (me == null || me.Data == null || me.Data.IsDead || me.Data.Role == null || !me.Data.Role.IsImpostor) return true;
+                    // Any killer (not just Impostors) that clicks the vanilla Kill button near the clone must
+                    // be blocked - the clone is designed to look unkillable to EVERY potential killer, per role
+                    // design ("any kill attempt on it is blocked"), not only to Impostor-side teammates.
+                    if (me == null || me.Data == null || me.Data.IsDead) return true;
                     if (__instance == null || __instance.isCoolingDown || !me.CanMove) return true;
 
                     Vector2 here = me.GetTruePosition();

@@ -52,54 +52,36 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) {
-            try {
-                var torAsm = typeof(CustomOption).Assembly;
-                var checkType = torAsm.GetType("TheOtherRoles.Patches.CheckEndCriteriaPatch");
-                if (checkType == null) {
-                    UnknownsCollectionPlugin.Logger?.LogWarning("[Bug] CheckEndCriteriaPatch not found — own win disabled.");
-                    return;
-                }
-
-                var methodNames = new[] {
-                    "CheckAndEndGameForCrewmateWin",
-                    "CheckAndEndGameForImpostorWin",
-                    "CheckAndEndGameForJackalWin",
-                    "CheckAndEndGameForTaskWin",
-                    "CheckAndEndGameForSabotageWin"
-                };
-                var prefix = new HarmonyMethod(typeof(Bug), nameof(InterceptorPrefix));
-
-                foreach (var name in methodNames) {
-                    var m = checkType.GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static);
-                    if (m != null) {
-                        harmony.Patch(m, prefix: prefix);
-                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] Patched {name} for Bug win intercept.");
-                    } else {
-                        UnknownsCollectionPlugin.Logger?.LogWarning($"[Bug] {name} not found — skipped.");
-                    }
-                }
-            } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[Bug] TryPatch failed: {e}");
-            }
-        }
-
-        public static bool triggerBugWin;
+        // The Bug win is handled entirely by attribute-based patches (RpcEndGameHijackPatch +
+        // OnGameEndPatch), picked up by PatchAll — no reflection needed here.
+        public static void TryPatch(Harmony harmony) { }
 
         private const int BugWinReason = 18;
 
-        public static bool InterceptorPrefix(ref bool __result) {
-            try {
-                if (BugIsAliveAndActive()) {
-                    triggerBugWin = true;
-                    GameManager.Instance.RpcEndGame((GameOverReason)BugWinReason, false);
-                    __result = true;
-                    return false;
+        // The Bug's PlayerId, snapshotted at game-end BEFORE TOR's resetVariables wipes bugPlayerId.
+        // Deliberately NOT part of resetVariables: TOR's own end-of-game reset would clear it before our
+        // Priority.Last postfix could read it. Re-snapshotted every game-end, so a stale value is
+        // harmless (the postfix also gates on gameOverReason == BugWinReason).
+        private static byte winnerBugId = byte.MaxValue;
+
+        // Host-authoritative Bug win ("survive to the end -> win alone"): when a REGULAR team win is
+        // about to be broadcast (vanilla GameOverReason < 10) and the Bug is still alive, rewrite the
+        // reason to BugWinReason in-place. This reuses the single RpcEndGame the original caller already
+        // makes — no second broadcast, no per-frame instant win. Custom/neutral wins (reason >= 10:
+        // Jester, Arsonist, Lovers, Jackal, Vulture, Prosecutor, ...) are left untouched.
+        [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
+        static class RpcEndGameHijackPatch {
+            public static void Prefix(ref GameOverReason reason) {
+                try {
+                    if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                    if (!BugIsAliveAndActive()) return;
+                    if ((int)reason >= 10) return; // only hijack vanilla team wins (Crew/Impostor/Sabotage/Task)
+                    reason = (GameOverReason)BugWinReason;
+                    UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Bug survived to the end — hijacking win.");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Bug] RpcEndGame hijack failed: {e}");
                 }
-            } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[Bug] InterceptorPrefix failed: {e}");
             }
-            return true;
         }
 
         private static bool BugIsAliveAndActive() =>
@@ -186,7 +168,7 @@ namespace UnknownsCollection {
                 bug = null;
                 active = false;
                 bugPlayerId = byte.MaxValue;
-                triggerBugWin = false;
+                // NOTE: winnerBugId is intentionally NOT reset here (see its declaration).
             }
         }
 
@@ -231,18 +213,29 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
         [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
+            // Runs before TOR's OnGameEnd postfix calls resetVariables(): snapshot the Bug's id so the
+            // postfix below can still award the win after bugPlayerId has been reset. Fires on every
+            // client (OnGameEnd runs everywhere), so all clients agree on the winner.
+            public static void Prefix() {
+                if (active && bugPlayerId != byte.MaxValue) winnerBugId = bugPlayerId;
+            }
+
+            // Runs AFTER TOR's postfix (Priority.Last), so our winner list has the final say. Keys on
+            // the host-broadcast BugWinReason, which every client sees via TOR's OnGameEndPatch.Prefix.
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != BugWinReason) return;
-                    if (bugPlayerId == byte.MaxValue) return;
+                    if (winnerBugId == byte.MaxValue) return;
 
-                    PlayerControl bugPlayer = Helpers.playerById(bugPlayerId);
+                    PlayerControl bugPlayer = Helpers.playerById(winnerBugId);
                     if (bugPlayer == null || bugPlayer.Data == null) return;
 
                     EndGameResult.CachedWinners.Clear();
                     EndGameResult.CachedWinners.Add(new CachedPlayerData(bugPlayer.Data));
+                    // 12 is intentionally outside TOR's WinCondition enum (0-10): no vanilla end-screen
+                    // branch matches it, and the Bug draws its own green "Bug Wins" banner in EndGameFxPatch.
                     SetWinCondition(12);
-                    UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Bug wins! (own win condition)");
+                    UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Bug wins alone! (survived to the end)");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] OnGameEnd failed: {e}");
                 }

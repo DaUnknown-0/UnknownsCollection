@@ -6,17 +6,21 @@
  * The Copycat (Neutral)
  *
  * A normal TOR Crewmate is silently promoted to "The Copycat" at game start (host-authoritative pick,
- * broadcast via RPC 206). The Copycat learns abilities by witnessing other players use them (tracked
- * via TOR CustomRPC IDs on PlayerControl.HandleRpc). Up to MaxAbilitiesStored abilities can be kept
- * simultaneously (oldest is dropped when full). Each learned ability appears as a CustomButton on the
- * Copycat's HUD. The Copycat wins if alive when the game ends (wins with the winning team).
+ * broadcast via RPC 206). The Copycat LEARNS abilities by sensing role-specific TOR ability RPCs while
+ * alive; up to MaxAbilitiesStored are kept at once (oldest dropped when full). Each learned ability is a
+ * CustomButton on the Copycat's HUD. The Copycat wins WITH the winning team if it is alive at game end
+ * and has used at least AbilitiesNeededToWin abilities.
  *
- * Tracked TOR abilities:
- *   Camouflage  (RPC 131) - become grey
- *   Morphling   (RPC 130) - sample a player, then morph into them
- *   Vent        (RPC 107) - use vents
- *   TimeMaster  (RPC 126) - temporary shield
- *   Sheriff     (RPC 108) - shoot attempt (kills Impostors, dies if target is Crew)
+ * Copyable abilities (each learned from a role-specific RPC, so learning is reliable and identical on
+ * every client - not proximity based):
+ *   Camouflage (RPC 131, Camouflager) - turn grey for a while.
+ *   Morphling  (RPC 130, Morphling)   - morph into a chosen player for a while.
+ *   Shield     (RPC 126, TimeMaster)  - become unkillable (normal kills suppressed) for a while.
+ *   Shoot      (RPC 108, any kill)    - a Sheriff-style shot: kills an Impostor, backfires on Crew.
+ *   Vent       (RPC 107, anyone vents)- gain vent access (native Impostor vent button via roleCanUseVents).
+ *
+ * All ability effects are driven by our own RPC (206 / SubUseAbility), applied locally on every client
+ * and timed out independently per client, so cosmetics and the shield stay consistent for everyone.
  *
  * Options live in the 1520-1524 block. See ID-Registry.md.
  */
@@ -31,7 +35,6 @@ using TheOtherRoles;
 using TheOtherRoles.Utilities;
 using static TheOtherRoles.TheOtherRoles;
 using Types = TheOtherRoles.CustomOption.CustomOptionType;
-using AmongUs.GameOptions;
 
 namespace UnknownsCollection {
     public static class Copycat {
@@ -39,12 +42,28 @@ namespace UnknownsCollection {
         public enum Ability : byte {
             Camouflage = 0,
             Morphling = 1,
-            Vent = 2,
-            TimeMaster = 3,
-            Sheriff = 4
+            Shield = 2,
+            Shoot = 3,
+            Vent = 4
         }
 
-        private static readonly string[] AbilityNames = { "CAMO", "MORPH", "VENT", "SHIELD", "SHOOT" };
+        private static readonly string[] AbilityNames = { "CAMO", "MORPH", "SHIELD", "SHOOT", "VENT" };
+
+        // Effect durations (seconds).
+        private const float CamoDuration = 10f;
+        private const float MorphDuration = 15f;
+        private const float ShieldDuration = 5f;
+
+        // Per-ability cooldowns (seconds). Our ability buttons use CustomButton's HasEffect=false overload,
+        // which never auto-resets its Timer — so without an explicit MaxTimer + a Timer reset on click the
+        // abilities would have NO cooldown (spammable Shoot kills / permanent Shield). Set both below.
+        private static float AbilityCooldown(Ability a) => a switch {
+            Ability.Shoot => 30f,
+            Ability.Shield => 30f,
+            Ability.Camouflage => 25f,
+            Ability.Morphling => 25f,
+            _ => 25f
+        };
 
         // ---- Theme ----
         public static readonly Color Color = new Color(0.85f, 0.45f, 0.85f); // purple
@@ -60,36 +79,34 @@ namespace UnknownsCollection {
         public static PlayerControl copycat;
         public static bool active;
 
-        // Learned abilities (ordered by learning time)
+        // Learned abilities (ordered by learning time) + which have actually been used (for the win gate).
         private static readonly List<Ability> learnedAbilities = new();
         private static readonly HashSet<Ability> usedAbilities = new();
 
-        // Shield state (TimeMaster copy)
+        // Effect state (kept in sync on every client; each client times out its own copy).
         public static bool shielded;
         private static float shieldEndTime;
-
-        // Camouflage state
         private static bool camouflaged;
         private static float camoEndTime;
-
-        // Morphling state
         private static byte morphTargetId = byte.MaxValue;
         private static bool isMorphed;
         private static float morphEndTime;
 
-        // ---- TOR CustomRPC byte values (enum is internal) ----
-        private const byte TorCamouflageRpc = 131;
-        private const byte TorMorphlingRpc = 130;
-        private const byte TorVentRpc = 107;
-        private const byte TorTimeMasterRpc = 126;
-        private const byte TorSheriffRpc = 108;
+        // Win snapshot: captured at game-end BEFORE TOR's resetVariables wipes copycat/usedAbilities.
+        // Deliberately NOT reset in resetVariables (TOR's end-of-game reset would clear it first).
+        private static byte winnerCopycatId = byte.MaxValue;
 
-        // ---- Custom RPC (202) subtypes ----
-        private const byte RpcId = 206;
+        // ---- TOR CustomRPC byte values (enum is internal) - verified against TheOtherRoles RPC.cs ----
+        private const byte TorMorphlingRpc = 130;  // CustomRPC.MorphlingMorph
+        private const byte TorCamouflageRpc = 131; // CustomRPC.CamouflagerCamouflage
+        private const byte TorTimeMasterRpc = 126; // CustomRPC.TimeMasterShield
+        private const byte TorMurderRpc = 108;     // CustomRPC.UncheckedMurderPlayer (any kill; also our Shoot)
+        private const byte TorVentRpc = 107;       // CustomRPC.UseUncheckedVent (anyone venting)
+
+        // ---- Custom RPC (206) subtypes ----
+        private const byte RpcId = 206; // == UnknownsCollectionPlugin.CopycatRpcId
         private const byte SubSetCopycat = 0;
-        private const byte SubUseAbility = 1;   // abilityId, targetId (targetId = byte.MaxValue when unused)
-        private const byte SubEndCamouflage = 2;
-        private const byte SubEndMorph = 3;
+        private const byte SubUseAbility = 1; // abilityId, targetId (byte.MaxValue when unused)
 
         // ---- Role identity ----
         private static RoleInfo copycatInfo;
@@ -109,94 +126,49 @@ namespace UnknownsCollection {
                 SpawnMinPlayers = CustomOption.Create(1521, Types.Neutral, "Copycat Minimum Players To Spawn",
                     6f, 4f, 15f, 1f, SpawnRate);
                 MaxAbilitiesStored = CustomOption.Create(1522, Types.Neutral, "Copycat Max Stored Abilities",
-                    3f, 1f, 6f, 1f, SpawnRate);
+                    3f, 1f, 5f, 1f, SpawnRate);
                 CopycatHasTasks = CustomOption.Create(1523, Types.Neutral, "Copycat Has Tasks",
                     true, SpawnRate);
                 AbilitiesNeededToWin = CustomOption.Create(1524, Types.Neutral, "Copycat Abilities Needed To Win",
-                    1f, 0f, 6f, 1f, SpawnRate);
+                    1f, 0f, 5f, 1f, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Copycat] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] CreateOptions failed: {e}");
             }
         }
 
-        public static void TryPatch(Harmony harmony) {
-            try {
-                var torAsm = typeof(CustomOption).Assembly;
-                var checkType = torAsm.GetType("TheOtherRoles.Patches.CheckEndCriteriaPatch");
-                if (checkType == null) {
-                    UnknownsCollectionPlugin.Logger?.LogWarning("[Copycat] CheckEndCriteriaPatch not found — win intercept disabled.");
-                    return;
-                }
-                var methodNames = new[] {
-                    "CheckAndEndGameForCrewmateWin",
-                    "CheckAndEndGameForImpostorWin",
-                    "CheckAndEndGameForJackalWin",
-                    "CheckAndEndGameForTaskWin",
-                    "CheckAndEndGameForSabotageWin"
-                };
-                var prefix = new HarmonyMethod(typeof(Copycat), nameof(CopycatWinPrefix));
-                foreach (var name in methodNames) {
-                    var m = checkType.GetMethod(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
-                    if (m != null) {
-                        harmony.Patch(m, prefix: prefix);
-                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Patched {name} for Copycat survival check.");
-                    }
-                }
-            } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] TryPatch failed: {e}");
-            }
-        }
-
-        // Intercept endgame checks to prevent game from ending too early if Copycat is alive
-        // (so the Copycat always survives to see the winner declared)
-        public static bool CopycatWinPrefix(ref bool __result) {
-            try {
-                if (CopycatIsAlive()) {
-                    // Check if this would be the last player standing scenario
-                    int aliveCount = 0;
-                    foreach (var p in PlayerControl.AllPlayerControls) {
-                        if (p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected)
-                            aliveCount++;
-                    }
-                    // If only 2 players alive (Copycat + 1 other), let the game end
-                    if (aliveCount <= 2) return true;
-                    // Otherwise, prevent game from ending (Copycat must survive more)
-                    __result = false;
-                    return false; // skip the original end check
-                }
-            } catch { }
-            return true; // let original check run
-        }
+        // The win is handled by attribute patches (OnGameEndPatch) - no reflection / win-check hijack.
+        public static void TryPatch(Harmony harmony) { }
 
         private static bool CopycatIsAlive() =>
             active && copycat != null && copycat.Data != null && !copycat.Data.IsDead && !copycat.Data.Disconnected;
-
         private static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
+        private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
         private static int LobbyPlayerCount() =>
             PlayerControl.AllPlayerControls.ToArray().Count(p => p != null && p.Data != null && !p.Data.Disconnected);
         public static bool IsLocalCopycat() =>
             copycat != null && PlayerControl.LocalPlayer != null && copycat.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
-        // ---- Helper: Map TOR RPC callId to Copycat ability ----
         private static Ability? RpcToAbility(byte callId) {
             return callId switch {
                 TorCamouflageRpc => Ability.Camouflage,
                 TorMorphlingRpc => Ability.Morphling,
+                TorTimeMasterRpc => Ability.Shield,
+                TorMurderRpc => Ability.Shoot,
                 TorVentRpc => Ability.Vent,
-                TorTimeMasterRpc => Ability.TimeMaster,
-                TorSheriffRpc => Ability.Sheriff,
                 _ => null
             };
         }
 
         private static int MaxAbilities() =>
             MaxAbilitiesStored != null ? Mathf.RoundToInt(MaxAbilitiesStored.getFloat()) : 3;
-
         private static int NeededToWin() =>
             AbilitiesNeededToWin != null ? Mathf.RoundToInt(AbilitiesNeededToWin.getFloat()) : 1;
 
+        // ====================================================================
+        // Custom RPC senders (each applies locally too)
+        // ====================================================================
         private static MessageWriter BeginRpc(byte subtype) {
             MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
                 PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
@@ -223,48 +195,55 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] SendUseAbility failed: {e}"); }
         }
 
+        // Perform an unchecked murder on every client (broadcast once + local), like the Tesla/Sheriff.
+        private static void RpcUncheckedMurder(byte sourceId, byte targetId) {
+            try {
+                MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
+                    PlayerControl.LocalPlayer.NetId, TorMurderRpc, SendOption.Reliable, -1);
+                w.Write(sourceId);
+                w.Write(targetId);
+                w.Write(byte.MaxValue); // showAnimation
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                RPCProcedure.uncheckedMurderPlayer(sourceId, targetId, byte.MaxValue);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] RpcUncheckedMurder failed: {e}");
+            }
+        }
+
+        // ====================================================================
+        // Appliers (run on every client)
+        // ====================================================================
         private static void ApplySetCopycat(byte id) {
             copycat = Helpers.playerById(id);
             active = copycat != null;
             if (active) UCPromotion.Claim(id);
             learnedAbilities.Clear();
             usedAbilities.Clear();
-            shielded = false;
-            camouflaged = false;
-            isMorphed = false;
+            shielded = camouflaged = isMorphed = false;
             morphTargetId = byte.MaxValue;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] The Copycat is {copycat.Data?.PlayerName}.");
         }
 
-        private static void ApplyUseAbility(Ability ability, byte targetId = byte.MaxValue) {
-            if (!active || copycat == null) return;
-            if (!IsAlive(copycat)) return;
+        private static void ApplyUseAbility(Ability ability, byte targetId) {
+            if (!active || copycat == null || !IsAlive(copycat)) return;
 
             switch (ability) {
                 case Ability.Camouflage: StartCamouflage(); break;
-                case Ability.Morphling: StartMorph(); break;
-                case Ability.Vent: DoVent(); break;
-                case Ability.TimeMaster: StartShield(); break;
-                case Ability.Sheriff: DoShoot(targetId); break;
+                case Ability.Morphling: StartMorph(targetId); break;
+                case Ability.Shield: StartShield(); break;
+                case Ability.Shoot: DoShoot(targetId); break;
+                case Ability.Vent: break; // venting is a passive capability granted via roleCanUseVents; nothing to apply
             }
 
-            if (!usedAbilities.Contains(ability)) {
-                usedAbilities.Add(ability);
-                UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Used ability {ability} (total used: {usedAbilities.Count}).");
-            }
+            if (usedAbilities.Add(ability))
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Used ability {ability} (distinct used: {usedAbilities.Count}).");
         }
 
-        // ---- Ability implementations (run on every client via RPC) ----
-        // Camouflage/Morph change the Copycat's look LOCALLY on every client (via setLook/
-        // setDefaultLook - exactly like TOR's Camouflager/Morphling). We must NOT use the vanilla
-        // PlayerControl.RpcSetColor here: that is a host-authoritative RPC, so a non-host (and every
-        // non-owner client, since this runs on all clients via SubUseAbility) calling it on the
-        // Copycat's NetId routes through the host's CheckColor/anti-cheat and gets the sender kicked.
-        // setLook is purely cosmetic and client-side, so no network traffic is produced at all.
-
+        // ---- Camouflage / Morph: purely cosmetic setLook, applied on every client (never RpcSetColor,
+        // which is host-authoritative and would trip anti-cheat on non-owner clients). ----
         private static void StartCamouflage() {
             camouflaged = true;
-            camoEndTime = Time.time + 10f;
+            camoEndTime = Time.time + CamoDuration;
             if (copycat != null) copycat.setLook("", 6, "", "", "", ""); // grey, no cosmetics
         }
 
@@ -273,18 +252,15 @@ namespace UnknownsCollection {
             RestoreLook();
         }
 
-        private static void StartMorph() {
-            var targets = PlayerControl.AllPlayerControls.ToArray()
-                .Where(p => IsAlive(p) && p.PlayerId != copycat.PlayerId).ToList();
-            if (targets.Count == 0) return;
-            var target = targets[rnd.Next(targets.Count)];
-            morphTargetId = target.PlayerId;
+        private static void StartMorph(byte targetId) {
+            var target = Helpers.playerById(targetId);
+            if (target == null || target.Data == null || copycat == null) return;
+            morphTargetId = targetId;
             isMorphed = true;
-            morphEndTime = Time.time + 15f;
-            if (copycat != null && target.Data != null)
-                copycat.setLook(target.Data.PlayerName, target.Data.DefaultOutfit.ColorId,
-                    target.Data.DefaultOutfit.HatId, target.Data.DefaultOutfit.VisorId,
-                    target.Data.DefaultOutfit.SkinId, target.Data.DefaultOutfit.PetId);
+            morphEndTime = Time.time + MorphDuration;
+            copycat.setLook(target.Data.PlayerName, target.Data.DefaultOutfit.ColorId,
+                target.Data.DefaultOutfit.HatId, target.Data.DefaultOutfit.VisorId,
+                target.Data.DefaultOutfit.SkinId, target.Data.DefaultOutfit.PetId);
         }
 
         private static void EndMorph() {
@@ -293,8 +269,8 @@ namespace UnknownsCollection {
             RestoreLook();
         }
 
-        // Restore the Copycat's own look. Camouflage and Morph can overlap, so if the other effect
-        // is still running we re-apply it instead of falling back to the default outfit.
+        // Restore the Copycat's own look. Camouflage and Morph can overlap, so if the other effect is
+        // still running we re-apply it instead of falling back to the default outfit.
         private static void RestoreLook() {
             if (copycat == null) return;
             if (camouflaged) { copycat.setLook("", 6, "", "", "", ""); return; }
@@ -310,75 +286,54 @@ namespace UnknownsCollection {
             copycat.setDefaultLook();
         }
 
-        private static void DoVent() {
-            // The unchecked-vent RPC is broadcast to every client (target -1), so it must be sent
-            // exactly ONCE - only by the client that owns the Copycat. ApplyUseAbility runs on every
-            // client, so without this guard each client would re-send the vent RPC for the same act.
-            if (!IsLocalCopycat()) return;
-            if (AmongUsClient.Instance != null && copycat != null) {
-                var w = AmongUsClient.Instance.StartRpcImmediately(
-                    copycat.NetId, TorVentRpc, SendOption.Reliable, -1);
-                AmongUsClient.Instance.FinishRpcImmediately(w);
-            }
-        }
-
         private static void StartShield() {
             shielded = true;
-            shieldEndTime = Time.time + 5f;
+            shieldEndTime = Time.time + ShieldDuration;
         }
 
-        // Runs on every client via ApplyUseAbility (SubUseAbility RPC), like every other ability - this
-        // is what makes the kill happen regardless of whether the Copycat itself is the host. The raw
-        // TOR RPC (108) must still only be sent once, by the Copycat's own client (mirrors DoVent).
+        // Sheriff-style shot. The actual kill is host-authoritative and broadcast exactly once
+        // (RpcUncheckedMurder), so it must NOT run per-client - only the host performs it.
         private static void DoShoot(byte targetId) {
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
             var target = Helpers.playerById(targetId);
-            if (target == null || target.Data == null || copycat == null) return;
+            if (copycat == null || !IsAlive(copycat) || !IsAlive(target)) return;
+            // Respect Medic/TimeMaster shields and other protections, like a real Sheriff shot: if the
+            // kill would be suppressed, the shot is absorbed (no kill, no backfire).
+            if (Helpers.checkMuderAttempt(copycat, target) != MurderAttemptResult.PerformKill) return;
             bool targetIsImpostor = target.Data.Role != null && target.Data.Role.IsImpostor;
-
-            if (IsLocalCopycat() && AmongUsClient.Instance != null) {
-                var w = AmongUsClient.Instance.StartRpcImmediately(
-                    target.NetId, TorSheriffRpc, SendOption.Reliable, -1);
-                AmongUsClient.Instance.FinishRpcImmediately(w);
-            }
-
-            if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) {
-                if (targetIsImpostor) {
-                    target.Data.IsDead = true;
-                } else {
-                    copycat.Data.IsDead = true;
-                }
-            }
+            if (targetIsImpostor)
+                RpcUncheckedMurder(copycat.PlayerId, target.PlayerId);          // clean kill
+            else
+                RpcUncheckedMurder(copycat.PlayerId, copycat.PlayerId);         // backfire: shooting Crew kills the Copycat
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetCopycat(playerId);
 
-        // ---- Learn ability (called when a tracked RPC is seen) ----
+        // ---- Learn a witnessed ability (identical on every client - based on the observed RPC). ----
         private static void LearnAbility(Ability ability) {
-            if (!active || copycat == null) return;
+            if (!active || !CopycatIsAlive()) return;
             if (learnedAbilities.Contains(ability)) return; // already known
 
-            int maxAbilities = MaxAbilities();
-            if (learnedAbilities.Count >= maxAbilities && maxAbilities > 0) {
-                // Drop the oldest learned ability
+            int max = MaxAbilities();
+            if (max <= 0) return;
+            if (learnedAbilities.Count >= max) {
                 var oldest = learnedAbilities[0];
                 learnedAbilities.RemoveAt(0);
-                UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Dropped oldest ability {oldest} to make room for {ability}.");
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Dropped oldest ability {oldest} for {ability}.");
             }
-
-            if (learnedAbilities.Count < maxAbilities) {
-                learnedAbilities.Add(ability);
-                UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Learned ability {ability} (total: {learnedAbilities.Count}).");
-            }
+            learnedAbilities.Add(ability);
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Learned ability {ability} (known: {learnedAbilities.Count}).");
         }
 
-        // ---- RPC handlers ----
+        // ====================================================================
+        // RPC receiver + ability learning
+        // ====================================================================
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
         [HarmonyPriority(Priority.High)]
         static class HandleRpcPatch {
             public static bool Prefix(byte callId, MessageReader reader) {
                 try {
                     if (callId == RpcId) {
-                        // Our own RPC — handle and suppress original to prevent anti-cheat kick
                         byte subtype = reader.ReadByte();
                         switch (subtype) {
                             case SubSetCopycat: ApplySetCopycat(reader.ReadByte()); break;
@@ -388,26 +343,77 @@ namespace UnknownsCollection {
                                 ApplyUseAbility(ability, targetId);
                                 break;
                             }
-                            case SubEndCamouflage: EndCamouflage(); break;
-                            case SubEndMorph: EndMorph(); break;
                         }
-                        return false;
+                        return false; // consume our own RPC
                     }
 
-                    // Track ability usage for learning (Prefix: can check callId without consuming reader)
+                    // Learn from tracked TOR ability RPCs. We only inspect callId here - never read the
+                    // reader - so the original TOR handler still gets an untouched stream.
                     if (active && copycat != null) {
                         var ability = RpcToAbility(callId);
-                        if (ability != null) {
-                            LearnAbility(ability.Value);
-                        }
+                        if (ability != null) LearnAbility(ability.Value);
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] HandleRpc failed: {e}");
                 }
+                return true; // let TOR handle non-Copycat RPCs
+            }
+        }
+
+        // ====================================================================
+        // Shield: suppress normal kills on the shielded Copycat at the same choke point the Medic
+        // shield uses (Helpers.checkMuderAttempt), so no downstream MurderPlayer side effects fire.
+        // (Unchecked murders - e.g. Tesla/Saboteur/our own backfire - bypass this, by design.)
+        // ====================================================================
+        [HarmonyPatch(typeof(Helpers), nameof(Helpers.checkMuderAttempt))]
+        static class ShieldPatch {
+            public static bool Prefix([HarmonyArgument(1)] PlayerControl target, ref MurderAttemptResult __result) {
+                try {
+                    if (active && shielded && copycat != null && target != null
+                        && target.PlayerId == copycat.PlayerId && CopycatIsAlive()) {
+                        __result = MurderAttemptResult.SuppressKill;
+                        return false;
+                    }
+                } catch { }
                 return true;
             }
         }
 
+        // ====================================================================
+        // Vent: once the Vent ability is learned, grant the Copycat vent access through TOR's single
+        // gate (roleCanUseVents). Every part of TOR's vent machinery - the native Impostor vent button,
+        // Vent.CanUse, Vent.Use, moving between vents - routes through this, so no custom button is needed.
+        // ====================================================================
+        [HarmonyPatch(typeof(Helpers), nameof(Helpers.roleCanUseVents))]
+        static class VentAccessPatch {
+            public static void Postfix(PlayerControl player, ref bool __result) {
+                try {
+                    if (active && copycat != null && player != null && player.PlayerId == copycat.PlayerId
+                        && CopycatIsAlive() && learnedAbilities.Contains(Ability.Vent))
+                        __result = true;
+                } catch { }
+            }
+        }
+
+        // Count the Vent ability as "used" (for the win gate) the first time the local Copycat vents.
+        [HarmonyPatch(typeof(Vent), nameof(Vent.Use))]
+        static class VentUsePatch {
+            public static void Postfix() {
+                try {
+                    if (!IsLocalCopycat() || !CopycatIsAlive()) return;
+                    if (!learnedAbilities.Contains(Ability.Vent) || usedAbilities.Contains(Ability.Vent)) return;
+                    // Don't credit a vent that TOR's Vent.Use prefix actually blocked (Deputy handcuff /
+                    // Trapper trap) — otherwise a blocked button press would wrongly count toward the win.
+                    var me = PlayerControl.LocalPlayer;
+                    if (Deputy.handcuffedPlayers.Contains(me.PlayerId) || Trapper.playersOnMap.Contains(me.PlayerId)) return;
+                    SendUseAbility(Ability.Vent);
+                } catch { }
+            }
+        }
+
+        // ====================================================================
+        // Round reset
+        // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
             public static void Postfix() {
@@ -415,17 +421,17 @@ namespace UnknownsCollection {
                 active = false;
                 learnedAbilities.Clear();
                 usedAbilities.Clear();
-                shielded = false;
-                camouflaged = false;
-                isMorphed = false;
+                shielded = camouflaged = isMorphed = false;
                 morphTargetId = byte.MaxValue;
-                shieldEndTime = 0;
-                camoEndTime = 0;
-                morphEndTime = 0;
+                shieldEndTime = camoEndTime = morphEndTime = 0f;
                 abilityButtons.Clear();
+                // NOTE: winnerCopycatId is intentionally NOT reset here (see its declaration).
             }
         }
 
+        // ====================================================================
+        // Game start: host picks the Copycat among plain Crewmates and broadcasts it.
+        // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
         [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
@@ -449,49 +455,62 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Target tracking for abilities that need it (Sheriff, Morphling) ----
-        private static PlayerControl currentTarget;
-        private static PlayerControl currentMorphTarget;
+        // ====================================================================
+        // Per-frame: effect timeouts (all clients) + local targeting for Shoot/Morph.
+        // ====================================================================
+        private static PlayerControl currentTarget;      // Shoot target (close)
+        private static PlayerControl currentMorphTarget;  // Morph target (farther)
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {
                     if (!active || copycat == null) return;
-                    bool local = IsLocalCopycat();
-                    if (!local) return;
 
-                    // Update targeting for Sheriff and Morphling
+                    // Time out effects on EVERY client (each ends its own copy so cosmetics/shield stay
+                    // consistent - the start RPC set the end time on all of them).
+                    if (shielded && Time.time >= shieldEndTime) shielded = false;
+                    if (camouflaged && Time.time >= camoEndTime) EndCamouflage();
+                    if (isMorphed && Time.time >= morphEndTime) EndMorph();
+
+                    // Targeting only matters for the local Copycat's buttons.
+                    if (!IsLocalCopycat()) return;
                     currentTarget = null;
                     currentMorphTarget = null;
-                    float closestDist = 2f; // max targeting distance
-                    float closestMorphDist = 5f; // morph can target from farther
+                    if (!CopycatIsAlive() || InMeeting()) return;
+
+                    float closestShoot = 2f;   // shoot range
+                    float closestMorph = 5f;   // morph can target from farther
+                    bool wantShoot = learnedAbilities.Contains(Ability.Shoot);
+                    bool wantMorph = learnedAbilities.Contains(Ability.Morphling);
+                    if (!wantShoot && !wantMorph) return;
 
                     foreach (var p in PlayerControl.AllPlayerControls) {
                         if (p == null || !IsAlive(p) || p.PlayerId == copycat.PlayerId) continue;
                         float d = Vector2.Distance(copycat.GetTruePosition(), p.GetTruePosition());
-
-                        if (d < closestDist && learnedAbilities.Contains(Ability.Sheriff)) {
-                            closestDist = d;
-                            currentTarget = p;
-                        }
-                        if (d < closestMorphDist && learnedAbilities.Contains(Ability.Morphling)) {
-                            closestMorphDist = d;
-                            currentMorphTarget = p;
-                        }
+                        if (wantShoot && d < closestShoot) { closestShoot = d; currentTarget = p; }
+                        if (wantMorph && d < closestMorph) { closestMorph = d; currentMorphTarget = p; }
                     }
-
-                    // Time out effects
-                    if (shielded && Time.time >= shieldEndTime) shielded = false;
-                    if (camouflaged && Time.time >= camoEndTime) EndCamouflage();
-                    if (isMorphed && Time.time >= morphEndTime) EndMorph();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] HudUpdate failed: {e}");
                 }
             }
         }
 
-        // ---- Button creation (one per ability) ----
+        // Effects never carry through a meeting.
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
+        static class MeetingStartPatch {
+            public static void Postfix() {
+                if (!active) return;
+                shielded = false;
+                if (camouflaged) EndCamouflage();
+                if (isMorphed) EndMorph();
+            }
+        }
+
+        // ====================================================================
+        // Buttons (one per ability)
+        // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
@@ -499,106 +518,86 @@ namespace UnknownsCollection {
                 try {
                     cachedButtonSprite = __instance.KillButton != null && __instance.KillButton.graphic != null
                         ? __instance.KillButton.graphic.sprite : null;
-
-                    // Create a button for each ability
-                    CreateAbilityButton(Ability.Camouflage,  __instance, 0);
-                    CreateAbilityButton(Ability.Morphling,   __instance, 1);
-                    CreateAbilityButton(Ability.Vent,        __instance, 2);
-                    CreateAbilityButton(Ability.TimeMaster,  __instance, 3);
-                    CreateAbilityButton(Ability.Sheriff,     __instance, 4);
+                    CreateAbilityButton(Ability.Camouflage, __instance,
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft);
+                    CreateAbilityButton(Ability.Morphling, __instance,
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter);
+                    CreateAbilityButton(Ability.Shield, __instance,
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight);
+                    CreateAbilityButton(Ability.Shoot, __instance,
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowRight);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] Button creation failed: {e}");
                 }
             }
         }
 
-        private static void CreateAbilityButton(Ability ability, HudManager __instance, int index) {
-            var pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter;
-            if (index == 0) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft;
-            else if (index == 1) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter;
-            else if (index == 2) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight;
-            else if (index == 3) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft;
-            else if (index == 4) pos = TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowCenter;
-
+        private static void CreateAbilityButton(Ability ability, HudManager __instance, Vector3 pos) {
             var button = new TheOtherRoles.Objects.CustomButton(
                 () => OnAbilityClick(ability),
                 () => IsAbilityAvailable(ability),
                 () => IsAbilityVisible(ability),
-                () => { /* on meeting - nothing special */ },
+                () => { /* nothing on meeting */ },
                 GetAbilitySprite(ability),
                 pos,
                 __instance, KeyCode.None, false, AbilityNames[(int)ability]);
+            button.MaxTimer = AbilityCooldown(ability);
+            button.Timer = button.MaxTimer; // start on cooldown (elapses before the ability is ever learned)
             abilityButtons[ability] = button;
         }
 
         private static readonly Dictionary<Ability, Sprite> abilitySpriteCache = new();
         private static Sprite GetAbilitySprite(Ability ability) {
             if (abilitySpriteCache.TryGetValue(ability, out var cached)) return cached;
-            string resource = null;
-            switch (ability) {
-                case Ability.Camouflage: resource = "TheOtherRoles.Resources.CamoButton.png"; break;
-                case Ability.Morphling:  resource = "TheOtherRoles.Resources.MorphButton.png"; break;
-                case Ability.Vent:       resource = "TheOtherRoles.Resources.Vent.png"; break;
-                case Ability.TimeMaster: resource = "TheOtherRoles.Resources.TimeShieldButton.png"; break;
-            }
+            string resource = ability switch {
+                Ability.Camouflage => "TheOtherRoles.Resources.CamoButton.png",
+                Ability.Morphling => "TheOtherRoles.Resources.MorphButton.png",
+                Ability.Shield => "TheOtherRoles.Resources.TimeShieldButton.png",
+                Ability.Shoot => "TheOtherRoles.Resources.SheriffKillButton.png",
+                _ => null
+            };
             if (resource != null) {
                 var spr = Helpers.loadSpriteFromResources(resource, 115f);
-                if (spr != null) {
-                    abilitySpriteCache[ability] = spr;
-                    return spr;
-                }
+                if (spr != null) { abilitySpriteCache[ability] = spr; return spr; }
             }
             return cachedButtonSprite;
         }
 
-        private static bool IsAbilityAvailable(Ability ability) {
-            if (!active || copycat == null) return false;
-            if (!IsLocalCopycat()) return false;
-            if (copycat.Data == null || copycat.Data.IsDead) return false;
-            if (!learnedAbilities.Contains(ability)) return false;
-
-            switch (ability) {
-                case Ability.Sheriff: return currentTarget != null;
-                case Ability.Morphling: return currentMorphTarget != null;
-                case Ability.Camouflage: return !camouflaged;
-                case Ability.TimeMaster: return !shielded;
-                default: return true;
-            }
+        private static bool IsAbilityVisible(Ability ability) {
+            return active && IsLocalCopycat() && CopycatIsAlive() && learnedAbilities.Contains(ability);
         }
 
-        private static bool IsAbilityVisible(Ability ability) {
-            if (!active || copycat == null) return false;
-            if (!IsLocalCopycat()) return false;
-            if (copycat.Data == null || copycat.Data.IsDead) return false;
-            return learnedAbilities.Contains(ability);
+        private static bool IsAbilityAvailable(Ability ability) {
+            if (!IsAbilityVisible(ability)) return false;
+            if (PlayerControl.LocalPlayer == null || !PlayerControl.LocalPlayer.CanMove || InMeeting()) return false;
+            return ability switch {
+                Ability.Shoot => currentTarget != null,
+                Ability.Morphling => currentMorphTarget != null && !isMorphed,
+                Ability.Camouflage => !camouflaged,
+                Ability.Shield => !shielded,
+                _ => true
+            };
         }
 
         private static void OnAbilityClick(Ability ability) {
-            if (!IsLocalCopycat()) return;
+            if (!IsLocalCopycat() || !IsAbilityAvailable(ability)) return;
             switch (ability) {
-                case Ability.Sheriff:
-                    if (currentTarget == null) return;
-                    SendUseAbility(ability, currentTarget.PlayerId);
-                    break;
-                case Ability.Morphling:
-                    if (currentMorphTarget == null) return;
-                    morphTargetId = currentMorphTarget.PlayerId;
-                    SendUseAbility(ability);
-                    break;
-                default:
-                    SendUseAbility(ability);
-                    break;
+                case Ability.Shoot: SendUseAbility(ability, currentTarget.PlayerId); break;
+                case Ability.Morphling: SendUseAbility(ability, currentMorphTarget.PlayerId); break;
+                default: SendUseAbility(ability); break;
             }
+            // Start the cooldown (HasEffect=false buttons don't auto-reset their Timer).
+            if (abilityButtons.TryGetValue(ability, out var b) && b != null) b.Timer = b.MaxTimer;
         }
 
-        // ---- Task management ----
+        // ====================================================================
+        // Task management: the Copycat is neutral, so remove its tasks from the crew total.
+        // ====================================================================
         [HarmonyPatch(typeof(GameData), nameof(GameData.RecomputeTaskCounts))]
         static class TaskPatch {
             public static void Postfix(GameData __instance) {
                 try {
                     if (!active || copycat == null || copycat.Data == null) return;
-
-                    // Remove Copycat's tasks from totals (neutral role)
                     var (completed, total) = TasksHandler.taskInfo(copycat.Data);
                     __instance.TotalTasks -= total;
                     __instance.CompletedTasks -= completed;
@@ -608,41 +607,43 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Win with winning team if alive ----
+        // ====================================================================
+        // Win with the winning team if alive and enough abilities were used. Never blocks a win.
+        // ====================================================================
+        // VeryLow (not Last): runs after TOR's Normal postfix but BEFORE Bug's Last postfix. If a Bug
+        // hijacked the win (it clears the winner list and sets itself alone), Bug must have the final say,
+        // so the Copycat's append must not come after it. On a normal team win, Bug's postfix no-ops and
+        // this append stands.
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.Last)]
+        [HarmonyPriority(Priority.VeryLow)]
         static class OnGameEndPatch {
+            // Runs before TOR's OnGameEnd postfix calls resetVariables(): snapshot whether the Copycat
+            // has earned a shared win (alive + used enough abilities), since the postfix runs after reset.
+            public static void Prefix() {
+                winnerCopycatId = byte.MaxValue;
+                if (active && CopycatIsAlive() && usedAbilities.Count >= NeededToWin())
+                    winnerCopycatId = copycat.PlayerId;
+            }
+
+            // Runs AFTER TOR's postfix: append the Copycat to the winners (does not replace them).
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
-                    if (!active || copycat == null || copycat.Data == null) return;
-                    if (copycat.Data.IsDead || copycat.Data.Disconnected) return;
-
-                    int needed = NeededToWin();
-                    int used = usedAbilities.Count;
-                    if (used < needed) {
-                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Copycat survived but only used {used}/{needed} abilities — did NOT win with winners.");
-                        return;
-                    }
-
-                    // Add Copycat to winners
-                    bool alreadyWinner = false;
-                    foreach (var w in EndGameResult.CachedWinners) {
-                        if (w != null && w.PlayerName == copycat.Data.PlayerName) {
-                            alreadyWinner = true;
-                            break;
-                        }
-                    }
-                    if (!alreadyWinner) {
-                        EndGameResult.CachedWinners.Add(new CachedPlayerData(copycat.Data));
-                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Copycat wins with the winners! (used {used}/{needed} abilities)");
-                    }
+                    if (winnerCopycatId == byte.MaxValue) return;
+                    var p = Helpers.playerById(winnerCopycatId);
+                    if (p == null || p.Data == null) return;
+                    foreach (var w in EndGameResult.CachedWinners)
+                        if (w != null && w.PlayerName == p.Data.PlayerName) return; // already a winner
+                    EndGameResult.CachedWinners.Add(new CachedPlayerData(p.Data));
+                    UnknownsCollectionPlugin.Logger?.LogInfo("[Copycat] Copycat wins with the winners!");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] OnGameEnd failed: {e}");
                 }
             }
         }
 
-        // ---- Role identity ----
+        // ====================================================================
+        // Role identity: show the Copycat over the Crewmate entry (until nothing else applies).
+        // ====================================================================
         [HarmonyPatch(typeof(RoleInfo), nameof(RoleInfo.getRoleInfoForPlayer))]
         static class RoleInfoPatch {
             public static void Postfix(PlayerControl p, ref List<RoleInfo> __result) {

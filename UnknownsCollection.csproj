@@ -13,11 +13,12 @@
         <AssemblyName>UnknownsCollection</AssemblyName>
     </PropertyGroup>
 
-    <!-- Embedded audio: logical name "UnknownsCollection.Resources.tesla_warning.raw" (RootNamespace
-         = AssemblyName). Headerless 2-channel signed 32-bit PCM LE @ 48 kHz; loaded by TeslaSound. -->
+    <!-- Embedded audio: logical names "UnknownsCollection.Resources.<file>" (RootNamespace = AssemblyName).
+         Headerless 2-channel signed 32-bit PCM LE @ 48 kHz; loaded by TeslaSound (tesla_warning) and
+         BugSound (Glitch). -->
     <ItemGroup>
         <EmbeddedResource Include="Resources\tesla_warning.raw" />
-        <EmbeddedResource Include="Resources\bug_effect.raw" />
+        <EmbeddedResource Include="Resources\Glitch.raw" />
     </ItemGroup>
 
     <ItemGroup>

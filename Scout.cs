@@ -159,6 +159,7 @@ namespace UnknownsCollection {
             abilityActive = true;
             float dur = Duration != null ? Duration.getFloat() : 10f;
             abilityEndTime = Time.time + dur;
+            if (scout != null) UCAssets.PlayScoutWhoosh(scout.GetTruePosition());
             if (IsLocalScout()) {
                 originalSpeed = PlayerControl.LocalPlayer.MyPhysics.Speed;
                 float mult = SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.5f;
@@ -173,6 +174,7 @@ namespace UnknownsCollection {
         private static void ApplyDeactivate() {
             abilityActive = false;
             abilityEndTime = 0;
+            if (scout != null) UCAssets.PlayScoutWhoosh(scout.GetTruePosition(), 0.4f);
             if (IsLocalScout() && originalSpeed > 0) {
                 PlayerControl.LocalPlayer.MyPhysics.Speed = originalSpeed;
             }
@@ -258,7 +260,8 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    var sprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.InvisButton.png", 115f);
+                    var sprite = UCAssets.ScoutIcon
+                        ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.InvisButton.png", 115f);
                     scoutButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
                             if (abilityActive) return;

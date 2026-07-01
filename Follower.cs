@@ -138,6 +138,8 @@ namespace UnknownsCollection {
             }
 
             hasCopied = true;
+            // Takeover riser only for the Follower itself - the new role stays secret for everyone else.
+            if (f == PlayerControl.LocalPlayer) UCAssets.PlayFollowerShift();
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Follower] {f.Data?.PlayerName} took over the role of {t.Data?.PlayerName} ({roleId}).");
         }

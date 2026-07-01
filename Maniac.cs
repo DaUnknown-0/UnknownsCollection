@@ -224,10 +224,10 @@ namespace UnknownsCollection {
             if (bombCarrier != null && bombCarrier.PlayerId == carrierId) {
                 bombDetected = true;
                 bombDetectedAt = Time.time;
-                // Play bomb warning sound for the carrier
+                // Play the burning-fuse loop for the carrier (own seamless clip, see UCAssets)
                 if (PlayerControl.LocalPlayer != null
                     && PlayerControl.LocalPlayer.PlayerId == carrierId)
-                    SoundEffectsManager.play("bombFuseBurning");
+                    UCAssets.PlayFuseLoop();
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb detected by carrier {bombCarrier.Data?.PlayerName}.");
             }
         }
@@ -235,7 +235,7 @@ namespace UnknownsCollection {
         private static void ApplyPassBomb(byte oldCarrierId, byte newCarrierId) {
             if (bombCarrier != null && bombCarrier.PlayerId == oldCarrierId) {
                 // Stop the fuse sound for the old carrier
-                SoundEffectsManager.stop("bombFuseBurning");
+                UCAssets.StopFuseLoop();
                 bombCarrier = Helpers.playerById(newCarrierId);
                 // Hot-potato: the pass does NOT reset the fuse. bombDetected + bombDetectedAt are kept, so
                 // the pass window keeps counting down from the original detection and the bomb explodes at
@@ -244,21 +244,22 @@ namespace UnknownsCollection {
                 // Keep the burning fuse audible for whoever now holds the bomb.
                 if (bombDetected && PlayerControl.LocalPlayer != null
                     && PlayerControl.LocalPlayer.PlayerId == newCarrierId)
-                    SoundEffectsManager.play("bombFuseBurning");
+                    UCAssets.PlayFuseLoop();
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb passed to {bombCarrier?.Data?.PlayerName}.");
             }
         }
 
         private static void ApplyExplode(byte victimId) {
             if (bombCarrier != null && bombCarrier.PlayerId == victimId) {
-                SoundEffectsManager.stop("bombFuseBurning");
-                // Red explosion flash for everyone nearby
+                UCAssets.StopFuseLoop();
+                // Red explosion flash for everyone nearby + a distance-attenuated boom.
                 var victim = Helpers.playerById(victimId);
                 if (victim != null) {
                     float range = BombRange();
                     var me = PlayerControl.LocalPlayer;
                     if (me != null && Vector2.Distance(me.GetTruePosition(), victim.GetTruePosition()) <= range)
                         Helpers.showFlash(new Color(1f, 0.3f, 0f, 0.6f), 0.4f);
+                    UCAssets.PlayExplosion(victim.GetTruePosition());
                 }
                 ClearBomb();
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb exploded on player {victimId}.");
@@ -268,6 +269,7 @@ namespace UnknownsCollection {
         private static void ApplyClear() => ClearBomb();
 
         private static void ClearBomb() {
+            UCAssets.StopFuseLoop(); // a cleared bomb (e.g. meeting) must never leave the fuse burning
             RemoveBombTag(bombCarrier);
             bombCarrier = null;
             bombDetected = false;
@@ -481,8 +483,11 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    var bombSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.Bomb_Button_Plant.png", 115f);
-                    var passSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.Bomb_Button_Defuse.png", 115f);
+                    // Own icons (UCAssets); TOR sprites only as fallback if a resource is missing.
+                    var bombSprite = UCAssets.ManiacBombIcon
+                        ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.Bomb_Button_Plant.png", 115f);
+                    var passSprite = UCAssets.ManiacPassIcon
+                        ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.Bomb_Button_Defuse.png", 115f);
 
                     bombButton = new TheOtherRoles.Objects.CustomButton(
                         () => {

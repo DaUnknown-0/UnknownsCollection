@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.0.1.52";
+    public const string PluginVersion = "1.0.1.53";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
@@ -61,6 +61,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte CopycatRpcId = 206; // 202 conflicts with Chance.ChaosModifierClearRpcId
     public const byte ScoutRpcId = 203;
     public const byte BeaconRpcId = 204;
+    public const byte PoltergeistRpcId = 208;
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -145,6 +146,11 @@ public class UnknownsCollectionPlugin : BasePlugin
         // The Beacon role (Crewmate). Lights never affect them; nearby crew share their vision.
         Beacon.CreateOptions();
         Beacon.TryPatch(harmony);
+
+        // The Poltergeist (ghost role, keeps its original team). The first player to die rises and
+        // haunts: door slams, hexes, a ghost hand on reactor consoles and a manifest disguise.
+        Poltergeist.CreateOptions();
+        Poltergeist.TryPatch(harmony);
 
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line + UCOptionsPatch).

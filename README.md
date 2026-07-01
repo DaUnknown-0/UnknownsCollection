@@ -1,6 +1,6 @@
 # Unknown's Collection
 
-A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds **14 custom roles** to
+A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds **15 custom roles** to
 [The Other Roles](https://github.com/TheOtherRolesAU/TheOtherRoles) (TOR) for *Among Us*.
 
 Each role is layered on top of TOR purely through Harmony patches — **the original TOR source is never
@@ -68,6 +68,18 @@ modified**. The plugin only takes a hard dependency on TheOtherRoles.
   Shoot (Sheriff-style, backfires on Crew) and Vent (vent access). Each learned ability is a button; the
   Copycat wins **with the winning team** if alive and it used enough abilities. *Options:* max stored
   abilities, has tasks, abilities needed to win.
+
+### Ghost
+
+- **The Poltergeist** — not a start role: the **first player to die** (kills always; exile too, per
+  option) rises as the Poltergeist and **keeps its original team** — a dead Crewmate haunts for the
+  crew, a dead Impostor for the impostors. Abilities share an **energy pool** (regenerates over time,
+  never in meetings): **Door Haunt** slams a single door shut; **Hex** curses the nearest living player
+  (speed boost / blindness / night vision); **Ghost Hand** counts as one hand on a Reactor/Seismic
+  console while channeling; **Manifest** appears as a copy of a nearby living player (can vent, per
+  option) — killing the manifest poofs it without a body and refunds the killer's cooldown per option.
+  *Options:* exile counts, energy max/regen/start, per-ability costs & durations, hex effect toggles,
+  manifest vent & kill refund, keeps tasks.
 
 Every role also has the two standard options: a **spawn chance** and a **minimum lobby size to spawn**.
 

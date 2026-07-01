@@ -319,6 +319,7 @@ namespace UnknownsCollection {
                 if (!poisonedReporters.ContainsKey(me.PlayerId)) return;
                 string msg = SickMessages[UnityEngine.Random.Range(0, SickMessages.Length)];
                 HudManager.Instance?.Chat?.AddChat(me, msg); // local-only display, only the victim sees it
+                UCAssets.PlayPoisonGurgle();                  // sickly cue, victim-only like the message
             } catch { }
         }
 

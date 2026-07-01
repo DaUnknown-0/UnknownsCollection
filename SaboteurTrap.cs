@@ -116,7 +116,7 @@ namespace UnknownsCollection {
                     && (PlayerControl.LocalPlayer.PlayerId == playerId || Saboteur.IsLocalSaboteur());
                 if (t.obj != null && localInvolved) {
                     t.obj.SetActive(true);
-                    try { SoundEffectsManager.play("trapperTrap"); } catch { }
+                    try { UCAssets.PlayTrapSnap(t.pos); } catch { }
                 }
 
                 float dur = Saboteur.TrapStunDuration != null ? Saboteur.TrapStunDuration.getFloat() : 5f;

@@ -134,6 +134,8 @@ namespace UnknownsCollection {
 
         private static void ApplyHideBody(byte victimId, Vector2 pos) {
             hiddenBodies[victimId] = pos;
+            // Dark whoosh only for the Shade - for anyone else it would leak that a body just vanished.
+            if (IsLocalShade()) UCAssets.PlayShadeVanish();
             // Find the DeadBody object and disable it
             try {
                 foreach (var db in GameObject.FindObjectsOfType<DeadBody>()) {

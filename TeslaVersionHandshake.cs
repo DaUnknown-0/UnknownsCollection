@@ -50,7 +50,8 @@ namespace UnknownsCollection {
                    (Shade.SpawnRate != null && Shade.SpawnRate.getSelection() > 0) ||
                    (Copycat.SpawnRate != null && Copycat.SpawnRate.getSelection() > 0) ||
                    (Scout.SpawnRate != null && Scout.SpawnRate.getSelection() > 0) ||
-                   (Beacon.SpawnRate != null && Beacon.SpawnRate.getSelection() > 0);
+                   (Beacon.SpawnRate != null && Beacon.SpawnRate.getSelection() > 0) ||
+                   (Poltergeist.SpawnRate != null && Poltergeist.SpawnRate.getSelection() > 0);
         }
 
         public static void ShareVersion() {

@@ -361,6 +361,8 @@ namespace UnknownsCollection {
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Dropped oldest ability {oldest} for {ability}.");
             }
             learnedAbilities.Add(ability);
+            // Learn blip only for the Copycat itself - nobody else should hear what it just picked up.
+            if (IsLocalCopycat()) UCAssets.PlayCopycatLearn();
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Learned ability {ability} (known: {learnedAbilities.Count}).");
 
             // The native Impostor vent button only shows for AU roles it considers vent-capable. A Copycat

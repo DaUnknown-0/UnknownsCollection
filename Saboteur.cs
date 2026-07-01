@@ -731,8 +731,10 @@ namespace UnknownsCollection {
         private static Sprite searchSprite;
         private static Sprite GetSearchSprite() {
             if (searchSprite != null) return searchSprite;
-            try { searchSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.FindButton.png", 100f); }
-            catch { }
+            try {
+                searchSprite = UCAssets.SaboteurSearchIcon
+                    ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.FindButton.png", 100f);
+            } catch { }
             return searchSprite;
         }
 
@@ -906,7 +908,8 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    var sabotageSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.HackerButton.png", 115f);
+                    var sabotageSprite = UCAssets.SaboteurSabotageIcon
+                        ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.HackerButton.png", 115f);
                     Sprite trapSprite = Trapper.getButtonSprite();
 
                     sabotageButton = new TheOtherRoles.Objects.CustomButton(

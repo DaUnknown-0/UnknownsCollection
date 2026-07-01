@@ -193,6 +193,8 @@ namespace UnknownsCollection {
         private static void ApplyToggleDrain(bool on) {
             drainActive = on;
             if (!on) lastDrainTime = 0f;
+            // Suction cue only for the Siphoner itself - audible for others it would leak its position.
+            if (on && IsLocalSiphoner()) UCAssets.PlaySiphonerDrain();
         }
 
         // ---- Appliers (run on every client) ----
@@ -302,10 +304,10 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    // A vampire-bite themed sprite fits "draining kill power" (and matches the
-                    // vampireBite sound the drain already plays); fall back to the kill button.
-                    Sprite sprite = null;
-                    try { sprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.VampireButton.png", 115f); } catch { }
+                    // Own icon (a kill-cooldown clock being drained); TOR sprites only as fallback.
+                    Sprite sprite = UCAssets.SiphonerIcon;
+                    if (sprite == null)
+                        try { sprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.VampireButton.png", 115f); } catch { }
                     if (sprite == null && __instance.KillButton != null && __instance.KillButton.graphic != null)
                         sprite = __instance.KillButton.graphic.sprite;
 

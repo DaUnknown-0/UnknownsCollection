@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.0.1.52</Version>
-        <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade (Impostor); Siphoner, Witness, Scout, Beacon (Crewmate); Bug, Follower, Copycat (Neutral).</Description>
+        <Version>1.0.1.53</Version>
+        <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade (Impostor); Siphoner, Witness, Scout, Beacon (Crewmate); Bug, Follower, Copycat (Neutral); Poltergeist (ghost, keeps its team).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -19,6 +19,38 @@
     <ItemGroup>
         <EmbeddedResource Include="Resources\tesla_warning.raw" />
         <EmbeddedResource Include="Resources\Glitch.raw" />
+        <!-- Own button icons (PNG) + synthesized role sounds (same raw PCM format), loaded by UCAssets. -->
+        <EmbeddedResource Include="Resources\poltergeist_manifest.png" />
+        <EmbeddedResource Include="Resources\poltergeist_door.png" />
+        <EmbeddedResource Include="Resources\poltergeist_hand.png" />
+        <EmbeddedResource Include="Resources\poltergeist_hex.png" />
+        <EmbeddedResource Include="Resources\illusionist_record.png" />
+        <EmbeddedResource Include="Resources\illusionist_playback.png" />
+        <EmbeddedResource Include="Resources\maniac_bomb.png" />
+        <EmbeddedResource Include="Resources\maniac_pass.png" />
+        <EmbeddedResource Include="Resources\saboteur_sabotage.png" />
+        <EmbeddedResource Include="Resources\saboteur_search.png" />
+        <EmbeddedResource Include="Resources\silencer_silence.png" />
+        <EmbeddedResource Include="Resources\scout_transparent.png" />
+        <EmbeddedResource Include="Resources\siphoner_drain.png" />
+        <EmbeddedResource Include="Resources\poltergeist_manifest.raw" />
+        <EmbeddedResource Include="Resources\poltergeist_poof.raw" />
+        <EmbeddedResource Include="Resources\poltergeist_door.raw" />
+        <EmbeddedResource Include="Resources\poltergeist_hex.raw" />
+        <EmbeddedResource Include="Resources\poltergeist_hand.raw" />
+        <EmbeddedResource Include="Resources\saboteur_zap.raw" />
+        <EmbeddedResource Include="Resources\saboteur_trap.raw" />
+        <EmbeddedResource Include="Resources\maniac_fuse.raw" />
+        <EmbeddedResource Include="Resources\maniac_explosion.raw" />
+        <EmbeddedResource Include="Resources\silencer_silence.raw" />
+        <EmbeddedResource Include="Resources\illusionist_clone.raw" />
+        <EmbeddedResource Include="Resources\poisoner_poison.raw" />
+        <EmbeddedResource Include="Resources\scout_whoosh.raw" />
+        <EmbeddedResource Include="Resources\siphoner_drain.raw" />
+        <EmbeddedResource Include="Resources\witness_sting.raw" />
+        <EmbeddedResource Include="Resources\shade_vanish.raw" />
+        <EmbeddedResource Include="Resources\follower_shift.raw" />
+        <EmbeddedResource Include="Resources\copycat_learn.raw" />
     </ItemGroup>
 
     <ItemGroup>

@@ -343,8 +343,11 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    var recordSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.SampleButton.png", 115f);
-                    var playbackSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.MorphButton.png", 115f);
+                    // Own icons (UCAssets); TOR sprites only as fallback if a resource is missing.
+                    var recordSprite = UCAssets.IllusionistRecordIcon
+                        ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.SampleButton.png", 115f);
+                    var playbackSprite = UCAssets.IllusionistPlaybackIcon
+                        ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.MorphButton.png", 115f);
 
                     recordButton = new TheOtherRoles.Objects.CustomButton(
                         () => { // OnClick: toggle recording

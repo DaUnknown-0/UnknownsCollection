@@ -28,9 +28,9 @@ namespace UnknownsCollection {
             try {
                 if (victim == null) return;
 
-                // Screen flash + cue (only meaningful locally; everyone runs Play via the FX RPC).
+                // Screen flash + electrocution zap (distance-attenuated; everyone runs Play via the FX RPC).
                 Helpers.showFlash(new Color(0.6f, 0.1f, 0.95f, 1f), 0.5f);
-                TeslaSound.PlayWarning();
+                UCAssets.PlayZap(victim.GetTruePosition());
 
                 if (dot == null) dot = BuildDotSprite();
                 var host = new GameObject("SaboteurZap");

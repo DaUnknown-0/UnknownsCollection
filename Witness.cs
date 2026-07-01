@@ -198,6 +198,7 @@ namespace UnknownsCollection {
             if (IsLocalWitness()) {
                 var k = Helpers.playerById(killerId);
                 AddLocalChat(witness, $"You witnessed {k?.Data?.PlayerName} kill {Helpers.playerById(victimId)?.Data?.PlayerName}. Their name is marked red.");
+                UCAssets.PlayWitnessSting(); // eerie cue, witness-only like the note
             }
         }
 

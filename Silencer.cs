@@ -252,6 +252,8 @@ namespace UnknownsCollection {
                         silencedIds.Clear();              // mute lasts exactly one meeting
                         marksLeftThisRound = TargetsPerRoundValue();
                     }
+                    // The mute becomes visible at meeting start - a "shh" tells the victim right away.
+                    if (!wasInMeeting && nowMeeting && LocalIsSilenced()) UCAssets.PlayShh();
                     wasInMeeting = nowMeeting;
 
                     UpdateTargeting();
@@ -375,7 +377,8 @@ namespace UnknownsCollection {
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    var sprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.CurseButton.png", 115f);
+                    var sprite = UCAssets.SilencerIcon
+                        ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.CurseButton.png", 115f);
                     silenceButton = new TheOtherRoles.Objects.CustomButton(
                         () => { // OnClick
                             if (currentTarget == null || marksLeftThisRound <= 0) return;

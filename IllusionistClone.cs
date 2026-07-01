@@ -204,6 +204,7 @@ namespace UnknownsCollection {
                 ApplyTransform(currentPos);
                 go.SetActive(true);
                 active = true;
+                UCAssets.PlayCloneShimmer(currentPos);
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Illusionist] clone spawned, {path.Count} points over {path.Count * interval:F1}s, {renderers.Length} renderers, anim={useAnim}.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] clone spawn failed: {e}");

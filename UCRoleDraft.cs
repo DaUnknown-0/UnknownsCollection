@@ -181,6 +181,16 @@ namespace UnknownsCollection {
 
         // Postfix on RoleManagerSelectRolesPatch.getRoleAssignmentData. __result is the (internal-nested)
         // RoleAssignmentData; its public impSettings / crewSettings fields are managed dictionaries.
+        //
+        // IMPORTANT: this postfix must NEVER touch RoleInfo.allRoleInfos (Add/Remove). getRoleAssignmentData()
+        // is called by TOR from inside "foreach (RoleInfo roleInfo in RoleInfo.allRoleInfos)" loops - both
+        // the draft's own pick loop (RoleDraft.CoSelectRoles) and the Guesser shot-list build (guesserOnClick,
+        // MeetingPatch.cs) call it once per iterated role. Mutating allRoleInfos here (as SyncEntries() used
+        // to) throws "Collection was modified" on whichever loop happens to be running. impSettings/crewSettings
+        // however are plain local dictionaries freshly created per call, not the enumerated collection, so
+        // mutating THEM is always safe. Membership in allRoleInfos is instead kept in sync exactly once, from
+        // ShowTeamPatch.Prefix below - that runs before IntroCutscene.ShowTeam's body (and therefore strictly
+        // before RoleDraft's pick loop starts enumerating), so it never overlaps a live foreach over the list.
         public static void InjectDraftRates(object __result) {
             try {
                 if (__result == null || !DraftWillRun()) return;
@@ -189,8 +199,6 @@ namespace UnknownsCollection {
                 var imp = impField?.GetValue(__result) as Dictionary<byte, int>;
                 var crew = crewField?.GetValue(__result) as Dictionary<byte, int>;
                 if (imp == null && crew == null) return;
-
-                SyncEntries(); // keep allRoleInfos membership in step with the gates
 
                 foreach (var e in Entries()) {
                     var dict = e.impostor ? imp : crew;
@@ -203,13 +211,17 @@ namespace UnknownsCollection {
             }
         }
 
-        // Add the draft entries just before the team/role-draft intro builds its role list.
+        // Add the draft entries just before the team/role-draft intro builds its role list. This is the
+        // ONLY place allRoleInfos membership is synced: it runs as a Prefix, i.e. before ShowTeam's body
+        // (and thus before RoleDraft's postfix-chained CoSelectRoles coroutine even exists), so there is
+        // no live "foreach (... in RoleInfo.allRoleInfos)" it could ever collide with.
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.ShowTeam))]
         static class ShowTeamPatch {
             public static void Prefix() { if (DraftWillRun()) SyncEntries(); }
         }
 
-        // Remove them once the intro ends, so they never leak into in-game systems.
+        // Remove them once the intro ends (after CoSelectRoles has finished enumerating and returned), so
+        // they never leak into in-game systems.
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
         [HarmonyPriority(Priority.First)] // before the role random-pick postfixes
         static class OnDestroyPatch {

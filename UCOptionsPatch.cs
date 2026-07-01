@@ -61,11 +61,25 @@ namespace UnknownsCollection {
             try {
                 var type = Type.GetType(
                     "TheOtherRoles.Patches.ClientOptionsPatch, TheOtherRoles");
-                if (type != null) {
-                    torPopUpField = AccessTools.Field(type, "popUp");
-                    torButtonPrefabField = AccessTools.Field(type, "buttonPrefab");
+                if (type == null) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning(
+                        "[UCOptions] ResolveTORFields: type TheOtherRoles.Patches.ClientOptionsPatch not found - UC menu entry will not be added.");
+                    return;
                 }
-            } catch { }
+                torPopUpField = AccessTools.Field(type, "popUp");
+                torButtonPrefabField = AccessTools.Field(type, "buttonPrefab");
+                if (torPopUpField == null) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning(
+                        "[UCOptions] ResolveTORFields: field 'popUp' not found on ClientOptionsPatch - UC menu entry will not be added.");
+                }
+                if (torButtonPrefabField == null) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning(
+                        "[UCOptions] ResolveTORFields: field 'buttonPrefab' not found on ClientOptionsPatch - UC menu entry will not be added.");
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning(
+                    $"[UCOptions] ResolveTORFields failed: {e}");
+            }
         }
 
         private static void HookModOptionsButton(

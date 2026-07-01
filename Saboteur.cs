@@ -80,8 +80,21 @@ namespace UnknownsCollection {
         // uses the same Mathf.Max(UsableDistance, 1.5f) reasoning), so a tight tolerance made the HOST reject
         // legitimate kills in the 1.0-2.0 band while the victim's own client had already fired the request.
         // Both the client-side trigger (VictimPoll) and the host-side validation (HostHandleRequestKill)
-        // share this single constant so they can never drift apart again.
+        // share this single constant so they can never drift apart again (used as the HOST's sanity check
+        // on the reported position - see HostHandleRequestKill).
         private const float SabotageKillDistanceTolerance = 2.0f;
+
+        // The ACTUAL console the local player last used (see ConsoleUsePatch below), not a proximity guess.
+        // VictimPoll uses this - instead of re-scanning for "the nearest usable console" - to decide which
+        // console produced a completed task step, so two consoles standing close together on some maps can
+        // no longer be confused with each other.
+        private static Console lastUsedConsole;
+        private static float lastUsedConsoleTime;
+        // How long a Console.Use() call stays "fresh" enough to still be blamed for the next task-step
+        // completion. Needs to cover the slowest normal task minigame (e.g. Asteroids can run a while), but
+        // still expire eventually so a console opened-then-aborted can't get blamed for some unrelated,
+        // much later step completed elsewhere (e.g. a non-Console usable like a button task).
+        private const float ConsoleUseFreshnessWindow = 20f;
 
         // ---- Kill-cooldown penalty state (see ApplyKillFx / MurderPlayerPenaltyPatch) ----
         // The penalty must be applied AFTER the murder actually happens (vanilla PlayerControl.MurderPlayer
@@ -335,6 +348,8 @@ namespace UnknownsCollection {
                 progressInit = false;
                 lastProgress = 0;
                 consoleCache = null;
+                lastUsedConsole = null;
+                lastUsedConsoleTime = 0f;
                 pendingKillPenalty = false;
                 killHoldUntil = 0f;
                 SaboteurTrap.Clear();
@@ -554,8 +569,13 @@ namespace UnknownsCollection {
 
             if (!IsAlive(saboteur)) {
                 // The Saboteur died before the sabotage was completed - the trap has no one to attribute
-                // the kill to, so it fizzles instead of making the victim "murder" themselves.
+                // the kill to, so it fizzles instead of making the victim "murder" themselves. Clear the
+                // marker too (same as the success path below) so the console doesn't keep showing
+                // "[!] SABOTAGED" for a trap that can never fire again. In practice HandleSaboteurDeath
+                // (below) already clears this the instant the Saboteur dies, so this is mostly a defensive
+                // fallback for races where a request lands before that hook ran.
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Saboteur] kill request ignored: Saboteur is dead.");
+                SendClearSabotage();
                 return;
             }
 
@@ -583,6 +603,54 @@ namespace UnknownsCollection {
                 RPCProcedure.uncheckedMurderPlayer(sourceId, targetId, 0);
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] RpcUncheckedMurder failed: {e}");
+            }
+        }
+
+        // ====================================================================
+        // Host-authoritative: clear a lingering sabotage the moment the Saboteur dies (murder OR exile),
+        // instead of only cleaning it up reactively in HostHandleRequestKill's dead-Saboteur reject path
+        // (which only runs if a crewmate later happens to complete that exact console again - if nobody
+        // does, the marker would otherwise sit there until the next meeting). Mirrors Follower.cs's
+        // HandleFirstDeath: one shared handler, hooked from both the murder and the exile path.
+        // ====================================================================
+        private static void HandleSaboteurDeath(PlayerControl target) {
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+            if (!active || !sabotagedActive || saboteur == null || target == null) return;
+            if (target.PlayerId != saboteur.PlayerId) return;
+
+            UnknownsCollectionPlugin.Logger?.LogInfo("[Saboteur] Saboteur died with an active sabotage - clearing it.");
+            SendClearSabotage();
+        }
+
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
+        static class SaboteurDeathMurderPatch {
+            public static void Postfix([HarmonyArgument(0)] PlayerControl target) {
+                try { HandleSaboteurDeath(target); }
+                catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] death detection failed: {e}"); }
+            }
+        }
+
+        // Exile also counts as a death. Mirrors TOR's own exile hook and Follower.cs's ExileWrapUpPatch /
+        // AirshipExileWrapUpPatch, which patch both ExileController.WrapUp (regular maps) and
+        // AirshipExileController.WrapUpAndSpawn (Airship) and read the exiled player off
+        // __instance.initData.networkedPlayer.Object.
+        [HarmonyPatch(typeof(ExileController), nameof(ExileController.WrapUp))]
+        static class SaboteurDeathExileWrapUpPatch {
+            public static void Postfix(ExileController __instance) {
+                try {
+                    var networkedPlayer = __instance?.initData.networkedPlayer;
+                    HandleSaboteurDeath(networkedPlayer != null ? networkedPlayer.Object : null);
+                } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] exile death detection failed: {e}"); }
+            }
+        }
+
+        [HarmonyPatch(typeof(AirshipExileController), nameof(AirshipExileController.WrapUpAndSpawn))]
+        static class SaboteurDeathAirshipExileWrapUpPatch {
+            public static void Postfix(AirshipExileController __instance) {
+                try {
+                    var networkedPlayer = __instance?.initData.networkedPlayer;
+                    HandleSaboteurDeath(networkedPlayer != null ? networkedPlayer.Object : null);
+                } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] exile death detection failed: {e}"); }
             }
         }
 
@@ -682,6 +750,25 @@ namespace UnknownsCollection {
             return sum;
         }
 
+        // Records the console the LOCAL player actually used, whenever they actually used one - the real
+        // event the game itself fires, instead of guessing "the nearest usable console" after the fact
+        // (which is how FindUsableConsoleInRange used to be (mis)used here: on maps with consoles placed
+        // close together, the nearest one to the victim is not necessarily the one they interacted with,
+        // so the wrong - possibly uninvolved - crewmate could get blamed for the sabotaged step).
+        // Console.Use() (public virtual void Use(), Assembly-CSharp) is the vanilla method the game calls
+        // locally on the interacting client's own Console instance when they use it - confirmed against
+        // TOR's own VentButtonDoClickPatch (UsablesPatch.cs), which manually re-invokes the sibling
+        // Vent.Use() the same way for the identical IUsable pattern. Only the local player's client ever
+        // calls Use() on that instance, so __instance is always the exact console they interacted with.
+        [HarmonyPatch(typeof(Console), nameof(Console.Use))]
+        static class ConsoleUsePatch {
+            public static void Postfix(Console __instance) {
+                if (__instance == null) return;
+                lastUsedConsole = __instance;
+                lastUsedConsoleTime = Time.time;
+            }
+        }
+
         // Runs every HUD frame on every client. When the LOCAL player completes a task step while
         // standing on the sabotaged console, request the kill from the host. Impostors never trigger it.
         private static void VictimPoll() {
@@ -695,23 +782,26 @@ namespace UnknownsCollection {
                 // completed" alone does not tell us it was the SABOTAGED console specifically - there is no
                 // per-step "which console produced this" API to check that exactly (PlayerTask/
                 // NormalPlayerTask expose taskStep, not the console/object that incremented it). The
-                // tightest binding we can do with reasonable effort: also require that the console the
-                // player could ACTUALLY use right now (same helper the Saboteur uses to pick a console to
-                // mark) IS the sabotaged one, by position. This still can't rule out the edge case of some
-                // other task's step ticking over in the same frame the player happens to be standing at the
-                // sabotaged console without touching it, but it rules out the far more common case of a
-                // step completing anywhere else on the map.
-                var nearConsole = FindUsableConsoleInRange();
-                bool atSabotagedConsole = nearConsole != null && Vector2.Distance(
-                    (Vector2)nearConsole.transform.position, new Vector2(sabotagedX, sabotagedY)) < 0.01f;
-                float d = Vector2.Distance(me.GetTruePosition(), new Vector2(sabotagedX, sabotagedY));
+                // tightest binding we can do: use the console the player actually used (ConsoleUsePatch
+                // above), not a proximity guess, and require it to still be "fresh" (the minigame it opened
+                // must plausibly be the one that just completed). This still can't rule out the edge case of
+                // some other task's step ticking over in the exact same freshness window right after the
+                // player opened-then-aborted the sabotaged console's minigame, but it rules out the far more
+                // common case of misattributing a nearby-but-uninvolved console, or a step completing
+                // anywhere else on the map.
+                bool fresh = lastUsedConsole != null && (Time.time - lastUsedConsoleTime) <= ConsoleUseFreshnessWindow;
+                bool atSabotagedConsole = fresh && Vector2.Distance(
+                    (Vector2)lastUsedConsole.transform.position, new Vector2(sabotagedX, sabotagedY)) < 0.01f;
                 UnknownsCollectionPlugin.Logger?.LogInfo(
-                    $"[Saboteur] task step completed (prog {lastProgress}->{prog}); dist to sabotaged console = {d:F2} " +
-                    $"(need <={SabotageKillDistanceTolerance:F1}), atSabotagedConsole={atSabotagedConsole}");
-                if (atSabotagedConsole && d <= SabotageKillDistanceTolerance) {
+                    $"[Saboteur] task step completed (prog {lastProgress}->{prog}); lastUsedConsole=" +
+                    $"{(lastUsedConsole != null ? lastUsedConsole.name : "null")} fresh={fresh} atSabotagedConsole={atSabotagedConsole}");
+                if (atSabotagedConsole) {
                     Vector2 truePos = me.GetTruePosition();
                     SendRequestKill(me.PlayerId, truePos.x, truePos.y);
                 }
+                // One-shot: this Use() has now been consumed for a step-completion decision either way, so
+                // it can't be blamed again for some later, unrelated step.
+                lastUsedConsole = null;
             }
             lastProgress = prog;
             progressInit = true;

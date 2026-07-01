@@ -10,16 +10,16 @@
  * a per-round budget). A marked player is MUTED in the NEXT meeting: they cannot vote (vote area click
  * + skip blocked) and cannot chat (SendChat blocked) - they are excluded from the meeting entirely
  * rather than having a vote cast on their behalf, so the vote can also end early without waiting on
- * them (see MissedVote in MeetingUpdatePatch). To make the mute obvious to EVERYONE - so the victim can
- * also mute their voice client - a red mute marker is shown next to their name both in-game and on
- * their meeting vote area. The mute lasts exactly one meeting and is cleared when it ends.
+ * them (see MissedVote in MeetingUpdatePatch). A red [MUTED] marker is shown next to their name ONLY on
+ * their meeting vote area (never in-game) - so everyone can mute their voice client - while keeping the
+ * target's identity secret until the meeting. The mute lasts exactly one meeting and is cleared when it ends.
  *
  * ARCHITECTURE mirrors the Tesla/Saboteur: brand-new role built WITHOUT touching TOR source - own
  * RoleInfo tag over the real Impostor role, a CustomButton, a small custom RPC (194), client-side
  * cosmetics. Gated by the mod-wide No-Start handshake (everyone has the mod), so the meeting/chat
  * blocks and the marker run safely on every client.
  *
- * Options live in the 1440-1445 block. See ID-Registry.md.
+ * Options live in the 1440-1444 block. See ID-Registry.md.
  */
 
 using System;
@@ -49,7 +49,7 @@ namespace UnknownsCollection {
         public static CustomOption MarkCooldown;      // 1442 - SILENCE button cooldown
         public static CustomOption TargetsPerRound;   // 1443 - how many players can be silenced per round
         public static CustomOption CanStillSkip;      // 1444 - a muted player may still press Skip
-        public static CustomOption ShowInGameMarker;  // 1445 - also show the mute marker in-game
+        public static CustomOption ExtraTargets;      // 1445 - also allow silencing teammates / self
 
         // ---- Runtime state ----
         public static PlayerControl silencer;
@@ -88,8 +88,8 @@ namespace UnknownsCollection {
                     1f, 1f, 3f, 1f, SpawnRate);
                 CanStillSkip = CustomOption.Create(1444, Types.Impostor, "Muted Player Can Still Skip",
                     false, SpawnRate);
-                ShowInGameMarker = CustomOption.Create(1445, Types.Impostor, "Show Mute Marker In-Game",
-                    false, SpawnRate);
+                ExtraTargets = CustomOption.Create(1445, Types.Impostor, "Silencer Can Also Silence",
+                    new string[] { "No One Extra", "Teammates", "Teammates & Self" }, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Silencer] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] CreateOptions failed: {e}");
@@ -262,10 +262,16 @@ namespace UnknownsCollection {
             }
         }
 
-        // Local Silencer: keep the nearest crew target outlined for the SILENCE button.
+        // Local Silencer: keep the nearest valid target outlined for the SILENCE button.
+        // "Silencer Can Also Silence": 0 = no one extra (crew/neutrals only), 1 = teammates too,
+        // 2 = teammates + self. setTarget never returns the local player, so self is a fallback target
+        // used only when no other valid target is in range.
         private static void UpdateTargeting() {
             if (!IsLocalSilencer() || InMeeting() || marksLeftThisRound <= 0) { currentTarget = null; return; }
-            currentTarget = PlayerControlFixedUpdatePatch.setTarget(true);
+            int extra = ExtraTargets != null ? ExtraTargets.getSelection() : 0;
+            bool onlyCrew = extra == 0; // allow impostors as targets once teammates are enabled
+            currentTarget = PlayerControlFixedUpdatePatch.setTarget(onlyCrew);
+            if (currentTarget == null && extra == 2) currentTarget = PlayerControl.LocalPlayer; // self
             if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, MarkColor);
         }
 
@@ -277,19 +283,13 @@ namespace UnknownsCollection {
         private static void ApplyMuteMarkers() {
             if (!active || silencedIds.Count == 0) return;
 
-            if (MeetingHud.Instance != null) {
-                foreach (var pva in MeetingHud.Instance.playerStates) {
-                    if (pva == null || pva.NameText == null || !silencedIds.Contains(pva.TargetPlayerId)) continue;
-                    if (!pva.NameText.text.Contains("MUTED")) pva.NameText.text += Marker;
-                }
-                return;
-            }
-
-            if (ShowInGameMarker == null || !ShowInGameMarker.getBool()) return;
-            foreach (var p in PlayerControl.AllPlayerControls) {
-                if (p == null || p.cosmetics == null || p.cosmetics.nameText == null) continue;
-                if (!silencedIds.Contains(p.PlayerId)) continue;
-                if (!p.cosmetics.nameText.text.Contains("MUTED")) p.cosmetics.nameText.text += Marker;
+            // The [MUTED] marker is shown ONLY inside a meeting — never in-game. Showing it in-game would
+            // reveal that a player was marked (and therefore expose the Silencer) before the meeting even
+            // starts; the target's identity as the muted player must stay secret until the meeting.
+            if (MeetingHud.Instance == null) return;
+            foreach (var pva in MeetingHud.Instance.playerStates) {
+                if (pva == null || pva.NameText == null || !silencedIds.Contains(pva.TargetPlayerId)) continue;
+                if (!pva.NameText.text.Contains("MUTED")) pva.NameText.text += Marker;
             }
         }
 

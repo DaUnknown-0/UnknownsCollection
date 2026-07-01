@@ -510,6 +510,7 @@ namespace UnknownsCollection {
             ventPhase = VentPhase.Out;
             bodyState = BodyState.None;
             ventScale = 1f;
+            flashUntil = 0f;
         }
     }
 }

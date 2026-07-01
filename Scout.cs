@@ -178,9 +178,12 @@ namespace UnknownsCollection {
             }
             currentAlpha = 1f;
             if (scoutButton != null) scoutButton.Timer = scoutButton.MaxTimer;
-            if (IsLocalScout()) {
-                SendTransparency(1f);
-            }
+            // Apply (not send) - ApplyDeactivate() itself already runs on every client, either because the
+            // Scout's own client called SendDeactivate() or because the host's disconnect fallback did, so
+            // resetting the alpha locally here is enough; broadcasting another RPC on top would just be a
+            // redundant round trip and, in the host-fallback case (Scout disconnected -> IsLocalScout() is
+            // false everywhere), used to never fire at all, leaving the disconnected Scout stuck transparent.
+            ApplyTransparency(1f);
         }
 
         private static void ApplyTransparency(float alpha) {

@@ -181,8 +181,15 @@ namespace UnknownsCollection {
                     // sight to the Beacon (not just in range), so a wall between them still blocks it.
                     if (p.Role != null && !p.Role.IsImpostor && !p.IsDead && !p.Disconnected) {
                         var crew = Helpers.playerById(p.PlayerId);
-                        if (crew != null && CanSeeBeacon(crew)) {
-                            __result = Mathf.Max(__result, fullRadius);
+                        if (crew != null) {
+                            // TOR neutrals (Jackal, Jester, Arsonist, Vulture, ...) run on crewmate base
+                            // roles too, so IsImpostor alone doesn't exclude them - mirrors Witness.cs's
+                            // crew/neutral split via RoleInfo.isNeutral.
+                            var info = RoleInfo.getRoleInfoForPlayer(crew, false).FirstOrDefault();
+                            bool isNeutral = info != null && info.isNeutral;
+                            if (!isNeutral && CanSeeBeacon(crew)) {
+                                __result = Mathf.Max(__result, fullRadius);
+                            }
                         }
                     }
                 } catch (Exception e) {

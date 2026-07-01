@@ -146,6 +146,10 @@ namespace UnknownsCollection {
             return n;
         }
 
+        // Shared live-player gate: below this, charges are harmless everywhere (lethal logic AND
+        // cosmetics), so both HostCountdown and LocalCosmetics must check it the same way.
+        private static bool LiveGateOk() => AliveCount() >= (LiveMinPlayers?.getFloat() ?? 4f);
+
         private static int LobbyPlayerCount() {
             int n = 0;
             foreach (PlayerControl p in PlayerControl.AllPlayerControls)
@@ -382,7 +386,7 @@ namespace UnknownsCollection {
             if (!IsAlive(plus) || !IsAlive(minus)) { SendClear(); return; }
 
             // Live gate: below the minimum, charges are harmless (countdown frozen).
-            if (AliveCount() < (LiveMinPlayers?.getFloat() ?? 4f)) return;
+            if (!LiveGateOk()) return;
 
             // Grace window after a meeting / round start: don't drain while players are still bunched up.
             if (InGrace()) return;
@@ -419,7 +423,9 @@ namespace UnknownsCollection {
                            && (me.PlayerId == plusId || me.PlayerId == minusId)
                            && plusId != byte.MaxValue && minusId != byte.MaxValue;
 
-            if (!charged || InMeeting()) {
+            // Below the live-player gate, charges can't kill (see HostCountdown) - keep the cosmetics
+            // off too, and hide an already-shown indicator the moment the alive count drops under it.
+            if (!charged || InMeeting() || !LiveGateOk()) {
                 TeslaIndicator.Hide();
                 TeslaParticles.Hide();
                 dangerLocal = false;

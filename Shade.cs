@@ -44,6 +44,10 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, DeadBody> hiddenBodyRefs = new();
         // PlayerId -> Time.time when body was revealed (for auto-report after 2s)
         private static readonly Dictionary<byte, float> revealedBodies = new();
+        // PlayerId -> the fixed kill/body position (copied from hiddenBodies on reveal, since that
+        // entry is removed) - the auto-report nearest-player search must use this, not the victim's
+        // live ghost position.
+        private static readonly Dictionary<byte, Vector2> revealedBodyPositions = new();
 
         // ---- Custom RPC (205) subtypes ----
         private const byte RpcId = 205;
@@ -162,6 +166,10 @@ namespace UnknownsCollection {
         }
 
         private static void ApplyRevealBody(byte victimId) {
+            // Keep the fixed kill position for the auto-report proximity search below - hiddenBodies
+            // is about to lose the entry, and the victim's own GetTruePosition() is their ghost's
+            // live position, not the body's.
+            if (hiddenBodies.TryGetValue(victimId, out var bodyPos)) revealedBodyPositions[victimId] = bodyPos;
             hiddenBodies.Remove(victimId);
             revealedBodies[victimId] = Time.time;
             try {
@@ -217,6 +225,7 @@ namespace UnknownsCollection {
                 hiddenBodies.Clear();
                 hiddenBodyRefs.Clear();
                 revealedBodies.Clear();
+                revealedBodyPositions.Clear();
             }
         }
 
@@ -301,8 +310,9 @@ namespace UnknownsCollection {
                         var toReport = new List<KeyValuePair<byte, byte>>();
                         foreach (var kvp in revealedBodies) {
                             if (Time.time - kvp.Value >= 2f) {
-                                // Find nearest alive player to be the reporter
-                                var pos = Helpers.playerById(kvp.Key)?.GetTruePosition() ?? Vector2.zero;
+                                // Find nearest alive player to be the reporter, measured from the fixed
+                                // body location - NOT the victim's ghost, which keeps moving after death.
+                                if (!revealedBodyPositions.TryGetValue(kvp.Key, out var pos)) continue;
                                 byte reporterId = byte.MaxValue;
                                 float closest = float.MaxValue;
                                 foreach (var pc in PlayerControl.AllPlayerControls) {
@@ -317,6 +327,7 @@ namespace UnknownsCollection {
                         }
                         foreach (var r in toReport) {
                             revealedBodies.Remove(r.Key);
+                            revealedBodyPositions.Remove(r.Key);
                             SendAutoReport(r.Key, r.Value);
                         }
                     }
@@ -337,6 +348,7 @@ namespace UnknownsCollection {
                 hiddenBodyRefs.Clear();
                 hiddenBodies.Clear();
                 revealedBodies.Clear();
+                revealedBodyPositions.Clear();
             }
         }
 

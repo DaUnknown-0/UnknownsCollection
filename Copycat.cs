@@ -17,7 +17,8 @@
  *   Morphling  (RPC 130, Morphling)   - morph into a chosen player for a while.
  *   Shield     (RPC 126, TimeMaster)  - become unkillable (normal kills suppressed) for a while.
  *   Shoot      (RPC 108, any kill)    - a Sheriff-style shot: kills an Impostor, backfires on Crew.
- *   Vent       (RPC 107, anyone vents)- gain vent access (native Impostor vent button via roleCanUseVents).
+ *   Vent       (Vent.EnterVent, anyone vents) - gain vent access; the host promotes the Copycat's AU role
+ *              to Engineer so the native vent button appears (roleCanUseVents alone gives no button).
  *
  * All ability effects are driven by our own RPC (206 / SubUseAbility), applied locally on every client
  * and timed out independently per client, so cosmetics and the shield stay consistent for everyone.
@@ -57,14 +58,19 @@ namespace UnknownsCollection {
 
         // Per-ability cooldowns (seconds). Our ability buttons use CustomButton's HasEffect=false overload,
         // which never auto-resets its Timer — so without an explicit MaxTimer + a Timer reset on click the
-        // abilities would have NO cooldown (spammable Shoot kills / permanent Shield). Set both below.
-        private static float AbilityCooldown(Ability a) => a switch {
-            Ability.Shoot => 30f,
-            Ability.Shield => 30f,
-            Ability.Camouflage => 25f,
-            Ability.Morphling => 25f,
-            _ => 25f
-        };
+        // abilities would have NO cooldown (spammable Shoot kills / permanent Shield). We mirror the SOURCE
+        // role's own configured cooldown so a copied ability behaves like the real thing. Falls back to 25s
+        // if the source role's value isn't loaded (e.g. that role isn't in the game).
+        private static float AbilityCooldown(Ability a) {
+            float cd = a switch {
+                Ability.Shoot => Sheriff.cooldown,
+                Ability.Shield => TimeMaster.cooldown,
+                Ability.Camouflage => Camouflager.cooldown,
+                Ability.Morphling => Morphling.cooldown,
+                _ => 25f
+            };
+            return cd > 0f ? cd : 25f;
+        }
 
         // ---- Theme ----
         public static readonly Color Color = new Color(0.85f, 0.45f, 0.85f); // purple
@@ -108,6 +114,7 @@ namespace UnknownsCollection {
         private const byte RpcId = 206; // == UnknownsCollectionPlugin.CopycatRpcId
         private const byte SubSetCopycat = 0;
         private const byte SubUseAbility = 1; // abilityId, targetId (byte.MaxValue when unused)
+        private const byte SubLearn = 2;      // abilityId - broadcast a learn the local Copycat decided on (e.g. sight-gated Vent)
 
         // ---- Role identity ----
         private static RoleInfo copycatInfo;
@@ -157,7 +164,7 @@ namespace UnknownsCollection {
                 TorMorphlingRpc => Ability.Morphling,
                 TorTimeMasterRpc => Ability.Shield,
                 TorMurderRpc => Ability.Shoot,
-                TorVentRpc => Ability.Vent,
+                // Vent is NOT learned here: it is gated on line-of-sight and handled in VentEnterLearnPatch.
                 _ => null
             };
         }
@@ -196,6 +203,17 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] SendUseAbility failed: {e}"); }
         }
 
+        // Broadcast a learn the local Copycat decided on locally (e.g. Vent, which is gated on line-of-sight
+        // and therefore can't be observed identically on every client the way an RPC-based ability is).
+        private static void SendLearn(Ability ability) {
+            try {
+                var w = BeginRpc(SubLearn);
+                w.Write((byte)ability);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                LearnAbility(ability);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] SendLearn failed: {e}"); }
+        }
+
         // Perform an unchecked murder on every client (broadcast once + local), like the Tesla/Sheriff.
         private static void RpcUncheckedMurder(byte sourceId, byte targetId) {
             try {
@@ -222,6 +240,12 @@ namespace UnknownsCollection {
             usedAbilities.Clear();
             shielded = camouflaged = isMorphed = false;
             morphTargetId = byte.MaxValue;
+            // CopycatHasTasks == false: the Copycat gets no tasks at all (cleared on every client, like
+            // TOR clears tasks for Thief/Lawyer-style role changes). CopycatHasTasks == true (default):
+            // keep the assigned tasks as fake tasks - TaskPatch below already excludes them from the crew
+            // total, same as TOR's hasFakeTasks() roles (Jester, Jackal, ...).
+            if (active && CopycatHasTasks != null && !CopycatHasTasks.getBool())
+                copycat.clearAllTasks();
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] The Copycat is {copycat.Data?.PlayerName}.");
         }
 
@@ -252,9 +276,15 @@ namespace UnknownsCollection {
                 if (player != null) player.setLook("", 6, "", "", "", ""); // grey, no cosmetics
         }
 
+        // Collision with the real TOR Camouflager (TheOtherRoles.cs Camouflager.camouflageTimer): if the
+        // real Camouflager is still mid-camo, its own resetCamouflage() is responsible for un-greying
+        // everyone once ITS timer runs out - if we un-grey here too, we'd cut its camo short for every
+        // player. So skip the visual reset in that case; our own edge-detection in HudUpdatePatch re-greys
+        // everyone if the real Camouflager's reset fires first while we're still camouflaged (see below).
         private static void EndCamouflage() {
             camouflaged = false;
             if (Helpers.MushroomSabotageActive()) return; // fungle sabotage controls looks
+            if (Camouflager.camouflageTimer > 0f) return;  // real Camouflager still active - it owns the reset
             foreach (PlayerControl player in PlayerControl.AllPlayerControls)
                 if (player != null) player.setDefaultLook();
             // The Copycat itself may still be morphed — re-apply that look on top of the reset.
@@ -362,6 +392,7 @@ namespace UnknownsCollection {
                                 ApplyUseAbility(ability, targetId);
                                 break;
                             }
+                            case SubLearn: LearnAbility((Ability)reader.ReadByte()); break;
                         }
                         return false; // consume our own RPC
                     }
@@ -414,6 +445,39 @@ namespace UnknownsCollection {
             }
         }
 
+        // Learn the Vent ability when the Copycat SEES someone enter a vent. Normal venting uses AU's native
+        // vent path (Vent.EnterVent, which runs on every client), NOT TOR's UseUncheckedVent RPC 107 — that
+        // only fires for Trickster boxes. Like every copied ability, Vent must be WITNESSED: only the local
+        // Copycat evaluates line-of-sight, then broadcasts the learn so every client stays consistent.
+        [HarmonyPatch(typeof(Vent), nameof(Vent.EnterVent))]
+        static class VentEnterLearnPatch {
+            public static void Postfix([HarmonyArgument(0)] PlayerControl pc) {
+                try {
+                    if (!active || copycat == null || pc == null) return;
+                    if (!IsLocalCopycat() || !CopycatIsAlive()) return;
+                    if (learnedAbilities.Contains(Ability.Vent)) return;
+                    if (pc.PlayerId == copycat.PlayerId) return; // don't learn from your own vent
+                    if (!CopycatCanSee(pc)) return;               // only learn if actually visible
+                    SendLearn(Ability.Vent);
+                } catch { }
+            }
+        }
+
+        // Whether the local Copycat can currently see another player: within its light radius and with an
+        // unobstructed line of sight (same range + wall check TOR's setTarget uses).
+        private static bool CopycatCanSee(PlayerControl other) {
+            try {
+                if (copycat == null || copycat.Data == null || other == null) return false;
+                var ship = MapUtilities.CachedShipStatus;
+                if (ship == null) return false;
+                Vector2 from = copycat.GetTruePosition();
+                Vector2 diff = other.GetTruePosition() - from;
+                float dist = diff.magnitude;
+                if (dist > ship.CalculateLightRadius(copycat.Data)) return false;
+                return !PhysicsHelpers.AnyNonTriggersBetween(from, diff.normalized, dist, Constants.ShipAndObjectsMask);
+            } catch { return false; }
+        }
+
         // Count the Vent ability as "used" (for the win gate) the first time the local Copycat vents.
         [HarmonyPatch(typeof(Vent), nameof(Vent.Use))]
         static class VentUsePatch {
@@ -443,6 +507,7 @@ namespace UnknownsCollection {
                 shielded = camouflaged = isMorphed = false;
                 morphTargetId = byte.MaxValue;
                 shieldEndTime = camoEndTime = morphEndTime = 0f;
+                lastRealCamoTimer = 0f;
                 abilityButtons.Clear();
                 // NOTE: winnerCopycatId is intentionally NOT reset here (see its declaration).
             }
@@ -480,6 +545,12 @@ namespace UnknownsCollection {
         private static PlayerControl currentTarget;      // Shoot target (close)
         private static PlayerControl currentMorphTarget;  // Morph target (farther)
 
+        // Edge-detects the real Camouflager's own reset (TheOtherRoles.cs Camouflager.camouflageTimer
+        // ticking down to 0 -> Camouflager.resetCamouflage()), which un-greys everyone on every client
+        // regardless of whether our own camouflage is still running. Mirrors the oldTimer>0 && newTimer<=0
+        // pattern TOR itself uses in PlayerControlPatch.morphlingAndCamouflagerUpdate.
+        private static float lastRealCamoTimer;
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class HudUpdatePatch {
             public static void Postfix() {
@@ -491,6 +562,20 @@ namespace UnknownsCollection {
                     if (shielded && Time.time >= shieldEndTime) shielded = false;
                     if (camouflaged && Time.time >= camoEndTime) EndCamouflage();
                     if (isMorphed && Time.time >= morphEndTime) EndMorph();
+
+                    // The real Camouflager's reset just ran (its timer ticked 0 this frame). If our own
+                    // camo is still active, TOR's resetCamouflage() un-greyed everyone out from under us -
+                    // restore it. If we're not camouflaged but ARE morphed, TOR's reset also wiped the
+                    // Copycat's own look back to default - reapply the morph on top.
+                    float realCamoTimer = Camouflager.camouflageTimer;
+                    if (lastRealCamoTimer > 0f && realCamoTimer <= 0f && !Helpers.MushroomSabotageActive()) {
+                        if (camouflaged)
+                            foreach (PlayerControl player in PlayerControl.AllPlayerControls)
+                                if (player != null) player.setLook("", 6, "", "", "", "");
+                        else if (isMorphed)
+                            RestoreLook();
+                    }
+                    lastRealCamoTimer = realCamoTimer;
 
                     // Targeting only matters for the local Copycat's buttons.
                     if (!IsLocalCopycat()) return;
@@ -554,8 +639,8 @@ namespace UnknownsCollection {
         private static void CreateAbilityButton(Ability ability, HudManager __instance, Vector3 pos) {
             var button = new TheOtherRoles.Objects.CustomButton(
                 () => OnAbilityClick(ability),
-                () => IsAbilityAvailable(ability),
                 () => IsAbilityVisible(ability),
+                () => IsAbilityAvailable(ability),
                 () => { /* nothing on meeting */ },
                 GetAbilitySprite(ability),
                 pos,
@@ -605,8 +690,12 @@ namespace UnknownsCollection {
                 case Ability.Morphling: SendUseAbility(ability, currentMorphTarget.PlayerId); break;
                 default: SendUseAbility(ability); break;
             }
-            // Start the cooldown (HasEffect=false buttons don't auto-reset their Timer).
-            if (abilityButtons.TryGetValue(ability, out var b) && b != null) b.Timer = b.MaxTimer;
+            // Start the cooldown (HasEffect=false buttons don't auto-reset their Timer). Refresh MaxTimer
+            // from the source role's current cooldown so it matches the real ability at use time.
+            if (abilityButtons.TryGetValue(ability, out var b) && b != null) {
+                b.MaxTimer = AbilityCooldown(ability);
+                b.Timer = b.MaxTimer;
+            }
         }
 
         // ====================================================================

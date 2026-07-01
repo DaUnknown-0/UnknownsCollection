@@ -348,11 +348,23 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || bombCarrier == null || !IsAlive(bombCarrier) || InMeeting()) {
-                        // Clear on any disqualifying state (meeting start, or the carrier dying some
-                        // other way) so the Maniac can plant a new bomb right away instead of being
-                        // stuck until the next meeting.
-                        if (bombCarrier != null) ClearBomb();
+                    if (!active || bombCarrier == null) return;
+                    if (InMeeting()) {
+                        // MeetingHud.Start's own postfix (MeetingStartPatch) runs on every client,
+                        // including this host, and already clears the bomb locally the instant a
+                        // meeting starts. A local clear here is enough; broadcasting an RPC too would
+                        // just be a redundant no-op once every client has already cleared itself.
+                        ClearBomb();
+                        return;
+                    }
+                    if (!IsAlive(bombCarrier)) {
+                        // The carrier died some other way (e.g. another impostor's kill), not via the
+                        // bomb's own explosion. Unlike the meeting case, nothing else tells non-host
+                        // clients about this death, so a purely local ClearBomb() here would leave every
+                        // non-host client (including the Maniac) with a stale bombCarrier - unable to
+                        // plant again until the next meeting - and a lingering [BOMB!] tag on the corpse.
+                        // Broadcast the clear the same way the explosion path does.
+                        SendClear();
                         return;
                     }
 
@@ -418,12 +430,7 @@ namespace UnknownsCollection {
         static class HudVisualPatch {
             public static void Postfix() {
                 try {
-                    // Maniac's targeting outline
-                    if (IsLocalManiac() && !InMeeting() && bombCarrier == null
-                        && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead) {
-                        if (currentTarget != null)
-                            PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, Color);
-                    }
+                    UpdateTargeting();
 
                     // Bomb carrier warning text (local)
                     if (LocalHasBomb() && !InMeeting()) {
@@ -451,6 +458,19 @@ namespace UnknownsCollection {
             }
         }
 
+        // Local Maniac: keep the nearest valid target outlined for the BOMB button, mirroring
+        // Silencer.UpdateTargeting(). No target while a bomb is already planted, in a meeting, dead,
+        // or not the Maniac at all - matches the button's own Show condition below.
+        private static void UpdateTargeting() {
+            if (!IsLocalManiac() || InMeeting() || bombCarrier != null
+                || PlayerControl.LocalPlayer.Data == null || PlayerControl.LocalPlayer.Data.IsDead) {
+                currentTarget = null;
+                return;
+            }
+            currentTarget = PlayerControlFixedUpdatePatch.setTarget(true);
+            if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, Color);
+        }
+
         // ---- Buttons ----
         private static PlayerControl currentTarget;
         private static TheOtherRoles.Objects.CustomButton bombButton;
@@ -466,17 +486,15 @@ namespace UnknownsCollection {
 
                     bombButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
-                            var target = PlayerControlFixedUpdatePatch.setTarget(true);
-                            if (target == null || bombCarrier != null) return;
+                            if (currentTarget == null || bombCarrier != null) return;
+                            SendPlantBomb(currentTarget.PlayerId);
                             currentTarget = null;
-                            SendPlantBomb(target.PlayerId);
                             bombButton.Timer = bombButton.MaxTimer;
                         },
                         () => active && IsLocalManiac()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
                               && bombCarrier == null,
-                        () => PlayerControl.LocalPlayer.CanMove
-                              && PlayerControlFixedUpdatePatch.setTarget(true) != null,
+                        () => PlayerControl.LocalPlayer.CanMove && currentTarget != null,
                         () => { },
                         bombSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,

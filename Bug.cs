@@ -77,13 +77,13 @@ namespace UnknownsCollection {
         // left untouched, so the Bug never steals those.
         [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
         static class RpcEndGameHijackPatch {
-            public static void Prefix(ref GameOverReason reason) {
+            public static void Prefix(ref GameOverReason endReason) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!BugIsAliveAndActive()) return;
-                    int r = (int)reason;
+                    int r = (int)endReason;
                     if (r >= 10 && r != TeamJackalWinReason) return; // only Crew/Impostor (<10) or Jackal (11)
-                    reason = (GameOverReason)BugWinReason;
+                    endReason = (GameOverReason)BugWinReason;
                     UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Bug survived to the end — hijacking win.");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] RpcEndGame hijack failed: {e}");

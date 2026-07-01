@@ -59,8 +59,9 @@ modified**. The plugin only takes a hard dependency on TheOtherRoles.
 
 ### Neutral
 
-- **The Bug** — **Survive to the end to win alone**: when any team would win while the Bug is alive, the
-  Bug hijacks the win. *Options:* min players; optional glitchy win-screen effects.
+- **The Bug** — **Survive to the end to win alone**: when a **team** win (Crewmate, Impostor or Jackal)
+  triggers while the Bug is alive, the Bug hijacks it. Neutral solo wins (Jester, Arsonist, Vulture, …)
+  are left alone. *Options:* min players; optional glitchy win-screen effects.
 - **The Follower** — Takes over the **full role of the first player to die** (team, ability and win
   condition — including Impostor/Neutral). *Options:* min players.
 - **The Copycat** — **Learns abilities by witnessing them** — Camouflage, Morph, Shield (unkillable),

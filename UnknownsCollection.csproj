@@ -30,6 +30,8 @@
         <EmbeddedResource Include="Resources\maniac_pass.png" />
         <EmbeddedResource Include="Resources\saboteur_sabotage.png" />
         <EmbeddedResource Include="Resources\saboteur_search.png" />
+        <EmbeddedResource Include="Resources\saboteur_trap.png" />
+        <EmbeddedResource Include="Resources\saboteur_selflimp.png" />
         <EmbeddedResource Include="Resources\silencer_silence.png" />
         <EmbeddedResource Include="Resources\scout_transparent.png" />
         <EmbeddedResource Include="Resources\siphoner_drain.png" />

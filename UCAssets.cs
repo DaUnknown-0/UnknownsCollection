@@ -39,6 +39,8 @@ namespace UnknownsCollection {
         public static Sprite ManiacBombIcon => GetSprite("UnknownsCollection.Resources.maniac_bomb.png", 115f);
         public static Sprite ManiacPassIcon => GetSprite("UnknownsCollection.Resources.maniac_pass.png", 115f);
         public static Sprite SaboteurSabotageIcon => GetSprite("UnknownsCollection.Resources.saboteur_sabotage.png", 115f);
+        public static Sprite SaboteurTrapIcon => GetSprite("UnknownsCollection.Resources.saboteur_trap.png", 115f);
+        public static Sprite SaboteurSelfLimpIcon => GetSprite("UnknownsCollection.Resources.saboteur_selflimp.png", 115f);
         public static Sprite SilencerIcon => GetSprite("UnknownsCollection.Resources.silencer_silence.png", 115f);
         // Crew (blue/teal/cyan)
         public static Sprite SaboteurSearchIcon => GetSprite("UnknownsCollection.Resources.saboteur_search.png", 100f);

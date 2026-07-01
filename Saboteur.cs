@@ -910,7 +910,8 @@ namespace UnknownsCollection {
                 try {
                     var sabotageSprite = UCAssets.SaboteurSabotageIcon
                         ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.HackerButton.png", 115f);
-                    Sprite trapSprite = Trapper.getButtonSprite();
+                    Sprite trapSprite = UCAssets.SaboteurTrapIcon ?? Trapper.getButtonSprite();
+                    Sprite selfLimpSprite = UCAssets.SaboteurSelfLimpIcon ?? trapSprite;
 
                     sabotageButton = new TheOtherRoles.Objects.CustomButton(
                         () => { // OnClick
@@ -969,7 +970,7 @@ namespace UnknownsCollection {
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove,
                         () => { },
-                        trapSprite,
+                        selfLimpSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
                         __instance,
                         KeyCode.H,

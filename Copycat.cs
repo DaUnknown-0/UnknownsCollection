@@ -31,6 +31,7 @@ using System.Linq;
 using HarmonyLib;
 using Hazel;
 using UnityEngine;
+using AmongUs.GameOptions; // RoleTypes (promote to Engineer so the native vent button shows)
 using TheOtherRoles;
 using TheOtherRoles.Utilities;
 using static TheOtherRoles.TheOtherRoles;
@@ -241,14 +242,22 @@ namespace UnknownsCollection {
 
         // ---- Camouflage / Morph: purely cosmetic setLook, applied on every client (never RpcSetColor,
         // which is host-authoritative and would trip anti-cheat on non-owner clients). ----
+        // Camouflage greys out EVERYONE (like the real Camouflager's camouflagerCamouflage), not just the
+        // Copycat — that's the whole point of the ability: nobody can be told apart while it lasts.
         private static void StartCamouflage() {
             camouflaged = true;
             camoEndTime = Time.time + CamoDuration;
-            if (copycat != null) copycat.setLook("", 6, "", "", "", ""); // grey, no cosmetics
+            if (Helpers.MushroomSabotageActive()) return; // don't overwrite the fungle "camo"
+            foreach (PlayerControl player in PlayerControl.AllPlayerControls)
+                if (player != null) player.setLook("", 6, "", "", "", ""); // grey, no cosmetics
         }
 
         private static void EndCamouflage() {
             camouflaged = false;
+            if (Helpers.MushroomSabotageActive()) return; // fungle sabotage controls looks
+            foreach (PlayerControl player in PlayerControl.AllPlayerControls)
+                if (player != null) player.setDefaultLook();
+            // The Copycat itself may still be morphed — re-apply that look on top of the reset.
             RestoreLook();
         }
 
@@ -323,6 +332,16 @@ namespace UnknownsCollection {
             }
             learnedAbilities.Add(ability);
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Learned ability {ability} (known: {learnedAbilities.Count}).");
+
+            // The native Impostor vent button only shows for AU roles it considers vent-capable. A Copycat
+            // is an AU Crewmate, so roleCanUseVents alone grants no button. Mirror exactly what TOR does for
+            // venting crew (Spy/Vulture/Thief) in RPC.setRole: promote the AU role to Engineer so the vent
+            // button appears. Host-authoritative + broadcast, so it's consistent on every client.
+            if (ability == Ability.Vent && AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost
+                && copycat != null && copycat.Data?.Role != null && !copycat.Data.Role.IsImpostor) {
+                copycat.RpcSetRole(RoleTypes.Engineer);
+                copycat.CoSetRole(RoleTypes.Engineer, true);
+            }
         }
 
         // ====================================================================

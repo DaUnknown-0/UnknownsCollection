@@ -189,12 +189,11 @@ namespace UnknownsCollection {
         private static void ApplyPoisonDeath(byte targetId) {
             var target = Helpers.playerById(targetId);
             if (target != null && target.Data != null) {
-                // Apply the kill LOCALLY only. SendPoisonDeath already broadcast SubPoisonDeath to every
-                // client, so each client runs this exactly once and murders locally exactly once.
-                // (Previously this re-broadcast an UncheckedMurder RPC from EVERY client, so one poison
-                // death produced N duplicate corpses and N bogus entries in GameHistory.deadPlayers.)
-                RPCProcedure.uncheckedMurderPlayer(targetId, targetId, 0);
-                UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Player {targetId} died from poison.");
+                // Apply the death LOCALLY only. SendPoisonDeath already broadcast SubPoisonDeath to every
+                // client, so each client runs this exactly once. We use Exiled() (not uncheckedMurderPlayer)
+                // so the poison death leaves NO body to report — exactly like a guesser shot or a vote-out.
+                target.Exiled();
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Player {targetId} died from poison (no body).");
             }
             poisonedReporters.Remove(targetId);
         }

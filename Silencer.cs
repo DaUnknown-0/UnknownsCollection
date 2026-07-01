@@ -89,7 +89,7 @@ namespace UnknownsCollection {
                 CanStillSkip = CustomOption.Create(1444, Types.Impostor, "Muted Player Can Still Skip",
                     false, SpawnRate);
                 ShowInGameMarker = CustomOption.Create(1445, Types.Impostor, "Show Mute Marker In-Game",
-                    true, SpawnRate);
+                    false, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Silencer] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] CreateOptions failed: {e}");

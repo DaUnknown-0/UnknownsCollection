@@ -58,8 +58,6 @@ namespace UnknownsCollection {
         private static float lastDrainTime;
         private static bool drainActive;
         private static TheOtherRoles.Objects.CustomButton drainButton;
-        // Impostor-side: Time.time until which THIS client's kill timer is pinned at full by the drain.
-        private static float killHoldUntil;
 
         // ---- Custom RPC (196) subtypes ----
         private const byte RpcId = 196; // == UnknownsCollectionPlugin.SiphonerRpcId
@@ -205,43 +203,21 @@ namespace UnknownsCollection {
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Siphoner] The Siphoner is {siphoner.Data?.PlayerName}.");
         }
 
-        // The targeted Impostor's OWN kill timer is held at full; everyone else ignores it.
+        // The targeted Impostor's OWN kill timer is pushed back by the penalty; everyone else ignores it.
         // A vampire bite sound plays to audibly warn the drained Impostor (replaces the old blue flash).
         private static void ApplyDrain(byte impostorId, float penalty) {
             var me = PlayerControl.LocalPlayer;
             if (me == null || me.PlayerId != impostorId) return;
             try {
-                // We can't just add `penalty` to killTimer: TOR's SetKillTimer prefix hard-clamps it to the
-                // base KillCooldown, so any excess evaporates on the very next FixedUpdate tick (that made
-                // PenaltyPerTick / ScaleWithDistance inert). Instead accumulate a timed HOLD and pin the
-                // timer at full while it lasts (enforced per-frame in DrainHoldPatch). The hold persists
-                // after the Siphoner leaves range, giving a real, lasting deficit that scales with penalty.
-                float baseCd = GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown;
-                float maxHold = Mathf.Max(baseCd * 4f, 20f); // ceiling so repeated drains can't lock forever
-                killHoldUntil = Mathf.Min(Mathf.Max(killHoldUntil, Time.time) + penalty, Time.time + maxHold);
-                if (baseCd > 0f) me.SetKillTimer(baseCd);
+                // Add the penalty to the impostor's CURRENT kill cooldown (not the base/maximum): each drain
+                // tick pushes the remaining timer up by `penalty`, gradually starving the kill. TOR's
+                // SetKillTimer prefix clamps the result to the configured KillCooldown, so it can never
+                // exceed the maximum — but it also never snaps straight to it the way the old hold did.
+                me.SetKillTimer(me.killTimer + penalty);
                 if (WarnImpostor == null || WarnImpostor.getBool())
                     SoundEffectsManager.play("vampireBite");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Siphoner] drain apply failed: {e.Message}");
-            }
-        }
-
-        // Per-frame enforcement of the drain hold, on the drained Impostor's OWN client: keep the kill
-        // timer pinned at the base cooldown until the accumulated hold expires. (Setting to base is exactly
-        // what TOR's clamp allows; the point is that AU keeps ticking the timer down each frame otherwise.)
-        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        static class DrainHoldPatch {
-            public static void Postfix() {
-                try {
-                    if (killHoldUntil <= 0f) return;
-                    var me = PlayerControl.LocalPlayer;
-                    if (me == null || me.Data == null || me.Data.IsDead || me.Data.Role == null || !me.Data.Role.IsImpostor) return;
-                    if (InMeeting()) { killHoldUntil = 0f; return; } // meetings reset kill cooldowns anyway
-                    if (Time.time >= killHoldUntil) { killHoldUntil = 0f; return; }
-                    float baseCd = GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown;
-                    if (baseCd > 0f) me.SetKillTimer(baseCd);
-                } catch { }
             }
         }
 
@@ -286,7 +262,6 @@ namespace UnknownsCollection {
                 lastDrainTime = 0f;
                 drainActive = false;
                 drainButton = null;
-                killHoldUntil = 0f;
             }
         }
 

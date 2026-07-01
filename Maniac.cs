@@ -24,6 +24,8 @@ namespace UnknownsCollection {
         public static CustomOption UnawareDelay;
         public static CustomOption PassWindow;
         public static CustomOption ExplosionRange;
+        public static CustomOption ExplosionHits;   // 1496 - who the blast kills (all / no impostors / no maniac)
+        public static CustomOption ShieldPierce;     // 1497 - which shields the bomb ignores (none/medic/time/both)
 
         public static PlayerControl maniac;
         public static bool active;
@@ -62,6 +64,10 @@ namespace UnknownsCollection {
                     10f, 3f, 30f, 1f, SpawnRate);
                 ExplosionRange = CustomOption.Create(1495, Types.Impostor, "Maniac Explosion Range",
                     1.5f, 0.5f, 4f, 0.5f, SpawnRate);
+                ExplosionHits = CustomOption.Create(1496, Types.Impostor, "Maniac Explosion Hits",
+                    new string[] { "Everyone But Impostors", "Everyone But The Maniac", "Everyone" }, SpawnRate);
+                ShieldPierce = CustomOption.Create(1497, Types.Impostor, "Maniac Bomb Pierces Shield",
+                    new string[] { "None", "Medic Shield", "Time Master Shield", "Both Shields" }, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Maniac] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] CreateOptions failed: {e}");
@@ -87,6 +93,53 @@ namespace UnknownsCollection {
         private static float BombUnawareDelay() => UnawareDelay != null ? UnawareDelay.getFloat() : 8f;
         private static float BombPassWindow() => PassWindow != null ? PassWindow.getFloat() : 10f;
         private static float BombRange() => ExplosionRange != null ? ExplosionRange.getFloat() : 1.5f;
+        // 0 = Everyone But Impostors, 1 = Everyone But The Maniac, 2 = Everyone
+        private static int ExplosionHitsSel() => ExplosionHits != null ? ExplosionHits.getSelection() : 0;
+        // 0 = None, 1 = Medic, 2 = Time Master, 3 = Both
+        private static int ShieldPierceSel() => ShieldPierce != null ? ShieldPierce.getSelection() : 0;
+
+        // TORMapOptions is internal to TOR, so reach its "shield first kill" state via reflection (cached).
+        private static System.Reflection.FieldInfo _shieldFirstKillField;
+        private static System.Reflection.FieldInfo _firstKillPlayerField;
+        private static bool _firstKillReflectionInit;
+        private static PlayerControl FirstKillShieldedPlayer() {
+            try {
+                if (!_firstKillReflectionInit) {
+                    _firstKillReflectionInit = true;
+                    var t = AccessTools.TypeByName("TheOtherRoles.TORMapOptions");
+                    if (t != null) {
+                        _shieldFirstKillField = AccessTools.Field(t, "shieldFirstKill");
+                        _firstKillPlayerField = AccessTools.Field(t, "firstKillPlayer");
+                    }
+                }
+                if (_shieldFirstKillField == null || _firstKillPlayerField == null) return null;
+                if (!(bool)_shieldFirstKillField.GetValue(null)) return null;
+                return _firstKillPlayerField.GetValue(null) as PlayerControl;
+            } catch { return null; }
+        }
+
+        // Whether the bomb's blast may kill this player, given the "Explosion Hits" and "Pierces Shield"
+        // options. Medic shields protect the shielded player; the Time Master shield protects the Time
+        // Master while it's active. A shield only protects if the option does NOT pierce it.
+        private static bool BlastCanKill(PlayerControl p) {
+            if (!IsAlive(p)) return false;
+            int hits = ExplosionHitsSel();
+            if (hits == 0 && p.Data?.Role != null && p.Data.Role.IsImpostor) return false;   // spare all impostors
+            if (hits == 1 && maniac != null && p.PlayerId == maniac.PlayerId) return false;    // spare only the maniac
+
+            // The "shield first kill" protection is never pierced by the bomb, regardless of the pierce option.
+            var fkShielded = FirstKillShieldedPlayer();
+            if (fkShielded != null && fkShielded.PlayerId == p.PlayerId) return false;
+
+            int pierce = ShieldPierceSel();
+            bool pierceMedic = pierce == 1 || pierce == 3;
+            bool pierceTime = pierce == 2 || pierce == 3;
+            bool hasMedicShield = Medic.shielded != null && Medic.shielded == p;
+            bool hasTimeShield = TimeMaster.shieldActive && TimeMaster.timeMaster != null && TimeMaster.timeMaster == p;
+            if (hasMedicShield && !pierceMedic) return false;
+            if (hasTimeShield && !pierceTime) return false;
+            return true;
+        }
 
         private static bool IsPlainImpostor(PlayerControl p) => UCPromotion.IsPlainImpostor(p);
 
@@ -184,9 +237,14 @@ namespace UnknownsCollection {
                 // Stop the fuse sound for the old carrier
                 SoundEffectsManager.stop("bombFuseBurning");
                 bombCarrier = Helpers.playerById(newCarrierId);
-                bombDetected = false;
-                bombPlacedAt = Time.time;
+                // Hot-potato: the pass does NOT reset the fuse. bombDetected + bombDetectedAt are kept, so
+                // the pass window keeps counting down from the original detection and the bomb explodes at
+                // the originally-scheduled time no matter how often it is passed.
                 bombKillUsed = false;
+                // Keep the burning fuse audible for whoever now holds the bomb.
+                if (bombDetected && PlayerControl.LocalPlayer != null
+                    && PlayerControl.LocalPlayer.PlayerId == newCarrierId)
+                    SoundEffectsManager.play("bombFuseBurning");
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb passed to {bombCarrier?.Data?.PlayerName}.");
             }
         }
@@ -299,6 +357,9 @@ namespace UnknownsCollection {
                     }
 
                     float elapsed = Time.time - bombPlacedAt;
+                    // Every bomb the Maniac PLANTS has a hidden/unaware phase. A PASSED bomb does not: the
+                    // pass keeps bombDetected + bombDetectedAt (see ApplyPassBomb), so it stays visible and
+                    // keeps counting down instead of re-entering this hidden phase.
                     float unaware = BombUnawareDelay();
                     float passWindow = BombPassWindow();
 
@@ -312,10 +373,22 @@ namespace UnknownsCollection {
                         float detectedElapsed = Time.time - bombDetectedAt;
                         if (detectedElapsed >= passWindow && !bombKillUsed) {
                             bombKillUsed = true;
-                            // Explode: kill the carrier
-                            byte victimId = bombCarrier.PlayerId;
-                            SendExplode(victimId);
-                            RpcUncheckedMurder(victimId, victimId);
+                            // Explode: kill everyone in the blast radius around the carrier (the carrier
+                            // included), subject to the "Explosion Hits" + "Pierces Shield" options. Cache
+                            // the centre and collect victims BEFORE SendExplode — that RPC clears the bomb
+                            // state (bombCarrier becomes null) on every client, including this one.
+                            Vector2 center = bombCarrier.GetTruePosition();
+                            float range = BombRange();
+                            byte carrierId = bombCarrier.PlayerId;
+                            var victims = new List<byte>();
+                            foreach (var p in PlayerControl.AllPlayerControls) {
+                                if (p == null) continue;
+                                if (Vector2.Distance(center, p.GetTruePosition()) > range) continue;
+                                if (!BlastCanKill(p)) continue;
+                                victims.Add(p.PlayerId);
+                            }
+                            SendExplode(carrierId);
+                            foreach (byte vid in victims) RpcUncheckedMurder(vid, vid);
                             SendClear();
                         }
                     }

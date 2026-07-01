@@ -64,18 +64,25 @@ namespace UnknownsCollection {
         // harmless (the postfix also gates on gameOverReason == BugWinReason).
         private static byte winnerBugId = byte.MaxValue;
 
-        // Host-authoritative Bug win ("survive to the end -> win alone"): when a REGULAR team win is
-        // about to be broadcast (vanilla GameOverReason < 10) and the Bug is still alive, rewrite the
-        // reason to BugWinReason in-place. This reuses the single RpcEndGame the original caller already
-        // makes — no second broadcast, no per-frame instant win. Custom/neutral wins (reason >= 10:
-        // Jester, Arsonist, Lovers, Jackal, Vulture, Prosecutor, ...) are left untouched.
+        // TeamJackalWin from TOR's CustomGameOverReason enum (EndGamePatch.cs). The Jackal is a "team"
+        // win the Bug should also hijack; the other custom reasons (Lovers 10, Mini 12, Jester 13,
+        // Arsonist 14, Vulture 15, Prosecutor 16) are neutral solo wins the Bug must NOT steal.
+        private const int TeamJackalWinReason = 11;
+
+        // Host-authoritative Bug win ("survive to the end -> win alone"): when a TEAM win is about to be
+        // broadcast and the Bug is still alive, rewrite the reason to BugWinReason in-place. This reuses
+        // the single RpcEndGame the original caller already makes — no second broadcast, no per-frame
+        // instant win. Only the three team wins qualify: vanilla Crew/Impostor (reason < 10) and the
+        // Jackal team (11). Neutral solo wins (Jester, Arsonist, Vulture, Lovers, Prosecutor, Mini) are
+        // left untouched, so the Bug never steals those.
         [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
         static class RpcEndGameHijackPatch {
             public static void Prefix(ref GameOverReason reason) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!BugIsAliveAndActive()) return;
-                    if ((int)reason >= 10) return; // only hijack vanilla team wins (Crew/Impostor/Sabotage/Task)
+                    int r = (int)reason;
+                    if (r >= 10 && r != TeamJackalWinReason) return; // only Crew/Impostor (<10) or Jackal (11)
                     reason = (GameOverReason)BugWinReason;
                     UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Bug survived to the end — hijacking win.");
                 } catch (Exception e) {

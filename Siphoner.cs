@@ -18,7 +18,8 @@
  * - own RoleInfo tag, a small custom RPC (196), no buttons (passive). Gated by the mod-wide No-Start
  * handshake (everyone has the mod).
  *
- * Options live in the 1460-1466 block. See ID-Registry.md.
+ * Options live in the 1460-1469 block (+ Drain Duration at 1550 in the overflow range, since the
+ * 1460-block is full). See ID-Registry.md.
  */
 
 using System;
@@ -48,6 +49,8 @@ namespace UnknownsCollection {
         public static CustomOption AffectSabotage;    // 1467 - also drain sabotage power (hold the sabotage cd)
         public static CustomOption SabotageHold;      // 1468 - seconds the sabotage cooldown is held while draining
         public static CustomOption DrainCooldown;      // 1469 - cooldown after draining ends
+        public static CustomOption DrainDuration;      // 1550 - seconds the drain stays active before it auto-ends
+                                                       // (1460-block full, so this lives in the UC overflow range)
 
         // ---- Runtime state ----
         public static PlayerControl siphoner;
@@ -100,6 +103,8 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 SabotageHold = CustomOption.Create(1468, Types.Crewmate, "Sabotage Blocked While Draining (sec)",
                     8f, 1f, 30f, 1f, AffectSabotage);
+                DrainDuration = CustomOption.Create(1550, Types.Crewmate, "Siphoner Drain Duration",
+                    10f, 3f, 30f, 1f, SpawnRate);
                 DrainCooldown = CustomOption.Create(1469, Types.Crewmate, "Siphoner Drain Cooldown",
                     20f, 5f, 60f, 2.5f, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Siphoner] Options created.");
@@ -312,35 +317,53 @@ namespace UnknownsCollection {
         }
 
         // ====================================================================
-        // Button: toggle drain on/off
+        // Button: press to drain for a fixed duration, then it auto-ends and goes on cooldown.
+        // Uses TOR's CustomButton effect mode (HasEffect/EffectDuration/OnEffectEnds): the click
+        // starts the drain, the green effect timer counts the active window down, and when it
+        // hits zero OnEffectEnds stops the drain and arms the cooldown — no manual toggle-off.
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
             public static void Postfix(HudManager __instance) {
                 try {
-                    var sprite = __instance.KillButton != null && __instance.KillButton.graphic != null
-                        ? __instance.KillButton.graphic.sprite : null;
+                    // A vampire-bite themed sprite fits "draining kill power" (and matches the
+                    // vampireBite sound the drain already plays); fall back to the kill button.
+                    Sprite sprite = null;
+                    try { sprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.VampireButton.png", 115f); } catch { }
+                    if (sprite == null && __instance.KillButton != null && __instance.KillButton.graphic != null)
+                        sprite = __instance.KillButton.graphic.sprite;
+
+                    float duration = DrainDuration != null ? DrainDuration.getFloat() : 10f;
+                    float cd = DrainCooldown != null ? DrainCooldown.getFloat() : 20f;
                     drainButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
+                            // OnClick: start the drain for the effect window.
                             if (!active || !IsLocalSiphoner()) return;
-                            bool newState = !drainActive;
-                            SendToggleDrain(newState);
-                            if (newState) {
-                                drainButton.Timer = 0f;
-                            } else {
-                                float cd = DrainCooldown != null ? DrainCooldown.getFloat() : 20f;
-                                drainButton.Timer = cd;
-                            }
+                            SendToggleDrain(true);
                         },
                         () => active && IsLocalSiphoner()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove,
-                        () => { drainActive = false; drainButton.Timer = drainButton.MaxTimer; },
+                        () => {
+                            // OnMeetingEnds: make sure the drain is off and reset to a full cooldown.
+                            if (drainActive) SendToggleDrain(false);
+                            drainButton.isEffectActive = false;
+                            drainButton.Timer = drainButton.MaxTimer;
+                        },
                         sprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
-                        __instance, KeyCode.F, false, "DRAIN");
-                    drainButton.MaxTimer = DrainCooldown != null ? DrainCooldown.getFloat() : 20f;
+                        __instance, KeyCode.F,
+                        true,        // HasEffect
+                        duration,    // EffectDuration = active drain window
+                        () => {
+                            // OnEffectEnds: stop the drain and start the cooldown.
+                            if (drainActive) SendToggleDrain(false);
+                            drainButton.Timer = DrainCooldown != null ? DrainCooldown.getFloat() : 20f;
+                        },
+                        false, "DRAIN");
+                    drainButton.EffectDuration = duration;
+                    drainButton.MaxTimer = cd;
                     drainButton.Timer = 5f;
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] Button creation failed: {e}");

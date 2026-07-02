@@ -39,9 +39,9 @@ namespace UnknownsCollection {
         // ---- Theme ----
         public static readonly Color Color = Palette.ImpostorRed; // impostor role -> red role tag
         private static readonly Color MarkColor = new Color(1f, 0.31f, 0.31f); // red mute marker
-        // Red mute marker shown next to a muted player's name (everyone sees it). Plain text so it
-        // renders in every font (the default TMP font has no muted-speaker glyph).
-        private const string Marker = " <color=#FF5050><b>[MUTED]</b></color>";
+        // Red mute marker shown next to a muted player's name (everyone sees it), built per-frame with
+        // a fade-in alpha by MarkerWithAlpha() below (the "MUTED" substring itself never changes, so
+        // the "already appended this frame" check in ApplyMuteMarkers still works regardless of alpha).
 
         // ---- Options (IDs 1440-1445) ----
         public static CustomOption SpawnRate;        // 1440 (header) - impostor role chance
@@ -60,6 +60,12 @@ namespace UnknownsCollection {
 
         private static PlayerControl currentTarget; // local Silencer's outlined victim candidate
         private static bool wasInMeeting;
+        // Marker reveal animation: first frame each muted ID's marker becomes visible in a meeting,
+        // tracked so the fade-in/punch fires exactly once instead of restarting every frame (TOR
+        // rebuilds PlayerVoteArea.NameText every frame - see the comment on HudUpdatePatch above).
+        // Cleared at meeting end (ApplyMuteMarkers below) and on round reset.
+        private static readonly Dictionary<byte, float> markerRevealStart = new();
+        private const float MarkerFadeIn = 0.35f;
 
         // ---- Custom RPC (194) subtypes ----
         private const byte RpcId = 194; // == UnknownsCollectionPlugin.SilencerRpcId
@@ -163,6 +169,9 @@ namespace UnknownsCollection {
 
         private static void ApplySilence(byte targetId) {
             silencedIds.Add(targetId);
+            // Quiet, private confirmation cue for the Silencer only - the mark otherwise had no
+            // feedback besides the button's own cooldown reset (mirrors Maniac's plant-confirm cue).
+            if (IsLocalSilencer()) UCAssets.PlaySilencerMark();
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Silencer] {Helpers.playerById(targetId)?.Data?.PlayerName} will be muted next meeting.");
         }
 
@@ -204,6 +213,7 @@ namespace UnknownsCollection {
                 silencedIds.Clear();
                 currentTarget = null;
                 wasInMeeting = false;
+                markerRevealStart.Clear();
             }
         }
 
@@ -251,6 +261,7 @@ namespace UnknownsCollection {
                     if (wasInMeeting && !nowMeeting) {
                         silencedIds.Clear();              // mute lasts exactly one meeting
                         marksLeftThisRound = TargetsPerRoundValue();
+                        markerRevealStart.Clear();         // next meeting's reveals start fresh
                     }
                     // The mute becomes visible at meeting start - a "shh" tells the victim right away.
                     if (!wasInMeeting && nowMeeting && LocalIsSilenced()) UCAssets.PlayShh();
@@ -282,6 +293,11 @@ namespace UnknownsCollection {
         // base text each frame, so the marker never stacks and vanishes on its own once the mute clears.
         // - In a meeting: mark the vote areas (always - core to the feature).
         // - In-game: mark the world name tag, gated on the "Show Mute Marker In-Game" option.
+        //
+        // The marker's first appearance is a soft fade-in (alpha ramp baked into the color tag, since
+        // TMP honors 8-digit #RRGGBBAA) plus a brief scale-punch on the whole vote-area panel, so the
+        // reveal reads as a deliberate beat instead of a hard pop-in. markerRevealStart tracks the ramp
+        // start per player ID for exactly one meeting (cleared in HudUpdatePatch/ResetPatch above).
         private static void ApplyMuteMarkers() {
             if (!active || silencedIds.Count == 0) return;
 
@@ -291,9 +307,24 @@ namespace UnknownsCollection {
             if (MeetingHud.Instance == null) return;
             foreach (var pva in MeetingHud.Instance.playerStates) {
                 if (pva == null || pva.NameText == null || !silencedIds.Contains(pva.TargetPlayerId)) continue;
-                if (!pva.NameText.text.Contains("MUTED")) pva.NameText.text += Marker;
+                if (pva.NameText.text.Contains("MUTED")) continue; // already appended this frame (defensive)
+
+                if (!markerRevealStart.TryGetValue(pva.TargetPlayerId, out float start)) {
+                    start = Time.time;
+                    markerRevealStart[pva.TargetPlayerId] = start;
+                }
+                float t = Mathf.Clamp01((Time.time - start) / MarkerFadeIn);
+                byte alpha = (byte)Mathf.RoundToInt(255f * t);
+                pva.NameText.text += MarkerWithAlpha(alpha);
+
+                if (pva.transform != null)
+                    pva.transform.localScale = Vector3.one * (1f + 0.10f * (1f - t) * Mathf.Sin(t * Mathf.PI));
             }
         }
+
+        // Same marker text as the static Marker constant, but with a caller-supplied alpha byte baked
+        // into the color tag (00 = invisible, FF = fully opaque) for the fade-in ramp above.
+        private static string MarkerWithAlpha(byte alpha) => $" <color=#FF5050{alpha:X2}><b>[MUTED]</b></color>";
 
         // A muted player can never cast a real vote (VoteSelectPatch blocks the click), so without this
         // their PlayerVoteArea.VotedFor would sit at HasNotVoted (255) forever and TOR's "everyone voted"

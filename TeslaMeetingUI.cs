@@ -100,9 +100,11 @@ namespace UnknownsCollection {
                 if (plusSel == -1) {
                     plusSel = i;
                     renderers[i].color = Cyan;
+                    UCAssets.PlayTeslaSelect();
                 } else if (minusSel == -1) {
                     minusSel = i;
                     renderers[i].color = Orange;
+                    UCAssets.PlayTeslaSelect();
                     Confirm(hud);
                 }
                 // both already chosen -> ignore until one is deselected
@@ -118,6 +120,9 @@ namespace UnknownsCollection {
 
             Tesla.SendSetCharges(plusTarget, minusTarget);
             locked = true;
+            // No dedicated "lock-in" sound asset exists for this cue - reuse tesla_select at a fuller
+            // volume so the confirm still reads as more decisive than the individual pick clicks above.
+            UCAssets.PlayTeslaSelect(UCAssets.VolStd);
 
             // Lock all rows: confirmed pair stays coloured, the rest greys out, no further clicks.
             for (int k = 0; k < buttons.Length; k++) {

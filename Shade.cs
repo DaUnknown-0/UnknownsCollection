@@ -28,6 +28,7 @@ namespace UnknownsCollection {
     public static class Shade {
         // ---- Theme ----
         public static readonly Color Color = Palette.ImpostorRed;
+        private static readonly Color DustTint = new Color(0.80f, 0.80f, 0.78f); // white-grey (CrewFx.SpawnPoof)
 
         // ---- Options (IDs 1510-1512) ----
         public static CustomOption SpawnRate;
@@ -48,6 +49,19 @@ namespace UnknownsCollection {
         // entry is removed) - the auto-report nearest-player search must use this, not the victim's
         // live ghost position.
         private static readonly Dictionary<byte, Vector2> revealedBodyPositions = new();
+
+        // victimId -> faint self-only marker GameObject/parts over each still-hidden body (Shade only,
+        // gated every tick like PoltergeistFx.TickAura - see TickBodyMarkers below).
+        private static readonly Dictionary<byte, GameObject> bodyMarkers = new();
+        private static readonly Dictionary<byte, SpriteRenderer[]> bodyMarkerParts = new();
+
+        // CreateOptions() runs for every role on every client at plugin bootstrap (see
+        // UnknownsCollectionPlugin), which is enough to trigger this static constructor and register the
+        // marker tick/reset with UCFx before any round starts.
+        static Shade() {
+            UCFx.RegisterTick(TickBodyMarkers);
+            UCFx.RegisterReset(ClearBodyMarkers);
+        }
 
         // ---- Custom RPC (205) subtypes ----
         private const byte RpcId = 205;
@@ -171,7 +185,8 @@ namespace UnknownsCollection {
             // Keep the fixed kill position for the auto-report proximity search below - hiddenBodies
             // is about to lose the entry, and the victim's own GetTruePosition() is their ghost's
             // live position, not the body's.
-            if (hiddenBodies.TryGetValue(victimId, out var bodyPos)) revealedBodyPositions[victimId] = bodyPos;
+            bool hadPos = hiddenBodies.TryGetValue(victimId, out var bodyPos);
+            if (hadPos) revealedBodyPositions[victimId] = bodyPos;
             hiddenBodies.Remove(victimId);
             revealedBodies[victimId] = Time.time;
             try {
@@ -180,6 +195,12 @@ namespace UnknownsCollection {
                 }
                 hiddenBodyRefs.Remove(victimId);
             } catch { }
+            // The find is already public (the body is now visible/reportable to everyone), so the thud
+            // + dust poof are unconditional for all clients - no additional info-leak vs. the reveal itself.
+            if (hadPos) {
+                UCAssets.PlayShadeRevealAt(bodyPos);
+                CrewFx.SpawnPoof(bodyPos, DustTint);
+            }
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetShade(playerId);
@@ -337,6 +358,62 @@ namespace UnknownsCollection {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Shade] HudUpdate failed: {e}");
                 }
             }
+        }
+
+        // ====================================================================
+        // Self-only tracker: faint pulsing markers over the Shade's own still-hidden bodies.
+        // hiddenBodies is already replicated to every client via the RPC appliers above, but is only
+        // ever rendered here - and only for the Shade - so a missing gate would leak every unfound body
+        // location to anyone. Gated EVERY tick (mirrors PoltergeistFx.TickAura), not just on spawn.
+        // ====================================================================
+        private static void TickBodyMarkers() {
+            try {
+                bool show = IsLocalShade() && MeetingHud.Instance == null && ExileController.Instance == null;
+                if (!show || hiddenBodies.Count == 0) {
+                    if (bodyMarkers.Count > 0) ClearBodyMarkers();
+                    return;
+                }
+
+                // Drop markers for bodies that were revealed/removed since the last tick.
+                List<byte> stale = null;
+                foreach (var id in bodyMarkers.Keys)
+                    if (!hiddenBodies.ContainsKey(id)) (stale ??= new List<byte>()).Add(id);
+                if (stale != null) foreach (var id in stale) RemoveBodyMarker(id);
+
+                float now = Time.time;
+                foreach (var kvp in hiddenBodies) {
+                    if (!bodyMarkers.TryGetValue(kvp.Key, out var go) || go == null) {
+                        go = new GameObject("ShadeBodyMarker") { layer = 11 };
+                        var parts = UCFx.MakeParts(go, 5, i => UCFx.Dot);
+                        bodyMarkers[kvp.Key] = go;
+                        bodyMarkerParts[kvp.Key] = parts;
+                    }
+                    go.transform.position = new Vector3(kvp.Value.x, kvp.Value.y, -1.2f);
+                    var sparts = bodyMarkerParts[kvp.Key];
+                    for (int i = 0; i < sparts.Length; i++) {
+                        float a = now * (0.6f + i * 0.10f) + i * 1.4f;
+                        float r = 0.20f + 0.05f * Mathf.Sin(now * 1.4f + i);
+                        sparts[i].transform.localPosition = new Vector3(Mathf.Cos(a) * r, Mathf.Sin(a) * r * 0.6f + 0.05f, 0f);
+                        sparts[i].transform.localScale = Vector3.one * 0.10f;
+                        float flicker = Mathf.Abs(Mathf.Sin(now * 3f + i * 2f));
+                        sparts[i].color = new Color(Color.r, Color.g, Color.b, 0.14f + 0.08f * flicker); // faint on purpose
+                    }
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Shade] body marker tick failed: {e.Message}");
+            }
+        }
+
+        private static void RemoveBodyMarker(byte id) {
+            if (bodyMarkers.TryGetValue(id, out var go) && go != null) UnityEngine.Object.Destroy(go);
+            bodyMarkers.Remove(id);
+            bodyMarkerParts.Remove(id);
+        }
+
+        private static void ClearBodyMarkers() {
+            foreach (var go in bodyMarkers.Values) if (go != null) UnityEngine.Object.Destroy(go);
+            bodyMarkers.Clear();
+            bodyMarkerParts.Clear();
         }
 
         // ---- Meeting: delete hidden body objects ----

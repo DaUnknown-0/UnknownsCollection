@@ -37,14 +37,20 @@ namespace UnknownsCollection {
             public SpriteRenderer glow;
             public SpriteRenderer[] sparkles;
             public bool customBody; // drawn asset (tint white) vs procedural fallback (tint gold)
+            // Eased toward the per-frame target alpha in Tick() (MoveTowards, ~0.35s) instead of
+            // snapping straight to it - a Collector dying or an Impostor crossing the sense-radius
+            // boundary used to pop instantly between visible/invisible.
+            public float currentAlpha;
         }
 
         private static readonly List<Relic> relics = new();
         private static Sprite crystalSprite;
         private static Sprite dotSprite;
 
-        // Short-lived pickup bursts (gold sparkle explosion where a relic was collected).
-        private sealed class Burst { public GameObject go; public SpriteRenderer[] parts; public float start; public int seed; }
+        // Short-lived sparkle bursts: gold/white explosion where a relic was collected (outward,
+        // "pickup"), or converging inward onto a spot where a task-progress relic just appeared
+        // ("arrival") - same direction-flip trick PoltergeistFx.Animate uses for its door-slam kind==0.
+        private sealed class Burst { public GameObject go; public SpriteRenderer[] parts; public float start; public int seed; public bool inward; }
         private static readonly List<Burst> bursts = new();
 
         public static int RemainingCount => relics.Count;
@@ -168,14 +174,17 @@ namespace UnknownsCollection {
                     float pulse = Collector.ChannelingRelicId == r.id ? 1f + 0.15f * Mathf.Sin(now * 12f) : 1f;
                     r.body.transform.localScale = Vector3.one * pulse;
 
-                    float a = viewerAlpha;
-                    if (a > 0f && viewerAlpha < 0.9f) {
+                    float targetAlpha = viewerAlpha;
+                    if (targetAlpha > 0f && viewerAlpha < 0.9f) {
                         // Impostor sense: fade with distance inside the radius.
                         float dist = PlayerControl.LocalPlayer != null
                             ? Vector2.Distance(PlayerControl.LocalPlayer.GetTruePosition(), r.pos) : float.MaxValue;
                         float radius = Collector.SenseRadius?.getFloat() ?? 5f;
-                        a = dist > radius ? 0f : viewerAlpha * (1f - dist / radius);
+                        targetAlpha = dist > radius ? 0f : viewerAlpha * (1f - dist / radius);
                     }
+                    // Ease toward the target instead of snapping (see Relic.currentAlpha).
+                    r.currentAlpha = Mathf.MoveTowards(r.currentAlpha, targetAlpha, Time.deltaTime / 0.35f);
+                    float a = r.currentAlpha;
 
                     r.body.color = Tint(r.customBody ? Color.white : CrystalGold, a);
                     r.glow.color = Tint(GlowGold, a * (0.28f + 0.12f * Mathf.Sin(now * 3f + r.id)));
@@ -202,10 +211,21 @@ namespace UnknownsCollection {
                         float u = ((b.seed + p * 37) % 100) / 100f;
                         float ang = u * Mathf.PI * 2f;
                         float ease = 1f - (1f - t) * (1f - t);
-                        float rad = 0.1f + ease * (0.6f + 0.5f * u);
-                        sr.transform.localPosition = new Vector3(Mathf.Cos(ang) * rad, Mathf.Sin(ang) * rad + ease * 0.3f, 0f);
+                        float rad, alpha;
+                        if (b.inward) {
+                            // Arrival: sparkles rush IN onto the spot a new relic just appeared at
+                            // (direction-flip of the pickup burst below), flashing brightest mid-flight
+                            // and dissolving once they converge.
+                            rad = Mathf.Lerp(0.7f + 0.5f * u, 0.05f, ease);
+                            alpha = Mathf.Clamp01(1f - Mathf.Abs(t - 0.35f) * 2f);
+                        } else {
+                            rad = 0.1f + ease * (0.6f + 0.5f * u);
+                            alpha = (1f - t) * 0.9f;
+                        }
+                        float drift = b.inward ? (1f - ease) * 0.3f : ease * 0.3f;
+                        sr.transform.localPosition = new Vector3(Mathf.Cos(ang) * rad, Mathf.Sin(ang) * rad + drift, 0f);
                         sr.transform.localScale = Vector3.one * (0.10f + 0.08f * u) * (1f - t * 0.5f);
-                        sr.color = Tint(p % 2 == 0 ? CrystalGold : Color.white, (1f - t) * 0.9f);
+                        sr.color = Tint(p % 2 == 0 ? CrystalGold : Color.white, alpha);
                     }
                 }
             } catch (Exception e) {
@@ -225,14 +245,24 @@ namespace UnknownsCollection {
             return 0f;
         }
 
-        private static void SpawnPickupBurst(Vector2 at) {
+        private static void SpawnPickupBurst(Vector2 at) => SpawnBurst(at, inward: false);
+
+        // Task-progress relics used to appear with zero fanfare - this converging variant reuses the
+        // pickup burst shape but rushes particles INWARD onto the spot the new relic just appeared at
+        // instead of outward from it. Same visibility policy as the pickup burst (everyone nearby, not
+        // viewer-gated) - a deliberate, documented design choice (see CollectorRelics header / SPEC),
+        // not an oversight.
+        public static void SpawnRelicArrival(Vector2 at) => SpawnBurst(at, inward: true);
+
+        private static void SpawnBurst(Vector2 at, bool inward) {
             try {
                 Ensure();
                 var b = new Burst {
-                    go = new GameObject("RelicBurst") { layer = 11 },
+                    go = new GameObject(inward ? "RelicArrival" : "RelicBurst") { layer = 11 },
                     parts = new SpriteRenderer[12],
                     start = Time.time,
-                    seed = (int)(at.x * 13 + at.y * 7)
+                    seed = (int)(at.x * 13 + at.y * 7),
+                    inward = inward
                 };
                 b.go.transform.position = new Vector3(at.x, at.y, -1.2f);
                 for (int i = 0; i < b.parts.Length; i++) {

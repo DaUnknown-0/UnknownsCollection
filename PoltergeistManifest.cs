@@ -15,7 +15,8 @@
  *   - it may use vents (option): a high-priority Vent.CanUse prefix that runs before TOR's own patch;
  *   - it CANNOT kill, report, use consoles or call meetings (all vanilla-gated on being alive);
  *   - a kill attempt on it "succeeds": the manifest POOFS - no body, no death - and the killer's kill
- *     cooldown is refunded per option (no/half/full). The poof tells the killer a Poltergeist exists.
+ *     cooldown is refunded per option (no/half/full). A sharper reveal burst (PoltergeistFx.
+ *     SpawnManifestReveal) + stinger, not the plain timeout poof, tells the killer a Poltergeist exists.
  *
  * The template is the nearest living player, so the Poltergeist can frame someone by venting in their
  * skin. A meeting ends the manifestation instantly and silently.
@@ -120,7 +121,9 @@ namespace UnknownsCollection {
             }
 
             PoltergeistFx.SpawnPoof(ghost.GetTruePosition());
-            UCAssets.PlayManifest();
+            // Distance-gated like the matching end-of-manifest Poof below (design decision) - the poof
+            // right next to it is already positional, so the cue shouldn't be flatly kartenweit either.
+            UCAssets.PlayManifestAt(ghost.GetTruePosition());
 
             // Physicality only on the ghost's own client (movement is client-authoritative there).
             if (Poltergeist.IsLocalPoltergeist()) SetPhysical(true);
@@ -172,10 +175,20 @@ namespace UnknownsCollection {
                     var own = ghost.Data.DefaultOutfit;
                     ghost.setLook(ghost.Data.PlayerName, own.ColorId, own.HatId, own.VisorId, own.SkinId, own.PetId);
                 }
-                // ...and the poof (silent on meeting start - everyone is teleported anyway).
+                // ...and the payoff FX (silent on meeting start - everyone is teleported anyway).
                 if (reason != 2) {
-                    PoltergeistFx.SpawnPoof(ghost.GetTruePosition());
-                    UCAssets.PlayPoof(ghost.GetTruePosition());
+                    Vector2 pos = ghost.GetTruePosition();
+                    if (reason == 1) {
+                        // Killed: the dramatic "surprise, that was a ghost!" moment gets a sharper,
+                        // more overt reveal instead of the same soft poof a boring timeout gets -
+                        // public and distance-gated, same as the ordinary poof (the kill animation
+                        // that triggered this was already visible to everyone nearby anyway).
+                        PoltergeistFx.SpawnManifestReveal(pos);
+                        UCAssets.PlayPoltergeistRevealAt(pos);
+                    } else {
+                        PoltergeistFx.SpawnPoof(pos);
+                        UCAssets.PlayPoof(pos);
+                    }
                 }
             }
 
@@ -246,6 +259,7 @@ namespace UnknownsCollection {
                 TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
                 hud, KeyCode.T, false, "MANIFEST");
             manifestButton.MaxTimer = 1f; manifestButton.Timer = 0f;
+            PoltergeistFx.RegisterDeniedFlash(manifestButton);
         }
 
         private static bool IsValidTemplate(PlayerControl p) =>

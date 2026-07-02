@@ -68,6 +68,9 @@ namespace UnknownsCollection {
         private static float channelStart;
         private static int channelRelicId = -1;
         private static Vector2 channelStartPos;
+        // Fires the "goal reached" cue exactly once per game, the frame HasAllRelics() first becomes
+        // true for the local Collector (both win modes - see HudUpdatePatch).
+        private static bool announcedReady;
         // Relic currently being channeled (or -1) - CollectorRelics pulses that crystal as feedback.
         public static int ChannelingRelicId => channeling ? channelRelicId : -1;
 
@@ -116,6 +119,7 @@ namespace UnknownsCollection {
                     0f, 0f, 15f, 1f, SpawnRate);
                 ExtraRaisesGoal = CustomOption.Create(1597, Types.Neutral, "Extra Relics Raise The Needed Count",
                     true, SpawnRate);
+                CollectorFx.Init(); // force its static ctor early - see CollectorFx.Init() comment
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Collector] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Collector] CreateOptions failed: {e}");
@@ -185,6 +189,11 @@ namespace UnknownsCollection {
         // Runs on every client (sender + RPC receivers) so the raised goal stays in sync.
         private static void ApplySpawnExtra(int relicId, Vector2 p) {
             CollectorRelics.SpawnOne(relicId, p);
+            // Task-progress relics otherwise just pop into existence for anyone already looking at
+            // that spot - a small converging sparkle burst announces the arrival. Visible to the same
+            // audience as the collect-time pickup burst (everyone nearby - a deliberate, documented
+            // design choice, not an oversight; see CollectorRelics.SpawnPickupBurst).
+            CollectorRelics.SpawnRelicArrival(p);
             extraSpawnedTotal++;
         }
 
@@ -282,6 +291,7 @@ namespace UnknownsCollection {
                 nextWinTry = 0f;
                 channeling = false;
                 channelRelicId = -1;
+                announcedReady = false;
                 // collectButton is deliberately NOT nulled: TOR runs resetVariables at ROUND START,
                 // AFTER HudManager.Start created the button. Nulling the static reference here left
                 // the live button working (OnClick lambdas use the statics directly) but killed all
@@ -458,6 +468,10 @@ namespace UnknownsCollection {
                             channelStart = Time.time;
                             channelRelicId = relic.id;
                             channelStartPos = PlayerControl.LocalPlayer.GetTruePosition();
+                            // Local-only "engage" chime - Play(), NOT PlayAt(): a world-anchored version
+                            // would let nearby players hear the channel START, handing them an earlier,
+                            // cheaper tell than the deliberate PlayRelicPickup completion cue.
+                            UCAssets.PlayCollectorChannel();
                         },
                         () => IsLocalCollector()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
@@ -490,6 +504,14 @@ namespace UnknownsCollection {
                     // NOTE: the channel logic must not be gated on collectButton - the button label
                     // is cosmetic, the progress/abort handling is not.
                     if (IsLocalCollector()) {
+                        // "Goal reached" cue - fires exactly once, in EITHER win mode (Instant mode
+                        // still has up to ~2s before TryInstantWin's retry actually ends the game, and
+                        // Survive mode can run for minutes - both benefit from an immediate ping the
+                        // instant the last relic lands, on top of CollectorFx's persistent aura).
+                        if (!announcedReady && HasAllRelics()) {
+                            announcedReady = true;
+                            UCAssets.PlayCollectorReady();
+                        }
                         if (channeling) {
                             float dur = ChannelDuration?.getFloat() ?? 3f;
                             float progress = (Time.time - channelStart) / dur;
@@ -502,7 +524,12 @@ namespace UnknownsCollection {
                                 UnknownsCollectionPlugin.Logger?.LogInfo(
                                     $"[Collector] channel aborted (moved={moved}, relicGone={relicGone}, blocked={blocked}).");
                                 // Make the silent abort visible - "the click did nothing" feedback.
+                                // moved: warm orange (you broke it by walking away); relicGone: cool blue
+                                // (it wasn't you - the relic itself vanished mid-channel). blocked
+                                // (meeting/exile/death) stays silent - that transition already gives its
+                                // own strong feedback.
                                 if (moved) Helpers.showFlash(new Color(1f, 0.75f, 0.2f, 0.3f), 0.2f);
+                                else if (relicGone) Helpers.showFlash(new Color(0.35f, 0.55f, 1f, 0.3f), 0.2f);
                             } else if (progress >= 1f) {
                                 channeling = false;
                                 SendCollect(channelRelicId);
@@ -515,6 +542,17 @@ namespace UnknownsCollection {
                                 }
                             } else if (collectButton != null) {
                                 collectButton.buttonText = $"COLLECT {(int)(progress * 100)}%";
+                                // Peripheral-vision feedback: tint the icon toward relic-gold as
+                                // progress climbs, so the Collector doesn't have to read the percentage
+                                // text to gauge how close a channel is. TOR's own CustomButton.Update()
+                                // (invoked from TOR's own HudManager.Update postfix - TOR's plugin
+                                // loads first, so its same-priority postfix runs, and is therefore
+                                // applied, before ours) resets the icon color to Palette.EnabledColor
+                                // every frame while CouldUse() is true; setting it again here, after
+                                // that, is what actually reaches the screen.
+                                if (collectButton.actionButtonRenderer != null)
+                                    collectButton.actionButtonRenderer.color = UnityEngine.Color.Lerp(
+                                        Palette.EnabledColor, Color, Mathf.Clamp01(progress));
                             }
                         } else if (collectButton != null) {
                             collectButton.buttonText = $"RELICS {collected}/{NeededCount()}";

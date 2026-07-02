@@ -90,6 +90,16 @@ namespace UnknownsCollection {
         // Unchecked murder RPC byte (from TOR's enum)
         internal static byte uncheckedMurderRpc = 108;
 
+        // Fuse loop escalation: the AudioSource returned by UCAssets.PlayFuseLoop() ramps volume/pitch
+        // upward as the pass window runs out, for the local carrier's ears only (mirrors the existing
+        // PlayerId-gated privacy of the fuse loop itself). Reset to null on every stop/(re)start - a new
+        // PlayFuseLoop() call always hands back a brand-new AudioSource with default pitch/volume, so
+        // nothing needs to be manually rewound on the source itself; the null-out just prevents a stale
+        // reference from a previous bomb from being ramped after that bomb is gone.
+        private static AudioSource fuseSource;
+        private static void StartFuse() { fuseSource = UCAssets.PlayFuseLoop(); }
+        private static void StopFuse() { UCAssets.StopFuseLoop(); fuseSource = null; }
+
         private static float BombUnawareDelay() => UnawareDelay != null ? UnawareDelay.getFloat() : 8f;
         private static float BombPassWindow() => PassWindow != null ? PassWindow.getFloat() : 10f;
         private static float BombRange() => ExplosionRange != null ? ExplosionRange.getFloat() : 1.5f;
@@ -217,6 +227,9 @@ namespace UnknownsCollection {
             bombDetected = false;
             bombPlacedAt = Time.time;
             bombKillUsed = false;
+            // Quiet, private confirmation click for the Maniac only - the plant otherwise had no
+            // feedback besides the button's own cooldown reset.
+            if (IsLocalManiac()) UCAssets.PlayManiacPlant();
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb planted on {bombCarrier?.Data?.PlayerName}.");
         }
 
@@ -227,15 +240,17 @@ namespace UnknownsCollection {
                 // Play the burning-fuse loop for the carrier (own seamless clip, see UCAssets)
                 if (PlayerControl.LocalPlayer != null
                     && PlayerControl.LocalPlayer.PlayerId == carrierId)
-                    UCAssets.PlayFuseLoop();
+                    StartFuse();
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb detected by carrier {bombCarrier.Data?.PlayerName}.");
             }
         }
 
         private static void ApplyPassBomb(byte oldCarrierId, byte newCarrierId) {
             if (bombCarrier != null && bombCarrier.PlayerId == oldCarrierId) {
+                // Hand-off position, captured BEFORE bombCarrier is reassigned to the new carrier below.
+                Vector2 handoffPos = bombCarrier.GetTruePosition();
                 // Stop the fuse sound for the old carrier
-                UCAssets.StopFuseLoop();
+                StopFuse();
                 bombCarrier = Helpers.playerById(newCarrierId);
                 // Hot-potato: the pass does NOT reset the fuse. bombDetected + bombDetectedAt are kept, so
                 // the pass window keeps counting down from the original detection and the bomb explodes at
@@ -244,22 +259,35 @@ namespace UnknownsCollection {
                 // Keep the burning fuse audible for whoever now holds the bomb.
                 if (bombDetected && PlayerControl.LocalPlayer != null
                     && PlayerControl.LocalPlayer.PlayerId == newCarrierId)
-                    UCAssets.PlayFuseLoop();
+                    StartFuse();
+
+                // Hand-off cue: gated strictly to the two involved players, never to "the Maniac" or
+                // anyone else - who is currently carrying the bomb is a secret, and PlayAt's distance
+                // falloff alone would still leak "something happened here" to any bystander nearby.
+                var me = PlayerControl.LocalPlayer;
+                if (me != null && (me.PlayerId == oldCarrierId || me.PlayerId == newCarrierId)) {
+                    UCAssets.PlayManiacPassAt(handoffPos);
+                    ManiacFx.SpawnHandoffWisp(handoffPos);
+                }
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb passed to {bombCarrier?.Data?.PlayerName}.");
             }
         }
 
         private static void ApplyExplode(byte victimId) {
             if (bombCarrier != null && bombCarrier.PlayerId == victimId) {
-                UCAssets.StopFuseLoop();
-                // Red explosion flash for everyone nearby + a distance-attenuated boom.
+                StopFuse();
+                // Red explosion flash for everyone nearby + a distance-attenuated boom + a public
+                // particle burst at the detonation point (this is already a public kill-event - the
+                // flash/sound already announce it, the burst just gives it real visual weight).
                 var victim = Helpers.playerById(victimId);
                 if (victim != null) {
                     float range = BombRange();
                     var me = PlayerControl.LocalPlayer;
-                    if (me != null && Vector2.Distance(me.GetTruePosition(), victim.GetTruePosition()) <= range)
+                    Vector2 pos = victim.GetTruePosition();
+                    if (me != null && Vector2.Distance(me.GetTruePosition(), pos) <= range)
                         Helpers.showFlash(new Color(1f, 0.3f, 0f, 0.6f), 0.4f);
-                    UCAssets.PlayExplosion(victim.GetTruePosition());
+                    UCAssets.PlayExplosion(pos);
+                    ManiacFx.SpawnExplosion(pos);
                 }
                 ClearBomb();
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] Bomb exploded on player {victimId}.");
@@ -269,7 +297,7 @@ namespace UnknownsCollection {
         private static void ApplyClear() => ClearBomb();
 
         private static void ClearBomb() {
-            UCAssets.StopFuseLoop(); // a cleared bomb (e.g. meeting) must never leave the fuse burning
+            StopFuse(); // a cleared bomb (e.g. meeting) must never leave the fuse burning
             RemoveBombTag(bombCarrier);
             bombCarrier = null;
             bombDetected = false;
@@ -433,6 +461,7 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     UpdateTargeting();
+                    UpdateFuseEscalation();
 
                     // Bomb carrier warning text (local)
                     if (LocalHasBomb() && !InMeeting()) {
@@ -471,6 +500,25 @@ namespace UnknownsCollection {
             }
             currentTarget = PlayerControlFixedUpdatePatch.setTarget(true);
             if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, Color);
+        }
+
+        // Ramps the fuse loop's volume/pitch upward as the pass window runs out, for the local
+        // carrier's ears only - a "tick faster toward the boom" feel that a flat-volume loop lacked.
+        // Escalates only across the final 30% of the pass window: volume 0.7 -> 1.0, pitch 1.0 -> 1.4.
+        private static void UpdateFuseEscalation() {
+            try {
+                if (fuseSource == null || !bombDetected || bombCarrier == null) return;
+                var me = PlayerControl.LocalPlayer;
+                if (me == null || me.PlayerId != bombCarrier.PlayerId) return;
+                float passWindow = BombPassWindow();
+                if (passWindow <= 0f) return;
+                float progress = Mathf.Clamp01((Time.time - bombDetectedAt) / passWindow);
+                float rampT = Mathf.Clamp01((progress - 0.7f) / 0.3f);
+                fuseSource.volume = Mathf.Lerp(0.7f, 1.0f, rampT);
+                fuseSource.pitch = Mathf.Lerp(1.0f, 1.4f, rampT);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Maniac] fuse escalation failed: {e.Message}");
+            }
         }
 
         // ---- Buttons ----

@@ -32,8 +32,6 @@ namespace UnknownsCollection {
         private const byte RpcId = 198;
         private const byte SubSetBug = 0;
 
-        private static AudioClip glitchClip;
-
         private static RoleInfo bugInfo;
         public static RoleInfo BugInfo() => bugInfo ??= new RoleInfo(
             "Bug", Color, "Survive until the end to win alone",
@@ -121,13 +119,6 @@ namespace UnknownsCollection {
         public static bool IsLocalBug() =>
             bug != null && PlayerControl.LocalPlayer != null && bug.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
-        // ---- Glitch sound (embedded raw PCM, like TeslaSound) ----
-        private static AudioClip GetGlitchClip() {
-            if (glitchClip != null) return glitchClip;
-            glitchClip = BugSound.LoadClip();
-            return glitchClip;
-        }
-
         private static MessageWriter BeginRpc(byte subtype) {
             MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
                 PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
@@ -207,10 +198,9 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (!active || bug == null || !IsAlive(bug)) return;
-                    var clip = GetGlitchClip();
-                    if (clip != null) {
-                        SoundManager.Instance.PlaySound(clip, false, 0.6f);
-                    }
+                    // Deliberately NOT gated on IsLocalBug(): this is a bewusster Meta-Tell that a third
+                    // party exists and is still alive, audible to everyone (see SPEC.md decision 2).
+                    UCAssets.PlayBugGlitch();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] meeting sound failed: {e}");
                 }
@@ -261,10 +251,14 @@ namespace UnknownsCollection {
                         bonus.transform.position = new Vector3(__instance.WinText.transform.position.x,
                             __instance.WinText.transform.position.y - 0.5f,
                             __instance.WinText.transform.position.z);
-                        bonus.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
                         bonusText = bonus.GetComponent<TMP_Text>();
                         bonusText.text = "Bug Wins";
-                        bonusText.color = Color;
+                        bool glitchOn = UnknownsCollectionPlugin.BugGlitchEnabled.Value;
+                        // With the glitch effect running, start tiny/invisible so BugGlitchEffect.Update()
+                        // can ease it in ("materializing out of the noise"); without it (accessibility
+                        // toggle off), keep the previous instant full-size behaviour unchanged.
+                        bonus.transform.localScale = glitchOn ? new Vector3(0.05f, 0.05f, 1f) : new Vector3(0.7f, 0.7f, 1f);
+                        bonusText.color = glitchOn ? new Color(Color.r, Color.g, Color.b, 0f) : Color;
                         baseBonusPos = bonus.transform.localPosition;
                     }
 
@@ -288,18 +282,23 @@ namespace UnknownsCollection {
             private float nextPulse;
             private string baseWinStr;
             private Vector3 baseWinPos;
+            private float startTime;
 
             private RawImage glitchOverlay;
             private Texture2D glitchTex;
             private float glitchEndTime;
 
             private void Start() {
+                startTime = Time.time;
                 nextPulse = Time.time + UnityEngine.Random.Range(0.1f, 0.5f);
                 if (mgr != null && mgr.WinText != null) {
                     baseWinStr = mgr.WinText.text;
                     baseWinPos = mgr.WinText.transform.localPosition;
                 }
                 CreateGlitchOverlay();
+                // "Power-on" stinger for the corrupted-system moment - the same clip that also plays
+                // (quieter) on every subsequent block-glitch pulse, see TriggerBlockGlitch().
+                UCAssets.PlayBugGlitch(UCAssets.VolStd);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] BugGlitchEffect started!");
             }
 
@@ -362,14 +361,34 @@ namespace UnknownsCollection {
                 byte gray = (byte)UnityEngine.Random.Range(20, 60);
                 for (int r = blockY; r < blockY + blockH && r < rows; r++) {
                     for (int c = 0; c < cols; c++) {
-                        int src = r * cols + c;
                         int dst = r * cols + ((c + offset + cols) % cols);
                         pixels[dst] = new Color32(gray, gray, gray, 180);
                     }
                 }
 
+                // Classic chroma-glitch fringe: faint red/cyan copies of the same band, offset a couple
+                // pixels either side. Only painted into still-empty pixels so the fringe reads as a
+                // colour split around the grey band instead of a flat tri-colour stripe.
+                const int split = 2;
+                const byte fringeAlpha = 110;
+                for (int r = blockY; r < blockY + blockH && r < rows; r++) {
+                    for (int c = 0; c < cols; c++) {
+                        int baseCol = (c + offset + cols) % cols;
+
+                        int redIdx = r * cols + ((baseCol - split + cols) % cols);
+                        if (pixels[redIdx].a == 0) pixels[redIdx] = new Color32(220, 40, 40, fringeAlpha);
+
+                        int cyanIdx = r * cols + ((baseCol + split) % cols);
+                        if (pixels[cyanIdx].a == 0) pixels[cyanIdx] = new Color32(40, 220, 220, fringeAlpha);
+                    }
+                }
+
                 glitchTex.SetPixels32(pixels);
                 glitchTex.Apply();
+
+                // Quiet layer of the same clip synced to the visual block-glitch pulse, so the "system
+                // fault" moment reads in both image and sound.
+                UCAssets.PlayBugGlitch(0.18f);
             }
 
             private static string ColorToHex(Color c) =>
@@ -380,6 +399,13 @@ namespace UnknownsCollection {
                     if (mgr == null) return;
                     float t = Time.time;
 
+                    // After ~3-5s let the glitch settle into a calmer "system stabilizing" state:
+                    // pulses space out and the scramble bins below shift toward the readable/tinted-only
+                    // end, without ever fully switching the glitch off (keeps the identity, but lets
+                    // players actually read/screenshot the win text).
+                    float elapsed = t - startTime;
+                    float decay = elapsed < 3f ? 1f : Mathf.Lerp(1f, 0.22f, Mathf.Clamp01((elapsed - 3f) / 2f));
+
                     if (mgr.BackgroundBar != null) {
                         float hue = Mathf.PingPong(t * 0.4f, 1f);
                         mgr.BackgroundBar.material.SetColor("_Color",
@@ -387,8 +413,9 @@ namespace UnknownsCollection {
                     }
 
                     if (t > nextPulse) {
-                        nextPulse = t + UnityEngine.Random.Range(0.2f, 0.5f);
+                        nextPulse = t + UnityEngine.Random.Range(0.2f, 0.5f) / decay;
                         int r = UnityEngine.Random.Range(0, 6);
+                        if (UnityEngine.Random.value > decay) r = Mathf.Max(r, 4); // calm phase: bias toward the tinted-only bin
                         if (r < 2) TriggerBlockGlitch();
 
                         if (mgr.WinText != null) {
@@ -439,7 +466,7 @@ namespace UnknownsCollection {
                     }
 
                     if (mgr.WinText != null) {
-                        if (UnityEngine.Random.value < 0.015f)
+                        if (UnityEngine.Random.value < 0.015f * decay)
                             mgr.WinText.color = new Color(
                                 UnityEngine.Random.value, UnityEngine.Random.value,
                                 UnityEngine.Random.value, 1f);
@@ -448,14 +475,19 @@ namespace UnknownsCollection {
                     }
 
                     if (bonusText != null) {
-                        if (UnityEngine.Random.value < 0.02f) {
-                            bonusText.color = new Color(
+                        // Entry "materialize": ease scale + alpha in over ~0.35s from Start() - a no-op
+                        // once entryEase reaches 1, so this only matters for the opening moment.
+                        float entryT = Mathf.Clamp01((t - startTime) / 0.35f);
+                        float entryEase = 1f - (1f - entryT) * (1f - entryT);
+
+                        Color target = (UnityEngine.Random.value < 0.02f * decay)
+                            ? new Color(
                                 Mathf.Clamp01(Color.r + UnityEngine.Random.Range(-0.3f, 0.3f)),
                                 Mathf.Clamp01(Color.g + UnityEngine.Random.Range(-0.3f, 0.3f)),
-                                Mathf.Clamp01(Color.b + UnityEngine.Random.Range(-0.3f, 0.3f)));
-                        } else {
-                            bonusText.color = Color;
-                        }
+                                Mathf.Clamp01(Color.b + UnityEngine.Random.Range(-0.3f, 0.3f)))
+                            : Color;
+                        bonusText.color = new Color(target.r, target.g, target.b, entryEase);
+                        bonusText.transform.localScale = new Vector3(Mathf.Lerp(0.05f, 0.7f, entryEase), Mathf.Lerp(0.05f, 0.7f, entryEase), 1f);
                         bonusText.transform.localPosition = baseBonusPos;
                     }
                 } catch { }

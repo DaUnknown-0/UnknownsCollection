@@ -236,7 +236,7 @@ namespace UnknownsCollection {
             poltergeist = Helpers.playerById(id);
             active = poltergeist != null;
             if (!active) return;
-            UCPromotion.Claim(id);
+            UCPromotion.Claim(id, suppressFx: true); // bespoke rise flash+sound below
             energy = (EnergyMax?.getFloat() ?? 100f) * (EnergyStartPercent?.getFloat() ?? 50f) / 100f;
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Poltergeist] {poltergeist.Data?.PlayerName} rose as the Poltergeist " +
@@ -281,7 +281,9 @@ namespace UnknownsCollection {
             if (target == null) return;
             hexes[targetId] = (mode, Time.time + duration);
             PoltergeistFx.SpawnHexBurst(target);
-            UCAssets.PlayHex();
+            // Distance-gated like Door Slam/Poof (design decision): the cast cue is audible around the
+            // TARGET's position, not flatly kartenweit - see UCAssets.PlayHexAt.
+            UCAssets.PlayHexAt(target.GetTruePosition());
 
             // Speed is client-authoritative: only the hexed player's own client changes its physics.
             if (PlayerControl.LocalPlayer != null && PlayerControl.LocalPlayer.PlayerId == targetId
@@ -294,11 +296,16 @@ namespace UnknownsCollection {
 
         private static void ApplyHandStart() {
             handChanneling = true;
-            UCAssets.PlayGhostHand();
+            // Anchored on the ghost's own position (same anchor the channel-ring FX uses, see the
+            // handChanneling tick below) rather than the console - distance-gated like Door Slam/Poof.
+            if (poltergeist != null) UCAssets.PlayGhostHandAt(poltergeist.GetTruePosition());
         }
 
         private static void ApplyHandStop() {
             handChanneling = false;
+            // Release cue at the ghost's last known position, then let the channel-ring FADE instead of
+            // cutting it instantly (PoltergeistFx.SetChannel now starts a short fade-out internally).
+            if (poltergeist != null) UCAssets.PlayPoltergeistHandStopAt(poltergeist.GetTruePosition());
             PoltergeistFx.SetChannel(Vector2.zero, false);
         }
 
@@ -529,6 +536,7 @@ namespace UnknownsCollection {
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft,
                         __instance, KeyCode.F, false, "DOOR");
                     doorButton.MaxTimer = 1f; doorButton.Timer = 0f;
+                    PoltergeistFx.RegisterDeniedFlash(doorButton);
 
                     hexButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
@@ -549,6 +557,7 @@ namespace UnknownsCollection {
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
                         __instance, KeyCode.G, false, "HEX");
                     hexButton.MaxTimer = 1f; hexButton.Timer = 0f;
+                    PoltergeistFx.RegisterDeniedFlash(hexButton);
 
                     handButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
@@ -565,6 +574,7 @@ namespace UnknownsCollection {
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
                         __instance, KeyCode.H, false, "HAND");
                     handButton.MaxTimer = 1f; handButton.Timer = 0f;
+                    PoltergeistFx.RegisterDeniedFlash(handButton);
 
                     PoltergeistManifest.CreateButton(__instance);
                 } catch (Exception e) {
@@ -591,10 +601,20 @@ namespace UnknownsCollection {
                         energy = Mathf.Min(max, energy + (EnergyRegen?.getFloat() ?? 3f) * Time.deltaTime);
                     }
 
-                    // Hex expiry + local speed restore.
+                    // Hex expiry + local speed restore. A regular (non-meeting) expiry gets a small
+                    // dissolve burst + chime at the target's position - the cast burst is public, so
+                    // bookending it the same way (public, distance-gated) leaks nothing new.
                     if (hexes.Count > 0) {
-                        var expired = hexes.Where(kv => now >= kv.Value.end).Select(kv => kv.Key).ToList();
-                        foreach (var id in expired) hexes.Remove(id);
+                        var expired = hexes.Where(kv => now >= kv.Value.end).ToList();
+                        foreach (var kv in expired) {
+                            hexes.Remove(kv.Key);
+                            var target = Helpers.playerById(kv.Key);
+                            if (target != null) {
+                                Vector2 pos = target.GetTruePosition();
+                                PoltergeistFx.SpawnHexEndBurst(pos, kv.Value.mode);
+                                UCAssets.PlayPoltergeistHexEndAt(pos);
+                            }
+                        }
                     }
                     if (speedHexApplied) {
                         bool stillHexed = PlayerControl.LocalPlayer != null

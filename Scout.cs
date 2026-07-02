@@ -53,6 +53,10 @@ namespace UnknownsCollection {
 
         // Synced transparency alpha from RPC (for non-Scout clients)
         private static float syncedScoutAlpha = 1f;
+        // Observer-side smoothing: every OTHER client lerps its own local view of the Scout's alpha
+        // toward syncedScoutAlpha instead of snapping straight to it (see HudUpdatePatch below) - the
+        // Scout's own client already had this smoothing via currentAlpha, observers didn't.
+        private static float observedAlpha = 1f;
 
         // ---- Custom RPC (203) subtypes ----
         private const byte RpcId = 203;
@@ -151,6 +155,7 @@ namespace UnknownsCollection {
             abilityActive = false;
             abilityEndTime = 0;
             currentAlpha = 1f;
+            observedAlpha = 1f;
             wasAbilityActive = false;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Scout] The Scout is {scout.Data?.PlayerName}.");
         }
@@ -159,7 +164,12 @@ namespace UnknownsCollection {
             abilityActive = true;
             float dur = Duration != null ? Duration.getFloat() : 10f;
             abilityEndTime = Time.time + dur;
-            if (scout != null) UCAssets.PlayScoutWhoosh(scout.GetTruePosition());
+            if (scout != null) {
+                UCAssets.PlayScoutWhoosh(scout.GetTruePosition());
+                // Public just like the transparency itself - every client applies this the same way, so
+                // spawn locally here rather than adding a new RPC.
+                CrewFx.SpawnPoof(scout.GetTruePosition(), Color);
+            }
             if (IsLocalScout()) {
                 originalSpeed = PlayerControl.LocalPlayer.MyPhysics.Speed;
                 float mult = SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.5f;
@@ -174,7 +184,10 @@ namespace UnknownsCollection {
         private static void ApplyDeactivate() {
             abilityActive = false;
             abilityEndTime = 0;
-            if (scout != null) UCAssets.PlayScoutWhoosh(scout.GetTruePosition(), 0.4f);
+            if (scout != null) {
+                UCAssets.PlayScoutWhoosh(scout.GetTruePosition(), 0.4f);
+                CrewFx.SpawnPoof(scout.GetTruePosition(), Color);
+            }
             if (IsLocalScout() && originalSpeed > 0) {
                 PlayerControl.LocalPlayer.MyPhysics.Speed = originalSpeed;
             }
@@ -189,10 +202,9 @@ namespace UnknownsCollection {
         }
 
         private static void ApplyTransparency(float alpha) {
+            // Only sets the TARGET now - observers lerp their own local view toward it every frame in
+            // HudUpdatePatch below instead of snapping straight to it (that used to be a hard pop-in/out).
             syncedScoutAlpha = alpha;
-            if (!IsLocalScout() && scout != null) {
-                SetPlayerAlpha(scout, alpha);
-            }
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetScout(playerId);
@@ -225,6 +237,7 @@ namespace UnknownsCollection {
                 abilityActive = false;
                 abilityEndTime = 0;
                 currentAlpha = 1f;
+                observedAlpha = 1f;
                 wasAbilityActive = false;
                 originalSpeed = 0;
                 // scoutButton deliberately kept (resetVariables runs after HudManager.Start).
@@ -330,9 +343,11 @@ namespace UnknownsCollection {
                         float targetAlpha = abilityActive ? GetTransparency() : 1f;
                         currentAlpha = Mathf.Lerp(currentAlpha, targetAlpha, Time.deltaTime * 8f);
                         SetPlayerAlpha(PlayerControl.LocalPlayer, currentAlpha);
-                    } else if (syncedScoutAlpha < 1f) {
-                        // Apply synced transparency from RPC to Scout's visuals
-                        SetPlayerAlpha(scout, syncedScoutAlpha);
+                    } else {
+                        // Observer view: lerp toward the synced target alpha instead of snapping to it,
+                        // mirroring the Scout's own currentAlpha smoothing above (same lerp rate).
+                        observedAlpha = Mathf.Lerp(observedAlpha, syncedScoutAlpha, Time.deltaTime * 8f);
+                        SetPlayerAlpha(scout, observedAlpha);
                     }
 
                     // Button timer management

@@ -483,10 +483,19 @@ namespace UnknownsCollection {
             sabotagedX = x;
             sabotagedY = y;
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] console sabotaged at ({x:F2}, {y:F2}).");
+            // Local-only confirmation for the Saboteur who just spent a token marking it: a short blip
+            // plus a continuous pulsing marker anchored at the console. This applier runs on EVERY client
+            // (RPC broadcast), so the gate below is what keeps it exclusive to the Saboteur - SaboteurKillFx
+            // .TickMarker also re-checks IsLocalSaboteur() every frame on top of this one-shot gate.
+            if (IsLocalSaboteur()) {
+                UCAssets.PlaySaboteurMark();
+                SaboteurKillFx.SetMarker(new Vector2(x, y), true);
+            }
         }
 
         private static void ApplyClearSabotage() {
             sabotagedActive = false;
+            SaboteurKillFx.SetMarker(Vector2.zero, false);
         }
 
         private static void ApplyKillFx(byte victimId) {
@@ -844,9 +853,35 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class SabotageHudUpdatePatch {
             public static void Postfix() {
-                try { VictimPoll(); KillPenaltyHold(); SaboteurTrap.Update(); SaboteurScanUI.Update(); PlaceSearchButton(); Diag(); }
+                try {
+                    VictimPoll(); KillPenaltyHold(); SaboteurTrap.Update(); SaboteurScanUI.Update();
+                    PlaceSearchButton(); UpdateSelfLimpIndicator(); Diag();
+                }
                 catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] HUD poll failed: {e}"); }
             }
+        }
+
+        // ---- self-limp button: small overlay ring showing the current on/off toggle state ----
+        // An overlay (rather than tinting actionButtonRenderer directly) avoids fighting CustomButton's
+        // own per-frame color/desaturation logic (CouldUse()-driven) - see the low-priority audit item.
+        private static SpriteRenderer selfLimpIndicator;
+
+        private static void UpdateSelfLimpIndicator() {
+            if (selfLimpButton == null || selfLimpButton.actionButtonGameObject == null) return;
+            if (selfLimpIndicator == null) {
+                var go = new GameObject("SelfLimpIndicator") { layer = selfLimpButton.actionButtonGameObject.layer };
+                go.transform.SetParent(selfLimpButton.actionButtonGameObject.transform, false);
+                go.transform.localPosition = new Vector3(0.55f, 0.55f, -0.1f);
+                go.transform.localScale = Vector3.one * 0.35f;
+                selfLimpIndicator = go.AddComponent<SpriteRenderer>();
+                selfLimpIndicator.sprite = UCFx.Ring;
+            }
+            bool visible = selfLimpButton.actionButtonGameObject.activeSelf;
+            selfLimpIndicator.enabled = visible;
+            if (!visible) return;
+            selfLimpIndicator.color = SaboteurTrap.SelfLimping
+                ? new Color(1f, 0.35f, 0.95f, 0.95f)  // active: bright violet-pink ring
+                : new Color(1f, 1f, 1f, 0.18f);        // inactive: faint outline only
         }
 
         // Keep the crew SEARCH button from sitting on top of another role's ability button: each frame

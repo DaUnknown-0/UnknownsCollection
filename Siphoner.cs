@@ -105,6 +105,10 @@ namespace UnknownsCollection {
                     10f, 3f, 30f, 1f, SpawnRate);
                 DrainCooldown = CustomOption.Create(1469, Types.Crewmate, "Siphoner Drain Cooldown",
                     20f, 5f, 60f, 2.5f, SpawnRate);
+                // Force SiphonerFx's static constructor (Tick/Reset registration) to run now, at plugin
+                // bootstrap on every client - the range-ring has no one-shot Spawn call of its own to
+                // lazily trigger it later, unlike FollowerFx/CrewFx.
+                SiphonerFx.Init();
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Siphoner] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] CreateOptions failed: {e}");
@@ -123,6 +127,10 @@ namespace UnknownsCollection {
             PlayerControl.AllPlayerControls.ToArray().Count(p => p != null && p.Data != null && !p.Data.Disconnected);
         public static bool IsLocalSiphoner() =>
             siphoner != null && PlayerControl.LocalPlayer != null && siphoner.PlayerId == PlayerControl.LocalPlayer.PlayerId;
+
+        // Exposed for SiphonerFx's range-ring (self-only visual, gated on IsLocalSiphoner() there too).
+        public static bool DrainActive => drainActive;
+        public static float CurrentDrainRange() => Range();
 
         private static float Range() => DrainRange != null ? DrainRange.getFloat() : 2f;
         private static float Penalty() => PenaltyPerTick != null ? PenaltyPerTick.getFloat() : 3f;
@@ -193,8 +201,12 @@ namespace UnknownsCollection {
         private static void ApplyToggleDrain(bool on) {
             drainActive = on;
             if (!on) lastDrainTime = 0f;
-            // Suction cue only for the Siphoner itself - audible for others it would leak its position.
-            if (on && IsLocalSiphoner()) UCAssets.PlaySiphonerDrain();
+            // Suction start/stop cues only for the Siphoner itself - audible for others it would leak
+            // its position (and, for the stop cue, that the effect just ended).
+            if (IsLocalSiphoner()) {
+                if (on) UCAssets.PlaySiphonerDrain();
+                else UCAssets.PlaySiphonerStop();
+            }
         }
 
         // ---- Appliers (run on every client) ----

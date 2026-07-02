@@ -46,6 +46,7 @@ namespace UnknownsCollection {
         private static float resultTimer;
         private static bool shownSabotaged;
         private static float armedAt;         // input dead-time after opening (see StartScan)
+        private static float openedAt;        // pop-in animation start (see Open()/Update())
 
         // Wire state
         private const int WireCount = 4;
@@ -78,6 +79,8 @@ namespace UnknownsCollection {
                 Ensure();
                 if (root == null) return;
                 root.SetActive(true);
+                openedAt = Time.time;
+                root.transform.localScale = Vector3.one * 0.85f; // pop-in eased up to 1.0 in Update()
                 StartScan();
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] scan Open failed: {e}");
@@ -130,6 +133,15 @@ namespace UnknownsCollection {
                 // click that would open the real task is swallowed in UseButtonDoClickPatch (below) while
                 // this minigame is open, which keeps the button visible and static.
 
+                // Pop-in: ease the panel from 0.85 up to its full 1.0 scale over the first ~0.15s after
+                // Open(). Clamped/eased so it settles exactly at 1.0 and stays there for the rest of the
+                // session (cheap enough to just keep re-applying every frame).
+                if (root != null) {
+                    float pop = Mathf.Clamp01((Time.time - openedAt) / 0.15f);
+                    pop = pop * pop * (3f - 2f * pop); // smoothstep
+                    root.transform.localScale = Vector3.one * Mathf.Lerp(0.85f, 1f, pop);
+                }
+
                 switch (phase) {
                     case Phase.Scan: UpdateScan(); break;
                     case Phase.Result: UpdateResult(); break;
@@ -176,12 +188,14 @@ namespace UnknownsCollection {
             if (Time.time >= armedAt && ActionDown()) {
                 bool hitWindow = Mathf.Abs(shown - windowCenter) <= windowHalf;
                 if (hitWindow) {
+                    UCAssets.PlaySaboteurScanHit();
                     // Reveal. Drunk result may lie.
                     shownSabotaged = sabotaged;
                     if (drunk && UnityEngine.Random.value < 0.5f) shownSabotaged = !sabotaged;
                     StartResult();
-                } else if (hint != null) {
-                    hint.text = "Daneben - weiter scannen";
+                } else {
+                    UCAssets.PlaySaboteurScanMiss();
+                    if (hint != null) hint.text = "Daneben - weiter scannen";
                 }
             }
         }
@@ -190,6 +204,7 @@ namespace UnknownsCollection {
             phase = Phase.Result;
             resultTimer = 1.2f;
             SetScanActive(false);
+            if (shownSabotaged) UCAssets.PlaySaboteurAlarm(); else UCAssets.PlaySaboteurSafe();
             if (title != null) {
                 title.text = shownSabotaged ? "[!] SABOTAGED" : "SAFE";
                 title.color = shownSabotaged ? new Color(1f, 0.35f, 0.2f) : new Color(0.4f, 1f, 0.5f);
@@ -240,7 +255,12 @@ namespace UnknownsCollection {
                 if (!wireCut[idx] && wireOrder[idx] == nextExpected) {
                     wireCut[idx] = true;
                     nextExpected++;
+                    // Correct cut: reuse the trap-snap clip (already a thematic "snip") at low local
+                    // volume - this whole minigame is 100% client-local, so PlayAt is safe here (the
+                    // player is always standing at `target`, see the walked-away abort check in Update()).
+                    UCAssets.PlayTrapSnap(target, UCAssets.VolSoft);
                     if (nextExpected > WireCount) { // defused!
+                        UCAssets.PlaySaboteurDefused();
                         Saboteur.SendClearSabotage();
                         if (title != null) { title.text = "DEFUSED"; title.color = new Color(0.4f, 1f, 0.5f); }
                         if (hint != null) hint.text = "";
@@ -253,6 +273,7 @@ namespace UnknownsCollection {
                     // wrong order -> reset
                     for (int i = 0; i < WireCount; i++) wireCut[i] = false;
                     nextExpected = 1;
+                    UCAssets.PlaySaboteurWireWrong();
                     Helpers.showFlash(new Color(1f, 0.2f, 0.2f, 0.4f), 0.25f);
                 }
                 RefreshWires();
@@ -355,12 +376,34 @@ namespace UnknownsCollection {
             }
         }
 
-        // 1x1 white sprite (1 px = 1 world unit) stretched via transform.localScale.
+        // Soft-edged rounded rect (32px, pixelsPerUnit 32 -> same 1x1-world-unit base size as the old
+        // hard-edged 1px sprite, so every existing localScale call above keeps producing an identical
+        // on-screen size). The interior stays fully opaque; a soft falloff band near the rounded corners
+        // replaces the old flat white pixel for a less blocky look, matching the soft-sprite technique
+        // used elsewhere in the mod (UCFx.BuildDot/BuildRing): a rounded-box signed-distance field,
+        // alpha = 1 deep inside, easing to 0 right at the boundary over `edge` texels.
         private static Sprite BuildRectSprite() {
-            var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
-            tex.SetPixel(0, 0, Color.white);
+            const int n = 32;
+            const float corner = 7f; // corner rounding radius, in texels
+            const float edge = 2.5f; // soft falloff band width, in texels
+            var tex = new Texture2D(n, n, TextureFormat.RGBA32, false);
+            float half = n / 2f;
+            for (int x = 0; x < n; x++) {
+                for (int y = 0; y < n; y++) {
+                    float px = x + 0.5f - half;
+                    float py = y + 0.5f - half;
+                    float qx = Mathf.Max(Mathf.Abs(px) - (half - corner), 0f);
+                    float qy = Mathf.Max(Mathf.Abs(py) - (half - corner), 0f);
+                    float dist = Mathf.Sqrt(qx * qx + qy * qy) - corner; // negative = inside the rounded rect
+                    float alpha = Mathf.Clamp01(-dist / edge);
+                    tex.SetPixel(x, y, new Color(1f, 1f, 1f, alpha));
+                }
+            }
             tex.Apply();
-            return Sprite.Create(tex, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f), 1f);
+            tex.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
+            var s = Sprite.Create(tex, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f), n);
+            s.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
+            return s;
         }
     }
 }

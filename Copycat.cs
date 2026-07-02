@@ -115,6 +115,12 @@ namespace UnknownsCollection {
         private const byte SubSetCopycat = 0;
         private const byte SubUseAbility = 1; // abilityId, targetId (byte.MaxValue when unused)
         private const byte SubLearn = 2;      // abilityId - broadcast a learn the local Copycat decided on (e.g. sight-gated Vent)
+        // (none) - a Shoot attempt was suppressed (shield/etc.). DoShoot() only ever runs on the host, so a
+        // non-host Copycat would otherwise never learn its shot did nothing; this is broadcast so it reaches
+        // the actual shooter's client too, but ApplyShootMiss() gates on IsLocalCopycat() - nobody else may
+        // learn a shot was attempted/blocked. Unknown to any older client (no case for it below - ignored,
+        // same as any other unrecognized subtype), so this stays backward compatible.
+        private const byte SubShootMiss = 3;
 
         // ---- Role identity ----
         private static RoleInfo copycatInfo;
@@ -214,6 +220,27 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] SendLearn failed: {e}"); }
         }
 
+        // Broadcast that a Shoot attempt was suppressed (host-only verdict, see DoShoot). Uses the same
+        // "sender's own NetId as the RPC's carrier object, payload identifies the actual actor" pattern as
+        // RpcUncheckedMurder below - the host is always the one sending this (DoShoot only proceeds past
+        // its AmHost guard on the host), regardless of whether the host itself is the Copycat.
+        private static void SendShootMiss() {
+            try {
+                var w = BeginRpc(SubShootMiss);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyShootMiss();
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] SendShootMiss failed: {e}"); }
+        }
+
+        // Self-only feedback: copycat_miss + a brief red vignette flicker, purely local (Helpers.showFlash
+        // only touches the calling client's own screen - no network effect), so nobody but the shooter
+        // learns anything about the failed shot.
+        private static void ApplyShootMiss() {
+            if (!IsLocalCopycat()) return;
+            UCAssets.PlayCopycatMiss();
+            Helpers.showFlash(new Color(0.75f, 0.08f, 0.08f, 0.28f), 0.22f);
+        }
+
         // Perform an unchecked murder on every client (broadcast once + local), like the Tesla/Sheriff.
         private static void RpcUncheckedMurder(byte sourceId, byte targetId) {
             try {
@@ -256,7 +283,20 @@ namespace UnknownsCollection {
                 case Ability.Camouflage: StartCamouflage(); break;
                 case Ability.Morphling: StartMorph(targetId); break;
                 case Ability.Shield: StartShield(); break;
-                case Ability.Shoot: DoShoot(targetId); break;
+                case Ability.Shoot: {
+                    // Tracer strictly self-only: this handler runs on EVERY client, and the shot's
+                    // hit/miss/backfire verdict is resolved host-side only afterwards - a world-visible
+                    // tracer would tell bystanders that a (possibly silently blocked) shot happened and
+                    // out the Copycat, defeating the same secrecy ApplyShootMiss protects. A real kill
+                    // announces itself via the murder; only the shooter needs the ranged-shot feel.
+                    if (IsLocalCopycat()) {
+                        var shootTarget = Helpers.playerById(targetId);
+                        if (copycat != null && shootTarget != null)
+                            CopycatFx.SpawnShootTracer(copycat.GetTruePosition(), shootTarget.GetTruePosition());
+                    }
+                    DoShoot(targetId);
+                    break;
+                }
                 case Ability.Vent: break; // venting is a passive capability granted via roleCanUseVents; nothing to apply
             }
 
@@ -272,6 +312,10 @@ namespace UnknownsCollection {
             camouflaged = true;
             camoEndTime = Time.time + CamoDuration;
             if (Helpers.MushroomSabotageActive()) return; // don't overwrite the fungle "camo"
+            // Global, position-independent flicker (each client plays its own local screen flash the instant
+            // it applies this - no world anchor, so it never reveals WHO triggered it), softening the hard
+            // instant grey-out below.
+            Helpers.showFlash(new Color(0.65f, 0.65f, 0.70f, 0.35f), 0.25f);
             foreach (PlayerControl player in PlayerControl.AllPlayerControls)
                 if (player != null) player.setLook("", 6, "", "", "", ""); // grey, no cosmetics
         }
@@ -285,6 +329,7 @@ namespace UnknownsCollection {
             camouflaged = false;
             if (Helpers.MushroomSabotageActive()) return; // fungle sabotage controls looks
             if (Camouflager.camouflageTimer > 0f) return;  // real Camouflager still active - it owns the reset
+            Helpers.showFlash(new Color(0.65f, 0.65f, 0.70f, 0.30f), 0.20f); // same global flicker, un-camo edge
             foreach (PlayerControl player in PlayerControl.AllPlayerControls)
                 if (player != null) player.setDefaultLook();
             // The Copycat itself may still be morphed — re-apply that look on top of the reset.
@@ -300,12 +345,16 @@ namespace UnknownsCollection {
             copycat.setLook(target.Data.PlayerName, target.Data.DefaultOutfit.ColorId,
                 target.Data.DefaultOutfit.HatId, target.Data.DefaultOutfit.VisorId,
                 target.Data.DefaultOutfit.SkinId, target.Data.DefaultOutfit.PetId);
+            // The look swap itself is already visible to everyone, so a shimmer at the Copycat's own
+            // position leaks no extra information - it just sells the transformation as an event.
+            CopycatFx.SpawnMorphShimmer(copycat.GetTruePosition());
         }
 
         private static void EndMorph() {
             isMorphed = false;
             morphTargetId = byte.MaxValue;
             RestoreLook();
+            if (copycat != null) CopycatFx.SpawnMorphShimmer(copycat.GetTruePosition());
         }
 
         // Restore the Copycat's own look. Camouflage and Morph can overlap, so if the other effect is
@@ -328,6 +377,12 @@ namespace UnknownsCollection {
         private static void StartShield() {
             shielded = true;
             shieldEndTime = Time.time + ShieldDuration;
+            // Guarantees CopycatFx's tick registration exists even if Shield is the very first ability this
+            // Copycat ever uses (see CopycatFx.EnsureInitialized). The aura itself needs no further wiring -
+            // it polls `shielded` + IsLocalCopycat() every frame on its own once registered.
+            CopycatFx.EnsureInitialized();
+            // Local-only ward chime; nobody but the Copycat itself should hear this, same gate as the aura.
+            if (IsLocalCopycat()) UCAssets.PlayCopycatWard();
         }
 
         // Sheriff-style shot. The actual kill is host-authoritative and broadcast exactly once
@@ -338,7 +393,10 @@ namespace UnknownsCollection {
             if (copycat == null || !IsAlive(copycat) || !IsAlive(target)) return;
             // Respect Medic/TimeMaster shields and other protections, like a real Sheriff shot: if the
             // kill would be suppressed, the shot is absorbed (no kill, no backfire).
-            if (Helpers.checkMuderAttempt(copycat, target) != MurderAttemptResult.PerformKill) return;
+            if (Helpers.checkMuderAttempt(copycat, target) != MurderAttemptResult.PerformKill) {
+                SendShootMiss(); // otherwise a suppressed shot is completely silent for the shooter
+                return;
+            }
             bool targetIsImpostor = target.Data.Role != null && target.Data.Role.IsImpostor;
             if (targetIsImpostor)
                 RpcUncheckedMurder(copycat.PlayerId, target.PlayerId);          // clean kill
@@ -395,6 +453,7 @@ namespace UnknownsCollection {
                                 break;
                             }
                             case SubLearn: LearnAbility((Ability)reader.ReadByte()); break;
+                            case SubShootMiss: ApplyShootMiss(); break;
                         }
                         return false; // consume our own RPC
                     }

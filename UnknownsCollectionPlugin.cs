@@ -246,7 +246,7 @@ public class UnknownsCollectionPlugin : BasePlugin
             // Insert our version line once (guarded so it doesn't stack per frame).
             if (!text.Contains(LinkId))
             {
-                string line = $"<link=\"{LinkId}\"><color=#1FB8FF>Unknown's Collection</color> v{VersionDisplay.Format(Version)}</link>";
+                string line = $"<link=\"{LinkId}\"><color=#1FB8FF>Unknown's Collection</color> v{VersionDisplay.FormatRich(Version)}</link>";
                 int nl = text.IndexOf('\n');
                 text = nl >= 0
                     ? text.Substring(0, nl + 1) + line + "\n" + text.Substring(nl + 1)

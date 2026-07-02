@@ -59,8 +59,15 @@ namespace UnknownsCollection {
         public static byte plusId = byte.MaxValue;
         public static byte minusId = byte.MaxValue;
         public static bool active;                 // role spawned & usable this game
-        public static float countdown;             // remaining seconds before the pair dies
+        public static float countdown;             // remaining seconds before the pair dies (host-authoritative;
+                                                     // only HostCountdown() below ever decrements this)
         private static bool dangerLocal;           // local cosmetic danger latch (warning onset)
+        // Local-only mirror of the drain, recomputed identically on EVERY client (host included) from
+        // the same trigger/grace gating HostCountdown() uses - NOT authoritative (only `countdown` on
+        // the host kills), purely so the indicator pulse/beep can escalate for victims on non-host
+        // clients too (the real `countdown` field above is never updated there).
+        private static float countdownLocal;
+        private static float nextPulseTime;         // next tesla_pulse Geiger-counter beep (local-only)
         private static float graceUntil;           // Time.time until which the countdown is frozen
         private static bool wasInMeeting;          // meeting-end edge detector (per client)
         // Everyone charged so far this game - excluded from future selections (no repeats).
@@ -71,6 +78,8 @@ namespace UnknownsCollection {
         private const byte SubSetTesla = 0;   // teslaId
         private const byte SubSetCharges = 1; // plusId, minusId
         private const byte SubClear = 2;      // (none)
+        private const byte SubKillFx = 3;     // plusVictimId, minusVictimId (play kill FX everywhere,
+                                               // sent BEFORE the murder RPCs - see TriggerDeath)
 
         // TOR's UncheckedMurderPlayer RPC byte, resolved from the internal CustomRPC enum (fallback 108).
         private static byte uncheckedMurderRpc = 108;
@@ -205,19 +214,57 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] SendClear failed: {e}"); }
         }
 
+        // Host -> everyone: play the double-electrocution kill FX at both victim positions (the lethal
+        // murder RPCs follow right after - see TriggerDeath). Mirrors Saboteur's SendKillFx.
+        public static void SendKillFx(byte plusVictimId, byte minusVictimId) {
+            try {
+                var w = BeginRpc(SubKillFx);
+                w.Write(plusVictimId);
+                w.Write(minusVictimId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyKillFx(plusVictimId, minusVictimId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] SendKillFx failed: {e}"); }
+        }
+
         // ---- Appliers (run on every client) ----
         private static void ApplySetTesla(byte teslaPlayerId) {
             tesla = Helpers.playerById(teslaPlayerId);
             active = tesla != null;
-            if (active) UCPromotion.Claim(teslaPlayerId);
+            if (active) UCPromotion.Claim(teslaPlayerId, suppressFx: true); // bespoke promote flash+sound below
             plusId = minusId = byte.MaxValue;
             countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
+            countdownLocal = countdown;
             dangerLocal = false;
+            nextPulseTime = 0f;
             // Round-start grace: everyone spawns together, so freeze the countdown briefly.
             graceUntil = Time.time + GraceSeconds();
             wasInMeeting = false;
-            if (active)
+            if (active) {
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Tesla] The Tesla is {tesla.Data?.PlayerName}.");
+                // Local-only reveal: the generic Impostor intro card already played by this point
+                // (ApplySetTesla runs from IntroCutscene.OnDestroy / MarkFromDraft), so this is the
+                // player's only dedicated "you are THE Tesla" signal. Exact pattern of
+                // Poltergeist.ApplySetPoltergeist's own local-only rise flash+sound.
+                if (tesla == PlayerControl.LocalPlayer) {
+                    Helpers.showFlash(Color, 2.5f, "You are THE TESLA! Charge two players and bring them together.");
+                    UCAssets.PlayTeslaPromote();
+                }
+            }
+        }
+
+        private static void ApplyKillFx(byte plusVictimId, byte minusVictimId) {
+            try {
+                // byte.MaxValue marks a spared pole (no death there -> no burst there).
+                var p = plusVictimId != byte.MaxValue ? Helpers.playerById(plusVictimId) : null;
+                var m = minusVictimId != byte.MaxValue ? Helpers.playerById(minusVictimId) : null;
+                if (p == null && m == null) return;
+                // Anchored at the victims' own current positions (never the Tesla's) - each client
+                // reads its own locally known position, same approach SaboteurKillFx.Play() uses.
+                TeslaKillFx.Play(p != null ? p.GetTruePosition() : (Vector2?)null,
+                                 m != null ? m.GetTruePosition() : (Vector2?)null);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] ApplyKillFx failed: {e}");
+            }
         }
 
         private static float GraceSeconds() => GraceAfterMeeting != null ? GraceAfterMeeting.getFloat() : 0f;
@@ -231,7 +278,9 @@ namespace UnknownsCollection {
             plusId = newPlusId;
             minusId = newMinusId;
             countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
+            countdownLocal = countdown;
             dangerLocal = false;
+            nextPulseTime = 0f;
             // Remember the charged players so they can't be charged again in a later round.
             if (newPlusId != byte.MaxValue) chargedHistory.Add(newPlusId);
             if (newMinusId != byte.MaxValue) chargedHistory.Add(newMinusId);
@@ -240,7 +289,9 @@ namespace UnknownsCollection {
         private static void ApplyClear() {
             plusId = minusId = byte.MaxValue;
             countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
+            countdownLocal = countdown;
             dangerLocal = false;
+            nextPulseTime = 0f;
         }
 
         // Perform an unchecked murder on every client (local call + RPC), like the Sheriff/Revenger.
@@ -277,6 +328,12 @@ namespace UnknownsCollection {
                             break;
                         }
                         case SubClear: ApplyClear(); break;
+                        case SubKillFx: {
+                            byte p = reader.ReadByte();
+                            byte m = reader.ReadByte();
+                            ApplyKillFx(p, m);
+                            break;
+                        }
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] HandleRpc failed: {e}");
@@ -295,6 +352,8 @@ namespace UnknownsCollection {
                 plusId = minusId = byte.MaxValue;
                 active = false;
                 countdown = 0f;
+                countdownLocal = 0f;
+                nextPulseTime = 0f;
                 dangerLocal = false;
                 graceUntil = 0f;
                 wasInMeeting = false;
@@ -345,7 +404,9 @@ namespace UnknownsCollection {
         static class MeetingStartPatch {
             public static void Postfix() {
                 countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
+                countdownLocal = countdown;
                 dangerLocal = false;
+                nextPulseTime = 0f;
                 // Charges are per-round: clear the previous round's pair at every meeting. The Tesla
                 // re-charges a NEW pair during the meeting (already-charged players are excluded).
                 plusId = minusId = byte.MaxValue;
@@ -408,6 +469,12 @@ namespace UnknownsCollection {
             bool killPlus = !(plusId == teslaId && !teslaDies);
             bool killMinus = !(minusId == teslaId && !teslaDies);
 
+            // Kill FX fires at the victim positions BEFORE the murder RPCs (same ordering as
+            // Saboteur's SubKillFx), so the electrocution burst is on screen right as the death lands.
+            // A spared pole (self-charged Tesla with DiesIfSelfCharged off) is sent as byte.MaxValue -
+            // an electrocution burst on a player who visibly survives would be a false public tell.
+            SendKillFx(killPlus ? plus.PlayerId : byte.MaxValue, killMinus ? minus.PlayerId : byte.MaxValue);
+
             byte killerId = IsAlive(tesla) ? tesla.PlayerId : byte.MaxValue;
             if (killPlus) RpcUncheckedMurder(killerId == byte.MaxValue ? plusId : killerId, plusId);
             if (killMinus) RpcUncheckedMurder(killerId == byte.MaxValue ? minusId : killerId, minusId);
@@ -419,6 +486,11 @@ namespace UnknownsCollection {
         // (no-number) danger warning when they are within trigger distance of their partner.
         private static void LocalCosmetics() {
             var me = PlayerControl.LocalPlayer;
+
+            // The Tesla's own (non-authoritative) pair-status readout - independent of whether the
+            // local player is itself charged, so it must run before the `charged` early-return below.
+            TeslaSelfStatus(me);
+
             bool charged = active && me != null && IsAlive(me)
                            && (me.PlayerId == plusId || me.PlayerId == minusId)
                            && plusId != byte.MaxValue && minusId != byte.MaxValue;
@@ -432,24 +504,65 @@ namespace UnknownsCollection {
                 return;
             }
 
-            byte partnerId = me.PlayerId == plusId ? minusId : plusId;
+            bool isPlus = me.PlayerId == plusId;
+            byte partnerId = isPlus ? minusId : plusId;
             var partner = Helpers.playerById(partnerId);
+            bool grace = InGrace();
             bool danger = false;
-            if (IsAlive(partner) && !InGrace()) {
+            if (IsAlive(partner) && !grace) {
                 float dist = Vector2.Distance(me.GetTruePosition(), partner.GetTruePosition());
                 float trigger = TriggerDistance != null ? TriggerDistance.getFloat() : 1.5f;
                 danger = dist <= trigger;
             }
 
-            // Danger onset -> warning flash + sound (re-armed when leaving the danger zone).
-            if (danger && !dangerLocal) {
-                Helpers.showFlash(new Color(1f, 0.1f, 0.1f, 1f), 0.6f);
-                TeslaSound.PlayWarning();
+            float totalSec = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
+
+            if (danger) {
+                // Local-only mirror of the drain (see countdownLocal's declaration above) - same
+                // gating HostCountdown() uses (only drains while actually in danger), just recomputed
+                // per client instead of relying on the host-only `countdown` field.
+                countdownLocal = Mathf.Max(0f, countdownLocal - Time.deltaTime);
+
+                // Danger onset -> warning flash + sound (re-armed when leaving the danger zone).
+                if (!dangerLocal) {
+                    Helpers.showFlash(new Color(1f, 0.1f, 0.1f, 1f), 0.6f);
+                    UCAssets.PlayTeslaWarning();
+                    // Stagger the first beep slightly after the warning cue instead of firing both on
+                    // the exact same frame (the check right below would otherwise fire immediately).
+                    nextPulseTime = Time.time + 0.15f;
+                }
+                // Recurring, accelerating "heartbeat" beep instead of a one-shot flash - interval
+                // shrinks as the (locally mirrored) countdown drains.
+                if (Time.time >= nextPulseTime) {
+                    UCAssets.PlayTeslaPulse();
+                    float urgency = totalSec > 0f ? Mathf.Clamp01(1f - countdownLocal / totalSec) : 1f;
+                    nextPulseTime = Time.time + Mathf.Lerp(0.9f, 0.18f, urgency);
+                }
             }
             dangerLocal = danger;
 
-            TeslaIndicator.Show(danger);
-            TeslaParticles.SetActive(me, danger);
+            float frac = totalSec > 0f ? Mathf.Clamp01(countdownLocal / totalSec) : 1f;
+            TeslaIndicator.Show(isPlus, danger, grace, frac);
+            TeslaParticles.SetActive(me, danger, isPlus);
+        }
+
+        // Tesla-only, purely cosmetic and explicitly NON-authoritative: a rough "is my current pair
+        // closing in?" readout, computed client-side from the already-synced plusId/minusId positions
+        // (no new RPC needed - GetTruePosition() is readable for everyone). Only HostCountdown() above
+        // actually decides life or death.
+        private static void TeslaSelfStatus(PlayerControl me) {
+            bool isTesla = active && me != null && tesla == me && IsAlive(me);
+            if (!isTesla || InMeeting() || plusId == byte.MaxValue || minusId == byte.MaxValue) {
+                TeslaIndicator.HideSelfStatus();
+                return;
+            }
+            var plus = Helpers.playerById(plusId);
+            var minus = Helpers.playerById(minusId);
+            if (!IsAlive(plus) || !IsAlive(minus)) { TeslaIndicator.HideSelfStatus(); return; }
+
+            float dist = Vector2.Distance(plus.GetTruePosition(), minus.GetTruePosition());
+            float trigger = TriggerDistance != null ? TriggerDistance.getFloat() : 1.5f;
+            TeslaIndicator.ShowSelfStatus(dist <= trigger);
         }
 
         // ====================================================================

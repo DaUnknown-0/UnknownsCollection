@@ -162,6 +162,7 @@ namespace UnknownsCollection {
                 var w = BeginRpc(SubFlash);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 IllusionistClone.Flash(0.4f);
+                UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position()); // metallic "block" ping, sender side
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] SendCloneFlash failed: {e}"); }
         }
 
@@ -169,7 +170,7 @@ namespace UnknownsCollection {
             try {
                 var w = BeginRpc(SubDespawn);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                IllusionistClone.Despawn();
+                IllusionistClone.DespawnWithFx();
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] SendDespawnClone failed: {e}"); }
         }
 
@@ -213,8 +214,11 @@ namespace UnknownsCollection {
                             }
                             break;
                         }
-                        case SubFlash: IllusionistClone.Flash(0.4f); break;
-                        case SubDespawn: IllusionistClone.Despawn(); break;
+                        case SubFlash:
+                            IllusionistClone.Flash(0.4f);
+                            UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position()); // receiver side
+                            break;
+                        case SubDespawn: IllusionistClone.DespawnWithFx(); break;
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] HandleRpc failed: {e}");
@@ -274,6 +278,7 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     IllusionistClone.Update();
+                    TickRecordIndicator();
 
                     if (!IsLocalIllusionist() || !recording || InMeeting()) return;
                     var me = PlayerControl.LocalPlayer;
@@ -338,6 +343,43 @@ namespace UnknownsCollection {
         private static TheOtherRoles.Objects.CustomButton recordButton;
         private static TheOtherRoles.Objects.CustomButton playbackButton;
 
+        // Pulsing "REC" HUD label, shown only to the local Illusionist while recording is running (up to
+        // RecordLength seconds with no other running indicator - the recordButton itself uses the
+        // HasEffect=false overload, so it has no built-in cooldown ring / toggle highlight of its own).
+        // Same lightweight pattern as TeslaIndicator: a standalone TextMeshPro parented under HudManager,
+        // NOT a layer-11 world object (this is a screen-space HUD element, not a map/world effect).
+        private static TMPro.TextMeshPro recordIndicatorText;
+
+        private static void EnsureRecordIndicator() {
+            if (recordIndicatorText != null) return;
+            var hud = HudManager.Instance;
+            if (hud == null) return;
+            var go = new GameObject("IllusionistRecordIndicator");
+            go.transform.SetParent(hud.transform);
+            go.transform.localPosition = new Vector3(-2.4f, -2.9f, -50f);
+            go.transform.localScale = Vector3.one;
+            recordIndicatorText = go.AddComponent<TMPro.TextMeshPro>();
+            recordIndicatorText.fontSize = 2f;
+            recordIndicatorText.alignment = TMPro.TextAlignmentOptions.Center;
+            recordIndicatorText.enableWordWrapping = false;
+            recordIndicatorText.text = "* REC"; // plain ASCII - the HUD font has no dot/circle glyph
+            recordIndicatorText.gameObject.SetActive(false);
+        }
+
+        private static void TickRecordIndicator() {
+            bool show = active && recording && IsLocalIllusionist();
+            if (!show) {
+                if (recordIndicatorText != null && recordIndicatorText.gameObject.activeSelf)
+                    recordIndicatorText.gameObject.SetActive(false);
+                return;
+            }
+            EnsureRecordIndicator();
+            if (recordIndicatorText == null) return;
+            recordIndicatorText.gameObject.SetActive(true);
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 6f);
+            recordIndicatorText.color = new Color(1f, 0.15f, 0.15f, Mathf.Lerp(0.45f, 1f, pulse));
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
@@ -351,6 +393,9 @@ namespace UnknownsCollection {
 
                     recordButton = new TheOtherRoles.Objects.CustomButton(
                         () => { // OnClick: toggle recording
+                            // Same short click both ways (no dedicated stop-chime asset) - still gives the
+                            // toggle SOME acoustic confirmation instead of none at all.
+                            UCAssets.PlayIllusionistRecord();
                             if (recording) { recording = false; return; }
                             recordBuffer.Clear();
                             ventBuffer.Clear();

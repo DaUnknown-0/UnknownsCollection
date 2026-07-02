@@ -183,6 +183,20 @@ namespace UnknownsCollection {
         private static void ApplyAntidote(byte targetId) {
             poisonedReporters.Remove(targetId);
             antidoteUsesLeft--;
+
+            // Cleanse feedback (poof + chime) is gated to the medic and the cured target only.
+            // ApplyAntidote runs on EVERY client (SendAntidote broadcasts SubAntidote) - an ungated
+            // world effect here would tell every bystander "this player was poisoned", the exact leak
+            // the fuse-loop PlayerId gate already avoids for the Maniac's bomb carrier (Maniac.cs).
+            var me = PlayerControl.LocalPlayer;
+            bool localIsMedic = me != null && Medic.medic != null && me.PlayerId == Medic.medic.PlayerId;
+            bool localIsTarget = me != null && me.PlayerId == targetId;
+            if (localIsMedic || localIsTarget) {
+                var target = Helpers.playerById(targetId);
+                if (target != null) PoisonerFx.SpawnCleanse(target.GetTruePosition());
+                UCAssets.PlayPoisonerAntidote();
+            }
+
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Antidote used on player {targetId}.");
         }
 
@@ -392,6 +406,16 @@ namespace UnknownsCollection {
             return null;
         }
 
+        // Pulsing green outline for the Medic's Antidote target: setPlayerOutline forces the alpha
+        // channel itself (SetAlpha(Chameleon.visibility(...))), so a pulse riding on alpha (as
+        // PoltergeistFx.Flicker does for its own particles) would just get overwritten every call -
+        // the pulse instead rides on brightness, so a "you can heal this player" outline reads
+        // differently at a glance from a flat, static aggressive kill-target outline.
+        private static Color HealPulseColor() {
+            float pulse = 0.5f + 0.5f * Mathf.Sin(Time.time * 4f);
+            return Color.Lerp(new Color(0.10f, 0.5f, 0.20f), Color.green, pulse);
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
@@ -444,7 +468,7 @@ namespace UnknownsCollection {
                     }
 
                     if (antidoteTarget != null && antidoteButton != null) {
-                        PlayerControlFixedUpdatePatch.setPlayerOutline(antidoteTarget, Color.green);
+                        PlayerControlFixedUpdatePatch.setPlayerOutline(antidoteTarget, HealPulseColor());
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] HudUpdate failed: {e}");

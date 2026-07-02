@@ -138,8 +138,12 @@ namespace UnknownsCollection {
             }
 
             hasCopied = true;
-            // Takeover riser only for the Follower itself - the new role stays secret for everyone else.
-            if (f == PlayerControl.LocalPlayer) UCAssets.PlayFollowerShift();
+            // Takeover riser + energy-burst only for the Follower itself - the new role stays secret for
+            // everyone else, so both cues share the exact same local-only gate.
+            if (f == PlayerControl.LocalPlayer) {
+                UCAssets.PlayFollowerShift();
+                FollowerFx.SpawnShift(f.GetTruePosition());
+            }
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Follower] {f.Data?.PlayerName} took over the role of {t.Data?.PlayerName} ({roleId}).");
         }

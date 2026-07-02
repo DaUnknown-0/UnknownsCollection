@@ -18,6 +18,37 @@
          BugSound (Glitch). -->
     <ItemGroup>
         <EmbeddedResource Include="Resources\tesla_warning.raw" />
+        <EmbeddedResource Include="Resources\beacon_share.raw" />
+        <EmbeddedResource Include="Resources\collector_channel.raw" />
+        <EmbeddedResource Include="Resources\collector_ready.raw" />
+        <EmbeddedResource Include="Resources\copycat_miss.raw" />
+        <EmbeddedResource Include="Resources\copycat_ward.raw" />
+        <EmbeddedResource Include="Resources\illusionist_deny.raw" />
+        <EmbeddedResource Include="Resources\illusionist_record.raw" />
+        <EmbeddedResource Include="Resources\illusionist_unravel.raw" />
+        <EmbeddedResource Include="Resources\maniac_pass.raw" />
+        <EmbeddedResource Include="Resources\maniac_plant.raw" />
+        <EmbeddedResource Include="Resources\manipulator_end.raw" />
+        <EmbeddedResource Include="Resources\poisoner_antidote.raw" />
+        <EmbeddedResource Include="Resources\poltergeist_handstop.raw" />
+        <EmbeddedResource Include="Resources\poltergeist_hexend.raw" />
+        <EmbeddedResource Include="Resources\poltergeist_reveal.raw" />
+        <EmbeddedResource Include="Resources\saboteur_alarm.raw" />
+        <EmbeddedResource Include="Resources\saboteur_defused.raw" />
+        <EmbeddedResource Include="Resources\saboteur_mark.raw" />
+        <EmbeddedResource Include="Resources\saboteur_safe.raw" />
+        <EmbeddedResource Include="Resources\saboteur_scanhit.raw" />
+        <EmbeddedResource Include="Resources\saboteur_scanmiss.raw" />
+        <EmbeddedResource Include="Resources\saboteur_wirewrong.raw" />
+        <EmbeddedResource Include="Resources\shade_reveal.raw" />
+        <EmbeddedResource Include="Resources\silencer_mark.raw" />
+        <EmbeddedResource Include="Resources\siphoner_stop.raw" />
+        <EmbeddedResource Include="Resources\tesla_discharge.raw" />
+        <EmbeddedResource Include="Resources\tesla_promote.raw" />
+        <EmbeddedResource Include="Resources\tesla_pulse.raw" />
+        <EmbeddedResource Include="Resources\tesla_select.raw" />
+        <EmbeddedResource Include="Resources\uc_reveal.raw" />
+        <EmbeddedResource Include="Resources\witness_note.raw" />
         <EmbeddedResource Include="Resources\Glitch.raw" />
         <!-- Own button icons (PNG) + synthesized role sounds (same raw PCM format), loaded by UCAssets. -->
         <EmbeddedResource Include="Resources\poltergeist_manifest.png" />

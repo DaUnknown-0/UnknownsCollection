@@ -18,6 +18,14 @@
  *
  * IsPlainImpostor / IsPlainCrewmate are centralized here so every role uses the exact same eligibility
  * rule (its FIRST RoleInfo is the vanilla Impostor / Crewmate entry, i.e. no special TOR role on top).
+ *
+ * Claim() is also the single choke point every UC role's Apply* runs through (Draft picks AND random
+ * IntroCutscene promotion alike), so it doubles as the hook for the role-agnostic "you have been
+ * promoted" reveal cue (UCRevealFx). Claim() runs on EVERY client for EVERY UC role assignment - the
+ * reveal is therefore gated to playerId == PlayerControl.LocalPlayer.PlayerId here, exactly once, so
+ * individual role files never need to remember the gate themselves. A role that already has its own
+ * bespoke promotion feedback (e.g. a future Tesla-specific stinger in Tesla.ApplySetTesla) can pass
+ * suppressFx: true to Claim() to avoid a double cue - see the suppressFx parameter below.
  */
 
 using System.Linq;
@@ -31,7 +39,18 @@ namespace UnknownsCollection {
         private static readonly System.Collections.Generic.HashSet<byte> claimed = new();
 
         public static bool IsClaimed(byte playerId) => claimed.Contains(playerId);
-        public static void Claim(byte playerId) { if (playerId != byte.MaxValue) claimed.Add(playerId); }
+
+        // suppressFx: pass true when the caller already gives the promoted player its own bespoke
+        // reveal feedback, so UCRevealFx's generic gold/white cue does not double up with it.
+        public static void Claim(byte playerId, bool suppressFx = false) {
+            if (playerId == byte.MaxValue) return;
+            claimed.Add(playerId);
+            // Info-Leak-Regel: Claim() fires on EVERY client for EVERY UC role assignment - only the
+            // player who was actually promoted may ever see/hear this, never bystanders.
+            if (!suppressFx && PlayerControl.LocalPlayer != null && playerId == PlayerControl.LocalPlayer.PlayerId)
+                UCRevealFx.PlayReveal();
+        }
+
         public static void ClearClaims() => claimed.Clear();
 
         public static bool IsAlive(PlayerControl p) =>

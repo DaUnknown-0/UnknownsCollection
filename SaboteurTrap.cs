@@ -37,12 +37,20 @@ namespace UnknownsCollection {
         public int id;
         public Vector2 pos;
         public GameObject obj;
+        public SpriteRenderer sr;
         public bool armed;
+        public float placedAt;
         private readonly HashSet<byte> stunned = new HashSet<byte>();
 
         // Fallback tint (violet, distinct from Trapper) - only used when the custom icon is missing
         // and the trap has to reuse the Trapper button texture.
         private static readonly Color FallbackTint = new Color(0.72f, 0.25f, 1f, 0.85f);
+        private const float SteadyAlpha = 0.85f;   // final alpha once fully armed (matches the old flat 0.85)
+        private const float GrowInTime = 0.2f;     // scale/alpha fade-in duration after placement
+
+        // Short-lived visual-only effects (e.g. the stun-release flash) that outlive the trap object
+        // itself; tracked so a round reset can hard-destroy one still mid-flight.
+        private static readonly List<GameObject> transientEffects = new List<GameObject>();
 
         // ---- placement ---------------------------------------------------------------------------
         public static int ActiveCount => traps.Count;
@@ -103,7 +111,7 @@ namespace UnknownsCollection {
 
         public static void Place(int id, float x, float y) {
             try {
-                var t = new SaboteurTrap { id = id, pos = new Vector2(x, y) };
+                var t = new SaboteurTrap { id = id, pos = new Vector2(x, y), placedAt = Time.time };
 
                 var go = new GameObject("SaboteurTrap") { layer = 11 };
                 go.AddSubmergedComponent(SubmergedCompatibility.Classes.ElevatorMover);
@@ -114,13 +122,25 @@ namespace UnknownsCollection {
                 var sprite = UCAssets.SaboteurTrapIcon;
                 if (sprite != null) {
                     sr.sprite = sprite;
-                    sr.color = new Color(1f, 1f, 1f, 0.85f);
+                    sr.color = new Color(1f, 1f, 1f, 0f); // fades/pulses in over GrowInTime, see AnimateVisual
                 } else {
                     sr.sprite = Trapper.getButtonSprite();
-                    sr.color = FallbackTint;
+                    sr.color = new Color(FallbackTint.r, FallbackTint.g, FallbackTint.b, 0f);
                 }
-                go.SetActive(LocalCanSee());
+                go.transform.localScale = Vector3.one * 0.5f; // grows in via AnimateVisual, see below
+                bool visible = LocalCanSee();
+                go.SetActive(visible);
                 t.obj = go;
+                t.sr = sr;
+
+                // Local placement confirmation - gated the same way the sprite itself is (LocalCanSee):
+                // Place() runs on every client via a broadcast RPC, so this must stay a plain local Play()
+                // (never PlayAt) or a nearby-but-blind crewmate would hear a mystery cue at the exact spot
+                // and learn "a trap exists here" despite not being allowed to see it. No dedicated "trap
+                // arm" asset exists in the sound table, so the generic saboteur confirmation blip is reused.
+                if (visible) {
+                    try { UCAssets.PlaySaboteurMark(UCAssets.VolSoft); } catch { }
+                }
 
                 traps.Add(t);
                 // Short arming delay so a victim isn't trapped the instant it is placed.
@@ -131,6 +151,29 @@ namespace UnknownsCollection {
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] trap Place failed: {e}");
             }
+        }
+
+        // Grows the sprite in from a slightly smaller scale and fades its alpha in over GrowInTime;
+        // while still arming, it also gets a gentle alpha pulse (capped by the fade-in envelope) so
+        // viewers can tell "still arming" from "live" (armed=true settles to the steady SteadyAlpha).
+        // Runs for every visible trap every frame regardless of whether the LOCAL player could trigger
+        // it (called unconditionally from Update(), before the trigger-only early returns).
+        public void AnimateVisual() {
+            if (obj == null || sr == null) return;
+            float age = Time.time - placedAt;
+            float grow = Mathf.Clamp01(age / GrowInTime);
+            grow = grow * grow * (3f - 2f * grow); // smoothstep
+            obj.transform.localScale = Vector3.one * Mathf.Lerp(0.5f, 1f, grow);
+
+            float alpha;
+            if (!armed) {
+                float pulse = 0.45f + 0.25f * Mathf.Sin(Time.time * 4f);
+                alpha = Mathf.Min(grow, pulse);
+            } else {
+                alpha = grow * SteadyAlpha;
+            }
+            var c = sr.color;
+            sr.color = new Color(c.r, c.g, c.b, alpha);
         }
 
         // The local client sees traps if it is the Saboteur, or an Impostor while the option is on.
@@ -155,13 +198,16 @@ namespace UnknownsCollection {
                 // Single-use: stop it from triggering again, but keep the object alive so it can be SHOWN.
                 traps.Remove(t);
 
-                // Reveal the trap (and play a sound) to the player who stepped in it - and to the
-                // Saboteur - so the victim realises they are trapped. (Mirrors TOR's Trapper.)
+                // Reveal the trap (and play a sound + spark burst) to the player who stepped in it - and
+                // to the Saboteur - so the victim realises they are trapped. (Mirrors TOR's Trapper.)
                 bool localInvolved = PlayerControl.LocalPlayer != null
                     && (PlayerControl.LocalPlayer.PlayerId == playerId || Saboteur.IsLocalSaboteur());
                 if (t.obj != null && localInvolved) {
                     t.obj.SetActive(true);
-                    try { UCAssets.PlayTrapSnap(t.pos); } catch { }
+                    try {
+                        UCAssets.PlayTrapSnap(t.pos);
+                        SaboteurKillFx.PlayMiniBurst(t.pos);
+                    } catch { }
                 }
 
                 float dur = Saboteur.TrapStunDuration != null ? Saboteur.TrapStunDuration.getFloat() : 5f;
@@ -176,6 +222,15 @@ namespace UnknownsCollection {
                     hud.StartCoroutine(Effects.Lerp(dur, new Action<float>((p) => {
                         if (p == 1f) {
                             if (player != null) player.moveable = true;
+                            if (localInvolved) {
+                                // Stun-release cue: no dedicated "release" asset exists in the sound table,
+                                // so the trap-snap clip is reused at a much lower volume as the closest
+                                // available cue, paired with a short local fade-out flash for the visual beat.
+                                try {
+                                    UCAssets.PlayTrapSnap(t.pos, 0.35f);
+                                    SpawnReleaseFlash(t.pos);
+                                } catch { }
+                            }
                             if (t.obj != null) UnityEngine.Object.Destroy(t.obj); // remove AFTER the stun
                         }
                     })));
@@ -185,14 +240,49 @@ namespace UnknownsCollection {
             }
         }
 
-        // Per-frame: check the LOCAL player against armed traps; on contact, broadcast the trigger.
+        // Brief local fade-out flash at the stun-release beat (localInvolved gated, same as the reveal).
+        // Deliberately small and localized rather than a full Helpers.showFlash - only the two parties
+        // who already saw the reveal see this, so a screen-wide flash would be overkill for them.
+        private static void SpawnReleaseFlash(Vector2 at) {
+            try {
+                var go = UCFx.NewFxRoot("SaboteurTrapRelease", at, -1.0f);
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sprite = UCFx.Ring;
+                sr.color = new Color(FallbackTint.r, FallbackTint.g, FallbackTint.b, 0.9f);
+                UCFx.TryMakeAdditive(sr);
+
+                var hud = HudManager.Instance;
+                if (hud == null) { UnityEngine.Object.Destroy(go); return; }
+
+                transientEffects.Add(go);
+                hud.StartCoroutine(Effects.Lerp(0.3f, new Action<float>((p) => {
+                    if (go == null) return;
+                    go.transform.localScale = Vector3.one * Mathf.Lerp(0.5f, 1.4f, p);
+                    sr.color = new Color(FallbackTint.r, FallbackTint.g, FallbackTint.b, 0.9f * (1f - p));
+                    if (p >= 1f) {
+                        transientEffects.Remove(go);
+                        UnityEngine.Object.Destroy(go);
+                    }
+                })));
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Saboteur] trap release flash failed: {e.Message}");
+            }
+        }
+
+        // Per-frame: animate every visible trap's placement/arm visuals, then check the LOCAL player
+        // against armed traps and broadcast a trigger on contact.
         public static void Update() {
             if (!Saboteur.active || traps.Count == 0) return;
             if (MeetingHud.Instance != null || ExileController.Instance != null) return;
 
+            // Visual animation runs for anyone who can currently see a trap, independent of whether the
+            // local player could ever trigger it (e.g. the Saboteur is always immune but still watches
+            // their own placed traps arm).
+            foreach (var t in traps) t.AnimateVisual();
+
             var me = PlayerControl.LocalPlayer;
             if (me == null || me.Data == null || me.Data.IsDead || !me.CanMove || me.inVent) return;
-            if (Saboteur.IsLocalSaboteur()) return; // the saboteur is immune
+            if (Saboteur.IsLocalSaboteur()) return; // the saboteur is immune to triggering, not to viewing
 
             // Other impostors are immune unless the option says otherwise.
             bool meImpostor = me.Data.Role != null && me.Data.Role.IsImpostor;
@@ -220,6 +310,9 @@ namespace UnknownsCollection {
             foreach (var t in traps)
                 if (t.obj != null) UnityEngine.Object.Destroy(t.obj);
             traps.Clear();
+            foreach (var go in transientEffects)
+                if (go != null) UnityEngine.Object.Destroy(go);
+            transientEffects.Clear();
             limpUntil.Clear();
             selfLimping = false;
             nextId = 0;

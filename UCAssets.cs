@@ -10,9 +10,13 @@
  * Saboteur search button blue), so this brings its own sprite loader - TOR's
  * Helpers.loadSpriteFromResources only reads TOR's assembly.
  *
- * Sounds are headerless 2-channel signed 32-bit PCM LE @ 48 kHz (the exact format TeslaSound/BugSound
- * load), synthesized offline (AssetGen tool). PlayAt() adds simple distance attenuation relative to
- * the local player so world-anchored cues (door slam, explosion) get quieter with distance.
+ * Sounds are headerless 2-channel signed 32-bit PCM LE @ 48 kHz (the historical raw-PCM format this mod
+ * uses), synthesized offline (AssetGen tool). This is also the sole loader for tesla_warning and Glitch
+ * now (previously duplicated in TeslaSound.cs/BugSound.cs; those are retired once their callers switch
+ * to PlayTeslaWarning()/PlayBugGlitch()). PlayAt() adds distance attenuation (smoothstep falloff, full
+ * volume within 4 units of the local player, silent by 22) plus simple stereo panning derived from the
+ * world-space X difference, so world-anchored cues (door slam, explosion) get quieter AND move in the
+ * stereo field with distance/direction.
  */
 
 using System;
@@ -81,28 +85,51 @@ namespace UnknownsCollection {
             return tex;
         }
 
+        // ---- Volume levels ----
+        // Named steps so new cues can be assigned a sensible default without picking a fresh literal.
+        // Existing literals that already matched one of these values were switched over 1:1 (no audible
+        // change); values that don't cleanly map to a step (e.g. 0.7f/0.85f/0.9f outliers) were left as-is.
+        public const float VolSoft = 0.6f;
+        public const float VolStd = 0.8f;
+        public const float VolLoud = 1.0f;
+
+        // Stereo panning range in world units: at this distance from the local player on the X axis,
+        // a PlayAt() cue pans fully to one ear. The AU camera never rotates, so world-X maps to screen-X.
+        private const float PanRange = 6f;
+
         // ---- Sounds: Poltergeist ----
 
-        public static void PlayManifest(float volume = 0.8f) => Play("poltergeist_manifest", volume);
+        public static void PlayManifest(float volume = VolStd) => Play("poltergeist_manifest", volume);
         public static void PlayPoof(Vector2 at, float volume = 0.9f) => PlayAt("poltergeist_poof", at, volume);
-        public static void PlayDoorSlam(Vector2 at, float volume = 1.0f) => PlayAt("poltergeist_door", at, volume);
+        public static void PlayDoorSlam(Vector2 at, float volume = VolLoud) => PlayAt("poltergeist_door", at, volume);
         public static void PlayHex(float volume = 0.7f) => Play("poltergeist_hex", volume);
-        public static void PlayGhostHand(float volume = 0.6f) => Play("poltergeist_hand", volume);
+        public static void PlayGhostHand(float volume = VolSoft) => Play("poltergeist_hand", volume);
+
+        // Position-bound variants of the cues above (distance-gated, per design decision: manifest-start,
+        // hex-cast and ghost-hand-start are audible around the ghost/target position, not just locally).
+        public static void PlayManifestAt(Vector2 at, float volume = VolStd) => PlayAt("poltergeist_manifest", at, volume);
+        public static void PlayHexAt(Vector2 at, float volume = 0.7f) => PlayAt("poltergeist_hex", at, volume);
+        public static void PlayGhostHandAt(Vector2 at, float volume = VolSoft) => PlayAt("poltergeist_hand", at, volume);
+
+        // New Poltergeist cues (hand release, hex expiring, manifest-kill reveal).
+        public static void PlayPoltergeistHandStopAt(Vector2 at, float volume = VolSoft) => PlayAt("poltergeist_handstop", at, volume);
+        public static void PlayPoltergeistHexEndAt(Vector2 at, float volume = VolStd) => PlayAt("poltergeist_hexend", at, volume);
+        public static void PlayPoltergeistRevealAt(Vector2 at, float volume = VolLoud) => PlayAt("poltergeist_reveal", at, volume);
 
         // ---- Sounds: role cues ----
 
         public static void PlayZap(Vector2 at, float volume = 0.9f) => PlayAt("saboteur_zap", at, volume);
-        public static void PlayTrapSnap(Vector2 at, float volume = 0.8f) => PlayAt("saboteur_trap", at, volume);
-        public static void PlayFuse(Vector2 at, float volume = 0.8f) => PlayAt("maniac_fuse", at, volume);
-        public static void PlayExplosion(Vector2 at, float volume = 1.0f) => PlayAt("maniac_explosion", at, volume);
-        public static void PlayShh(float volume = 0.8f) => Play("silencer_silence", volume);
+        public static void PlayTrapSnap(Vector2 at, float volume = VolStd) => PlayAt("saboteur_trap", at, volume);
+        public static void PlayFuse(Vector2 at, float volume = VolStd) => PlayAt("maniac_fuse", at, volume);
+        public static void PlayExplosion(Vector2 at, float volume = VolLoud) => PlayAt("maniac_explosion", at, volume);
+        public static void PlayShh(float volume = VolStd) => Play("silencer_silence", volume);
         public static void PlayCloneShimmer(Vector2 at, float volume = 0.7f) => PlayAt("illusionist_clone", at, volume);
-        public static void PlayPoisonGurgle(float volume = 0.8f) => Play("poisoner_poison", volume);
+        public static void PlayPoisonGurgle(float volume = VolStd) => Play("poisoner_poison", volume);
         public static void PlayScoutWhoosh(Vector2 at, float volume = 0.7f) => PlayAt("scout_whoosh", at, volume);
-        public static void PlaySiphonerDrain(float volume = 0.6f) => Play("siphoner_drain", volume);
-        public static void PlayWitnessSting(float volume = 0.8f) => Play("witness_sting", volume);
+        public static void PlaySiphonerDrain(float volume = VolSoft) => Play("siphoner_drain", volume);
+        public static void PlayWitnessSting(float volume = VolStd) => Play("witness_sting", volume);
         public static void PlayShadeVanish(float volume = 0.7f) => Play("shade_vanish", volume);
-        public static void PlayFollowerShift(float volume = 0.8f) => Play("follower_shift", volume);
+        public static void PlayFollowerShift(float volume = VolStd) => Play("follower_shift", volume);
         public static void PlayCopycatLearn(float volume = 0.7f) => Play("copycat_learn", volume);
 
         public static void PlayRelicPickup(Vector2 at, float volume = 0.7f) => PlayAt("collector_pickup", at, volume);
@@ -110,14 +137,16 @@ namespace UnknownsCollection {
         public static void PlayManipulatorWarp(float volume = 0.7f) => Play("manipulator_warp", volume);
 
         // Burning-fuse loop (seamless clip): started for the bomb carrier, stopped on pass/explode.
-        public static void PlayFuseLoop(float volume = 0.7f) {
+        // Returns the looping AudioSource so callers can escalate the loop (volume/pitch ramp toward
+        // the explosion) without reaching into the loader; null if the clip/SoundManager is missing.
+        public static AudioSource PlayFuseLoop(float volume = 0.7f) {
             try {
-                var clip = GetClip("maniac_fuse");
-                if (clip == null || SoundManager.Instance == null) return;
-                var source = SoundManager.Instance.PlaySound(clip, false, volume);
+                var source = Play("maniac_fuse", volume);
                 if (source != null) source.loop = true;
+                return source;
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[UCAssets] fuse loop failed: {e.Message}");
+                return null;
             }
         }
         public static void StopFuseLoop() {
@@ -127,28 +156,98 @@ namespace UnknownsCollection {
             } catch { }
         }
 
-        private static void Play(string name, float volume) {
+        // ---- Sounds: Tesla ----
+        // tesla_warning was previously a standalone loader (TeslaSound.cs); consolidated here since its
+        // embedded LogicalName already matches this class's standard "UnknownsCollection.Resources.<name>.raw"
+        // convention (verified against the csproj - no path deviation needed).
+        public static void PlayTeslaWarning(float volume = VolStd) => Play("tesla_warning", volume);
+        public static void PlayTeslaPromote(float volume = VolStd) => Play("tesla_promote", volume);
+        public static void PlayTeslaPulse(float volume = VolSoft) => Play("tesla_pulse", volume);
+        public static void PlayTeslaDischargeAt(Vector2 at, float volume = VolLoud) => PlayAt("tesla_discharge", at, volume);
+        public static void PlayTeslaSelect(float volume = VolSoft) => Play("tesla_select", volume);
+
+        // ---- Sounds: Illusionist / Copycat ----
+        public static void PlayIllusionistUnravelAt(Vector2 at, float volume = VolStd) => PlayAt("illusionist_unravel", at, volume);
+        public static void PlayIllusionistDenyAt(Vector2 at, float volume = VolStd) => PlayAt("illusionist_deny", at, volume);
+        public static void PlayIllusionistRecord(float volume = VolSoft) => Play("illusionist_record", volume);
+        public static void PlayCopycatWard(float volume = VolStd) => Play("copycat_ward", volume);
+        public static void PlayCopycatMiss(float volume = VolSoft) => Play("copycat_miss", volume);
+
+        // ---- Sounds: Maniac / Poisoner / Silencer ----
+        public static void PlayManiacPassAt(Vector2 at, float volume = VolStd) => PlayAt("maniac_pass", at, volume);
+        public static void PlayManiacPlant(float volume = VolSoft) => Play("maniac_plant", volume);
+        public static void PlayPoisonerAntidote(float volume = VolStd) => Play("poisoner_antidote", volume);
+        public static void PlaySilencerMark(float volume = VolSoft) => Play("silencer_mark", volume);
+
+        // ---- Sounds: Saboteur (scan/defuse minigame + misc cues) ----
+        public static void PlaySaboteurMark(float volume = VolSoft) => Play("saboteur_mark", volume);
+        public static void PlaySaboteurScanHit(float volume = VolSoft) => Play("saboteur_scanhit", volume);
+        public static void PlaySaboteurScanMiss(float volume = VolSoft) => Play("saboteur_scanmiss", volume);
+        public static void PlaySaboteurSafe(float volume = VolStd) => Play("saboteur_safe", volume);
+        public static void PlaySaboteurAlarm(float volume = VolStd) => Play("saboteur_alarm", volume);
+        public static void PlaySaboteurWireWrong(float volume = VolSoft) => Play("saboteur_wirewrong", volume);
+        public static void PlaySaboteurDefused(float volume = VolStd) => Play("saboteur_defused", volume);
+
+        // ---- Sounds: Crew-side (Shade / Witness / Siphoner) ----
+        public static void PlayShadeRevealAt(Vector2 at, float volume = VolStd) => PlayAt("shade_reveal", at, volume);
+        public static void PlayWitnessNote(float volume = VolStd) => Play("witness_note", volume);
+        public static void PlaySiphonerStop(float volume = VolSoft) => Play("siphoner_stop", volume);
+
+        // ---- Sounds: Collector / Manipulator / Beacon ----
+        public static void PlayCollectorReady(float volume = VolStd) => Play("collector_ready", volume);
+        public static void PlayCollectorChannel(float volume = VolSoft) => Play("collector_channel", volume);
+        public static void PlayManipulatorEnd(float volume = VolStd) => Play("manipulator_end", volume);
+        public static void PlayBeaconShare(float volume = VolSoft) => Play("beacon_share", volume);
+
+        // ---- Sounds: Bug ----
+        // Glitch was previously a standalone loader (BugSound.cs) with no Play wrapper at all;
+        // consolidated here (its LogicalName "UnknownsCollection.Resources.Glitch.raw" already matches
+        // this class's standard convention - verified against the csproj, no path deviation needed).
+        public static void PlayBugGlitch(float volume = VolSoft) => Play("Glitch", volume);
+
+        // ---- Sounds: UI / meta ----
+        public static void PlayUcReveal(float volume = VolStd) => Play("uc_reveal", volume);
+
+        // Plays a clip locally (no distance/positioning) and returns the AudioSource so callers can
+        // further configure it (e.g. loop, or feed it into PlayAt's panning below).
+        private static AudioSource Play(string name, float volume) {
             try {
                 var clip = GetClip(name);
-                if (clip == null || SoundManager.Instance == null) return;
-                SoundManager.Instance.PlaySound(clip, false, volume);
+                if (clip == null || SoundManager.Instance == null) return null;
+                return SoundManager.Instance.PlaySound(clip, false, volume);
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[UCAssets] Play {name} failed: {e.Message}");
+                return null;
             }
         }
 
-        // World-anchored cue: full volume within 4 units of the local player, fading to silent at 22.
-        private static void PlayAt(string name, Vector2 at, float volume) {
+        // World-anchored cue: full volume within 4 units of the local player, fading to silent by 22
+        // units using a smoothstep curve (feels more present up close, more natural falloff than a
+        // linear ramp - same audible range as before). Also derives simple stereo panning from the
+        // world-space X difference between the cue and the local player (the AU camera never rotates,
+        // so world-X maps directly to screen-X). Defensive against a missing local player and a missing
+        // AudioSource (e.g. SFX disabled).
+        private static AudioSource PlayAt(string name, Vector2 at, float volume) {
             try {
                 float vol = volume;
+                Vector2? localPos = null;
                 var local = PlayerControl.LocalPlayer;
                 if (local != null) {
-                    float d = Vector2.Distance(local.GetTruePosition(), at);
-                    vol *= Mathf.Clamp01(1f - (d - 4f) / 18f);
+                    Vector2 lp = local.GetTruePosition();
+                    localPos = lp;
+                    float d = Vector2.Distance(lp, at);
+                    float k = Mathf.Clamp01(1f - (d - 4f) / 18f);
+                    vol *= k * k * (3f - 2f * k); // smoothstep
                 }
-                if (vol <= 0.02f) return;
-                Play(name, vol);
-            } catch { }
+                if (vol <= 0.02f) return null;
+                var src = Play(name, vol);
+                if (src != null && localPos.HasValue) {
+                    src.panStereo = Mathf.Clamp((at.x - localPos.Value.x) / PanRange, -1f, 1f);
+                }
+                return src;
+            } catch {
+                return null;
+            }
         }
 
         private static AudioClip GetClip(string name) {
@@ -158,7 +257,8 @@ namespace UnknownsCollection {
             return clip;
         }
 
-        // Raw (headerless) 2-channel signed 32-bit PCM (LE), 48 kHz - same loader as TeslaSound.
+        // Raw (headerless) 2-channel signed 32-bit PCM (LE), 48 kHz - the format all UC sound assets use,
+        // including tesla_warning and Glitch now that they're loaded through this same central cache.
         private static AudioClip LoadRawClip(string path, string clipName) {
             try {
                 Assembly assembly = Assembly.GetExecutingAssembly();

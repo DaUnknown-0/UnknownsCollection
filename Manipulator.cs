@@ -83,6 +83,7 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 FakeVitals = CustomOption.Create(1595, Types.Impostor, "Vitals Shows Dead Players As Alive",
                     true, SpawnRate);
+                ManipulatorFx.Init(); // force its static ctor early - see ManipulatorFx.Init() comment
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Manipulator] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Manipulator] CreateOptions failed: {e}");
@@ -139,7 +140,10 @@ namespace UnknownsCollection {
         private static void ApplyManipulate(int seed, float duration) {
             fakeSeed = seed;
             fakeUntil = Time.time + duration;
-            if (IsLocalManipulator()) UCAssets.PlayManipulatorWarp(); // only the Manipulator hears the hijack
+            if (IsLocalManipulator()) {
+                UCAssets.PlayManipulatorWarp(); // only the Manipulator hears the hijack
+                ManipulatorFx.SpawnActivation(); // ...and sees the glitch-swirl payoff (self-only)
+            }
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetManipulator(playerId);

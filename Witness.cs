@@ -42,6 +42,7 @@ namespace UnknownsCollection {
         public static readonly Color Color = new Color(0.85f, 0.75f, 0.45f); // parchment/amber (crew role tag)
         private static readonly Color RedName = new Color(1f, 0.18f, 0.18f);
         private const float BaseSight = 5f; // world units that "factor 1.0" maps to
+        private const float NameFadeSeconds = 0.4f; // red-name in/out transition length
 
         // ---- Options (IDs 1470-1474) ----
         public static CustomOption SpawnRate;        // 1470 (header) - crew role chance
@@ -59,6 +60,8 @@ namespace UnknownsCollection {
         private static bool notesGiven;      // anonymous notes already handed out
         private static bool redNameExpired;  // (option) red name turned off after a meeting
         private static bool wasInMeeting;
+        private static float redNameApplyStart = -10f; // Time.time the red tint started fading IN
+        private static float redNameFadeStart = -10f;  // Time.time the red tint started fading back OUT
 
         // Host-only: a pending body-report reveal (reporter, killer, victim) to flush at meeting start.
         private static byte pendingReporter = byte.MaxValue;
@@ -188,6 +191,7 @@ namespace UnknownsCollection {
             if (active) UCPromotion.Claim(id);
             noteKillerId = noteVictimId = byte.MaxValue;
             revealed = notesGiven = redNameExpired = false;
+            redNameApplyStart = redNameFadeStart = -10f;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Witness] The Witness is {witness.Data?.PlayerName}.");
         }
 
@@ -199,6 +203,7 @@ namespace UnknownsCollection {
                 var k = Helpers.playerById(killerId);
                 AddLocalChat(witness, $"You witnessed {k?.Data?.PlayerName} kill {Helpers.playerById(victimId)?.Data?.PlayerName}. Their name is marked red.");
                 UCAssets.PlayWitnessSting(); // eerie cue, witness-only like the note
+                redNameApplyStart = Time.time; // start the red-name fade-in (see HudUpdatePatch)
             }
         }
 
@@ -207,6 +212,9 @@ namespace UnknownsCollection {
             var reporter = Helpers.playerById(reporterId) ?? PlayerControl.LocalPlayer;
             string msg = $"I saw {Helpers.playerById(killerId)?.Data?.PlayerName} killing {Helpers.playerById(victimId)?.Data?.PlayerName}. I need to report this.";
             AddLocalChat(reporter, msg);
+            // The reveal is public by design (every client applies this the same way) - a paper/seal
+            // stinger so this key beat doesn't get lost in meeting chat spam.
+            UCAssets.PlayWitnessNote();
         }
 
         private static void ApplyNote(byte recipientId, byte killerId, byte victimId) {
@@ -214,6 +222,7 @@ namespace UnknownsCollection {
             if (me == null || me.PlayerId != recipientId) return; // only the recipient sees their note
             string msg = $"(anonymous note) I saw {Helpers.playerById(killerId)?.Data?.PlayerName} killing {Helpers.playerById(victimId)?.Data?.PlayerName}. Please do something.";
             AddLocalChat(me, msg);
+            UCAssets.PlayWitnessNote(); // reached only by the recipient - the early return above gates it
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetWitness(playerId);
@@ -251,6 +260,7 @@ namespace UnknownsCollection {
                 active = false;
                 noteKillerId = noteVictimId = byte.MaxValue;
                 revealed = notesGiven = redNameExpired = wasInMeeting = false;
+                redNameApplyStart = redNameFadeStart = -10f;
                 pendingReporter = byte.MaxValue;
             }
         }
@@ -375,19 +385,26 @@ namespace UnknownsCollection {
                     if (wasInMeeting && !nowMeeting && (RedNamePermanent == null || !RedNamePermanent.getBool())
                         && !redNameExpired) {
                         redNameExpired = true;
-                        // We stop tinting the killer's name now, so restore it once — otherwise the last
-                        // red frame would stick forever (the HUD loop doesn't reset name colours itself).
-                        if (IsLocalWitness() && HasNote()) {
-                            var k = Helpers.playerById(noteKillerId);
-                            if (k != null && k.cosmetics?.nameText != null) k.cosmetics.nameText.color = Color.white;
-                        }
+                        // Fade back to white over NameFadeSeconds instead of an instant snap (see below) -
+                        // just arm the timer here, the actual per-frame Lerp happens further down.
+                        redNameFadeStart = Time.time;
                     }
                     wasInMeeting = nowMeeting;
 
-                    if (!IsLocalWitness() || !HasNote() || redNameExpired || InMeeting()) return;
+                    if (!IsLocalWitness() || !HasNote()) return;
                     var killer = Helpers.playerById(noteKillerId);
-                    if (killer != null && killer.cosmetics?.nameText != null)
-                        killer.cosmetics.nameText.color = RedName;
+                    if (killer == null || killer.cosmetics?.nameText == null) return;
+
+                    if (redNameExpired) {
+                        // Softly fade the tint back to white instead of an instant colour snap.
+                        float tOut = Mathf.Clamp01((Time.time - redNameFadeStart) / NameFadeSeconds);
+                        killer.cosmetics.nameText.color = Color.Lerp(RedName, Color.white, tOut);
+                        return;
+                    }
+                    if (InMeeting()) return;
+                    // Softly fade the tint in from white instead of an instant colour snap.
+                    float tIn = Mathf.Clamp01((Time.time - redNameApplyStart) / NameFadeSeconds);
+                    killer.cosmetics.nameText.color = Color.Lerp(Color.white, RedName, tIn);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Witness] HudUpdate failed: {e}");
                 }
@@ -399,9 +416,12 @@ namespace UnknownsCollection {
             public static void Postfix(MeetingHud __instance) {
                 try {
                     if (!IsLocalWitness() || !HasNote() || redNameExpired || __instance == null) return;
+                    // Same fade-in curve as the in-game HUD tint, applied to the meeting overlay's name.
+                    float t = Mathf.Clamp01((Time.time - redNameApplyStart) / NameFadeSeconds);
+                    Color tint = Color.Lerp(Color.white, RedName, t);
                     foreach (var pva in __instance.playerStates) {
                         if (pva == null || pva.NameText == null) continue;
-                        if ((byte)pva.TargetPlayerId == noteKillerId) pva.NameText.color = RedName;
+                        if ((byte)pva.TargetPlayerId == noteKillerId) pva.NameText.color = tint;
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Witness] MeetingUpdate failed: {e}");

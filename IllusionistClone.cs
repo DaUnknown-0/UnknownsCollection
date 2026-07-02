@@ -40,6 +40,18 @@ using static TheOtherRoles.TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class IllusionistClone {
+        // A dissolve (DespawnWithFx) detaches its fading instance from every OTHER static field below, so
+        // a round reset landing mid-fade would otherwise leave it to self-destruct on its own timer instead
+        // of being cleaned up immediately. Tracked separately and registered with UCFx's reset registry so
+        // "Aufräumen über UCFx.RegisterReset" applies here too, not just to the live-clone bookkeeping.
+        private static GameObject dissolveGo;
+
+        static IllusionistClone() {
+            UCFx.RegisterReset(() => {
+                if (dissolveGo != null) { try { UnityEngine.Object.Destroy(dissolveGo); } catch { } dissolveGo = null; }
+            });
+        }
+
         private static GameObject go;
         private static SpriteRenderer[] renderers;   // clone renderers
         private static SpriteRenderer[] sources;     // live source renderers, parallel to `renderers`
@@ -71,7 +83,14 @@ namespace UnknownsCollection {
         private static Vector2 currentPos;           // current path point (feet / TruePosition), used by the kill intercept
         private static Vector3 anchorOffset;         // constant body-vs-feet visual offset, baked at spawn
         private static float flashUntil;             // shield-flash highlight end time
+        private static float flashStart;             // shield-flash highlight start time (for the decay curve)
+        private static float flashDuration = 0.4f;   // shield-flash total length, parallel to flashUntil-flashStart
         private static float facingSign = 1f;        // +1 facing right, -1 facing left (from movement)
+
+        // Dissolve (soft despawn): captures the outgoing clone's GameObject/renderers into a short-lived
+        // local closure (see DespawnWithFx) so an immediate re-spawn never touches the fading instance -
+        // the static fields below are cleared the instant the dissolve starts, same as a hard Despawn().
+        private const float DissolveDuration = 0.25f;
 
         private enum VentPhase { Out, Entering, In, Exiting }
         private static VentPhase ventPhase = VentPhase.Out;
@@ -205,6 +224,7 @@ namespace UnknownsCollection {
                 go.SetActive(true);
                 active = true;
                 UCAssets.PlayCloneShimmer(currentPos);
+                IllusionistFx.SpawnMaterializePoof(currentPos); // visual beat synced to the shimmer cue above
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Illusionist] clone spawned, {path.Count} points over {path.Count * interval:F1}s, {renderers.Length} renderers, anim={useAnim}.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] clone spawn failed: {e}");
@@ -259,7 +279,11 @@ namespace UnknownsCollection {
             try { skinAnim.Play(clip, 1f); } catch { }
         }
 
-        public static void Flash(float seconds) => flashUntil = Time.time + seconds;
+        public static void Flash(float seconds) {
+            flashStart = Time.time;
+            flashDuration = Mathf.Max(seconds, 0.01f);
+            flashUntil = flashStart + flashDuration;
+        }
 
         // ---- Per-frame replay + body animation + appearance mirror + shield outline (HudManager.Update) ----
         public static void Update() {
@@ -269,8 +293,8 @@ namespace UnknownsCollection {
                 float fIdx = t / interval;
                 int i = Mathf.FloorToInt(fIdx);
                 if (i >= path.Count - 1) {
-                    // Reached the end of the recording -> the illusion fades.
-                    Despawn();
+                    // Reached the end of the recording -> the illusion fades (dissolve, not a hard cut).
+                    DespawnWithFx();
                     return;
                 }
                 Vector2 a = path[i];
@@ -343,6 +367,7 @@ namespace UnknownsCollection {
             // Keep the whole figure visible while the body ducks into the vent; only hide once it is fully
             // inside (Entering -> In). The skin ducks along via its own enter-vent animation.
             SetVisibleAll(true);
+            PlayVentSound();
             try { bodyAnim.Play(enterClip != null ? enterClip : idleClip, 1f); } catch { }
             PlaySkin(sEnter != null ? sEnter : sIdle);
         }
@@ -353,9 +378,18 @@ namespace UnknownsCollection {
             ventAnimStartTime = Time.time;
             ventAnimProgress = 1f;
             SetVisibleAll(true);                 // the figure reappears as the body climbs back out
+            PlayVentSound();
             try { bodyAnim.Play(exitClip != null ? exitClip : idleClip, 1f); } catch { }
             PlaySkin(sExit != null ? sExit : sIdle);
         }
+
+        // The clone's vent transitions used to be completely silent (a real player makes vent noise; a
+        // mute vent was itself a tell that something was off). The base game's own vent whoosh lives in
+        // an IL2CPP AnimationEvent on PlayerPhysics' Enter/ExitVent clips (Vent.Use -> MyPhysics.RpcEnterVent/
+        // RpcExitVent - no TOR-side wrapper exposes it directly, confirmed via SoundEffectsManager.cs and
+        // UsablesPatch.cs, neither of which registers a generic vent SFX name), so it can't be replayed
+        // through a managed call here. Fallback per spec: a quiet illusionist_unravel cue instead.
+        private static void PlayVentSound() => UCAssets.PlayIllusionistUnravelAt(currentPos, 0.35f);
 
         private static void SetVisibleAll(bool on) {
             if (renderers == null) return;
@@ -443,7 +477,13 @@ namespace UnknownsCollection {
         private static void ApplyOutline() {
             if (renderers == null) return;
             bool show = ShouldShowShield();
-            Color outline = Time.time < flashUntil ? Color.white : Medic.shieldedColor;
+            // Kill-block flash: decays from white back to the normal shield color over flashDuration
+            // instead of a hard on/off step, so a blocked kill reads as an impact instead of a light switch.
+            Color outline = Medic.shieldedColor;
+            if (Time.time < flashUntil) {
+                float decay = Mathf.Clamp01((Time.time - flashStart) / flashDuration);
+                outline = Color.Lerp(Color.white, Medic.shieldedColor, decay);
+            }
             foreach (var r in renderers) {
                 if (r == null || !r.gameObject.activeSelf) continue;
                 var c = r.color; c.a = 1f; r.color = c;
@@ -488,9 +528,58 @@ namespace UnknownsCollection {
             return 1f;
         }
 
+        // Hard, immediate despawn - no FX. Used to clear a stale clone before a fresh Spawn(), and at
+        // meeting-start/round-reset where a scene change already covers the transition.
         public static void Despawn() {
+            var toDestroy = go;
+            ResetState();
+            if (toDestroy != null) { try { UnityEngine.Object.Destroy(toDestroy); } catch { } }
+        }
+
+        // Soft despawn: the clone dissolves (renderers fade out over DissolveDuration) instead of
+        // vanishing instantly, with a poof + illusionist_unravel cue at its last position. The static
+        // bookkeeping is cleared IMMEDIATELY (same as a hard Despawn) so a fresh Spawn() right after never
+        // collides with the fading instance - the fade runs entirely off captured local references.
+        public static void DespawnWithFx() {
+            try {
+                if (!active || go == null) { Despawn(); return; }
+                var fadeGo = go;
+                var fadeRenderers = renderers;
+                var fadePos = currentPos;
+                ResetState();
+                if (dissolveGo != null) { try { UnityEngine.Object.Destroy(dissolveGo); } catch { } } // any earlier fade still in flight
+                dissolveGo = fadeGo;
+
+                IllusionistFx.SpawnMaterializePoof(fadePos);
+                UCAssets.PlayIllusionistUnravelAt(fadePos);
+
+                var hud = HudManager.Instance;
+                if (hud == null) { if (fadeGo != null) UnityEngine.Object.Destroy(fadeGo); dissolveGo = null; return; }
+                hud.StartCoroutine(Effects.Lerp(DissolveDuration, new Action<float>((t) => {
+                    try {
+                        if (fadeGo == null) return;
+                        float a = Mathf.Clamp01(1f - t);
+                        if (fadeRenderers != null) {
+                            foreach (var r in fadeRenderers) {
+                                if (r == null) continue;
+                                var c = r.color; c.a = a; r.color = c;
+                            }
+                        }
+                        if (t >= 1f) {
+                            UnityEngine.Object.Destroy(fadeGo);
+                            if (dissolveGo == fadeGo) dissolveGo = null;
+                        }
+                    } catch { }
+                })));
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] clone dissolve failed: {e}");
+                Despawn();
+            }
+        }
+
+        private static void ResetState() {
             active = false;
-            if (go != null) { try { UnityEngine.Object.Destroy(go); } catch { } go = null; }
+            go = null;
             renderers = null;
             sources = null;
             src = null;
@@ -512,6 +601,8 @@ namespace UnknownsCollection {
             bodyState = BodyState.None;
             ventScale = 1f;
             flashUntil = 0f;
+            flashStart = 0f;
+            flashDuration = 0.4f;
         }
     }
 }

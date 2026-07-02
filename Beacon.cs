@@ -63,6 +63,9 @@ namespace UnknownsCollection {
                     15f, 5f, 30f, 1f, SpawnRate);
                 NotGuessable = CustomOption.Create(1543, Types.Crewmate, "Beacon Not Guessable",
                     false, SpawnRate);
+                // Force BeaconFx's static constructor to run now (it is purely self-polling and has no
+                // other gameplay-driven call site that would touch it - see BeaconFx.Init()'s comment).
+                BeaconFx.Init();
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Beacon] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Beacon] CreateOptions failed: {e}");
@@ -77,6 +80,35 @@ namespace UnknownsCollection {
             PlayerControl.AllPlayerControls.ToArray().Count(p => p != null && p.Data != null && !p.Data.Disconnected);
         public static bool IsLocalBeacon() =>
             beacon != null && PlayerControl.LocalPlayer != null && beacon.PlayerId == PlayerControl.LocalPlayer.PlayerId;
+
+        // Local-only helper for BeaconFx: does the LOCAL player currently benefit from the Beacon's
+        // shared vision? Mirrors LightPatch's boost condition below for p == PlayerControl.LocalPlayer,
+        // but decoupled from CalculateLightRadius so BeaconFx can poll it once per frame the same way
+        // PoltergeistFx.TickAura polls its own self-only gate, instead of being pushed from the patch.
+        // The local player's neutral-role lookup (getRoleInfoForPlayer allocates a list + LINQ) is
+        // cached with a short TTL: BeaconFx polls this every frame, but the local role only changes
+        // on (re)assignment - a 0.5 s stale window on a purely cosmetic vignette is harmless.
+        private static float localNeutralCheckedAt = -1f;
+        private static bool localIsNeutralCached;
+        public static bool LocalGetsShare() {
+            try {
+                if (!active || beacon == null || !IsAlive(beacon)) return false;
+                var local = PlayerControl.LocalPlayer;
+                if (local == null || local.Data == null || local.Data.IsDead || local.Data.Disconnected) return false;
+                if (local.PlayerId == beacon.PlayerId) return false; // the Beacon itself always has full vision anyway
+                if (local.Data.Role != null && local.Data.Role.IsImpostor) return false;
+                if (localNeutralCheckedAt < 0f || Time.time - localNeutralCheckedAt > 0.5f) {
+                    var info = RoleInfo.getRoleInfoForPlayer(local, false).FirstOrDefault();
+                    localIsNeutralCached = info != null && info.isNeutral;
+                    localNeutralCheckedAt = Time.time;
+                }
+                if (localIsNeutralCached) return false;
+                return CanSeeBeacon(local);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Beacon] LocalGetsShare failed: {e}");
+                return false;
+            }
+        }
 
         // Within ShareRadius AND a clear line of sight to the Beacon (no wall in between) - mirrors
         // Witness.CanSee so a crewmate on the other side of a wall doesn't get the vision boost.

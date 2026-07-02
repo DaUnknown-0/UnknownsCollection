@@ -49,6 +49,7 @@ namespace UnknownsCollection {
         public static CustomOption HasTasks;
         public static CustomOption CollectCooldown;  // button cooldown after a successful collect
         public static CustomOption RelicPerTasks;    // spawn an extra relic every X crew tasks (0=off)
+        public static CustomOption ExtraRaisesGoal;  // each extra relic also raises the needed count
 
         // ---- Runtime state ----
         public static PlayerControl collector;
@@ -58,6 +59,7 @@ namespace UnknownsCollection {
         private static bool relicsSpawned;           // host: relics already placed this game
         private static int relicIdCounter;           // host: next relic id for extra spawns
         private static int extraRelicsGranted;       // host: task-progress relics already spawned
+        private static int extraSpawnedTotal;        // ALL clients (via RPC): extra relics in play
         private static float nextTaskCheck;          // host: throttle for the task-progress check
         private static float nextWinTry;             // host: throttle for the instant-win retry
 
@@ -112,6 +114,8 @@ namespace UnknownsCollection {
                     15f, 0f, 60f, 2.5f, SpawnRate);
                 RelicPerTasks = CustomOption.Create(1596, Types.Neutral, "New Relic Every X Crew Tasks (0 = Off)",
                     0f, 0f, 15f, 1f, SpawnRate);
+                ExtraRaisesGoal = CustomOption.Create(1597, Types.Neutral, "Extra Relics Raise The Needed Count",
+                    true, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Collector] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Collector] CreateOptions failed: {e}");
@@ -127,9 +131,15 @@ namespace UnknownsCollection {
         public static bool IsLocalCollector() =>
             active && collector != null && PlayerControl.LocalPlayer != null
             && collector.PlayerId == PlayerControl.LocalPlayer.PlayerId;
-        private static int NeededCount() => Mathf.Min(
-            RelicsNeeded != null ? Mathf.RoundToInt(RelicsNeeded.getFloat()) : 4,
-            RelicsSpawned != null ? Mathf.RoundToInt(RelicsSpawned.getFloat()) : 6);
+        private static int NeededCount() {
+            int baseNeeded = Mathf.Min(
+                RelicsNeeded != null ? Mathf.RoundToInt(RelicsNeeded.getFloat()) : 4,
+                RelicsSpawned != null ? Mathf.RoundToInt(RelicsSpawned.getFloat()) : 6);
+            // Option: every task-progress extra relic also raises the goal - crew task progress
+            // actively delays the Collector instead of feeding him.
+            if (ExtraRaisesGoal?.getBool() ?? false) baseNeeded += extraSpawnedTotal;
+            return baseNeeded;
+        }
         public static bool HasAllRelics() => active && collected >= NeededCount();
 
         // ---- RPC plumbing ----
@@ -168,8 +178,14 @@ namespace UnknownsCollection {
                 w.Write(p.x);
                 w.Write(p.y);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                CollectorRelics.SpawnOne(relicId, p);
+                ApplySpawnExtra(relicId, p);
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Collector] SendSpawnExtra failed: {e}"); }
+        }
+
+        // Runs on every client (sender + RPC receivers) so the raised goal stays in sync.
+        private static void ApplySpawnExtra(int relicId, Vector2 p) {
+            CollectorRelics.SpawnOne(relicId, p);
+            extraSpawnedTotal++;
         }
 
         private static void SendCollect(int relicId) {
@@ -240,7 +256,7 @@ namespace UnknownsCollection {
                             int relicId = reader.ReadByte();
                             float ex = reader.ReadSingle();
                             float ey = reader.ReadSingle();
-                            CollectorRelics.SpawnOne(relicId, new Vector2(ex, ey));
+                            ApplySpawnExtra(relicId, new Vector2(ex, ey));
                             break;
                         }
                     }
@@ -261,6 +277,7 @@ namespace UnknownsCollection {
                 relicsSpawned = false;
                 relicIdCounter = 0;
                 extraRelicsGranted = 0;
+                extraSpawnedTotal = 0;
                 nextTaskCheck = 0f;
                 nextWinTry = 0f;
                 channeling = false;

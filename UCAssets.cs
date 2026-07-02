@@ -49,6 +49,8 @@ namespace UnknownsCollection {
         // Collector (gold) + Manipulator (red)
         public static Sprite CollectorIcon => GetSprite("UnknownsCollection.Resources.collector_collect.png", 115f);
         public static Sprite ManipulatorIcon => GetSprite("UnknownsCollection.Resources.manipulator_fake.png", 115f);
+        // WORLD sprite (in-map object): 200 ppu -> the ~110 px crystal stands ~0.55 units tall.
+        public static Sprite CollectorRelicSprite => GetSprite("UnknownsCollection.Resources.collector_relic.png", 200f);
 
         public static Sprite GetSprite(string path, float pixelsPerUnit) {
             string key = path + "_" + pixelsPerUnit;

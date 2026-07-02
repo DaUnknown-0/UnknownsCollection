@@ -40,7 +40,9 @@ namespace UnknownsCollection {
         public bool armed;
         private readonly HashSet<byte> stunned = new HashSet<byte>();
 
-        private static readonly Color Tint = new Color(0.72f, 0.25f, 1f, 0.85f); // violet, distinct from Trapper
+        // Fallback tint (violet, distinct from Trapper) - only used when the custom icon is missing
+        // and the trap has to reuse the Trapper button texture.
+        private static readonly Color FallbackTint = new Color(0.72f, 0.25f, 1f, 0.85f);
 
         // ---- placement ---------------------------------------------------------------------------
         public static int ActiveCount => traps.Count;
@@ -107,8 +109,16 @@ namespace UnknownsCollection {
                 go.AddSubmergedComponent(SubmergedCompatibility.Classes.ElevatorMover);
                 go.transform.position = new Vector3(x, y, y / 1000f + 0.001f);
                 var sr = go.AddComponent<SpriteRenderer>();
-                sr.sprite = Trapper.getButtonSprite(); // public sprite; the internal Trap sprite is inaccessible
-                sr.color = Tint;
+                // Same texture as the Saboteur's trap BUTTON (both load at 115 ppu, so the ground
+                // size stays the same). Fallback: Trapper button sprite, violet-tinted.
+                var sprite = UCAssets.SaboteurTrapIcon;
+                if (sprite != null) {
+                    sr.sprite = sprite;
+                    sr.color = new Color(1f, 1f, 1f, 0.85f);
+                } else {
+                    sr.sprite = Trapper.getButtonSprite();
+                    sr.color = FallbackTint;
+                }
                 go.SetActive(LocalCanSee());
                 t.obj = go;
 

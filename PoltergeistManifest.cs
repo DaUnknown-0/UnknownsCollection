@@ -22,6 +22,7 @@
  */
 
 using System;
+using System.Linq;
 using HarmonyLib;
 using Hazel;
 using UnityEngine;
@@ -39,14 +40,21 @@ namespace UnknownsCollection {
         public static bool IsManifested { get; private set; }
         private static byte templateId = byte.MaxValue;
         private static float endTime;
+        // Player the ghost CHOSE to copy (K cycles through the living; shown on the button label).
+        private static byte selectedTemplateId = byte.MaxValue;
+        // Whether the template look is currently worn. False while a global disguise (Camouflager
+        // camo / Fungle mushroom sabotage) suppresses it - see EnforceLook().
+        private static bool lookApplied;
 
         private static TheOtherRoles.Objects.CustomButton manifestButton;
 
         public static void Reset() {
             IsManifested = false;
             templateId = byte.MaxValue;
+            selectedTemplateId = byte.MaxValue;
+            lookApplied = false;
             endTime = 0;
-            manifestButton = null;
+            // manifestButton deliberately kept (resetVariables runs after HudManager.Start).
         }
 
         // ---- RPC ----
@@ -100,10 +108,16 @@ namespace UnknownsCollection {
             templateId = template;
             endTime = Time.time + duration;
 
-            // Wear the template's identity (Morphling mechanism).
-            var outfit = templatePlayer.Data.DefaultOutfit;
-            ghost.setLook(templatePlayer.Data.PlayerName, outfit.ColorId, outfit.HatId,
-                outfit.VisorId, outfit.SkinId, outfit.PetId);
+            // Wear the template's identity (Morphling mechanism) - unless a global disguise
+            // (Camouflager camo / mushroom sabotage) is running: then stay grey like everyone
+            // else; EnforceLook() applies the template look once the disguise ends.
+            if (!DisguiseActive()) {
+                ApplyTemplateLook(ghost);
+                lookApplied = true;
+            } else {
+                ghost.setLook("", 6, "", "", "", "");
+                lookApplied = false;
+            }
 
             PoltergeistFx.SpawnPoof(ghost.GetTruePosition());
             UCAssets.PlayManifest();
@@ -112,16 +126,52 @@ namespace UnknownsCollection {
             if (Poltergeist.IsLocalPoltergeist()) SetPhysical(true);
         }
 
+        // A global disguise that hides everyone's identity - the manifest must not stick out of it.
+        private static bool DisguiseActive() {
+            try { return Camouflager.camouflageTimer > 0f || Helpers.MushroomSabotageActive(); }
+            catch { return false; }
+        }
+
+        private static void ApplyTemplateLook(PlayerControl ghost) {
+            var templatePlayer = Helpers.playerById(templateId);
+            if (ghost == null || templatePlayer == null || templatePlayer.Data == null) return;
+            var outfit = templatePlayer.Data.DefaultOutfit;
+            ghost.setLook(templatePlayer.Data.PlayerName, outfit.ColorId, outfit.HatId,
+                outfit.VisorId, outfit.SkinId, outfit.PetId);
+        }
+
+        // Per-frame look enforcement (every client): TOR's camo start greys everyone including the
+        // ghost, but its camo END resets everyone to their OWN outfit (only the Morphling gets
+        // re-morphed by TOR) - which would unmask the manifest. Mirror TOR's Morphling handling.
+        private static void EnforceLook() {
+            var ghost = Poltergeist.poltergeist;
+            if (ghost == null) return;
+            bool disguised = DisguiseActive();
+            if (disguised && lookApplied) {
+                lookApplied = false;
+                ghost.setLook("", 6, "", "", "", ""); // covers ghosts a disguise pass skipped
+            } else if (!disguised && !lookApplied) {
+                lookApplied = true;
+                ApplyTemplateLook(ghost); // re-apply after TOR's resetCamouflage
+            }
+        }
+
         private static void ApplyEnd(byte reason) {
             var ghost = Poltergeist.poltergeist;
             IsManifested = false;
             templateId = byte.MaxValue;
+            lookApplied = false;
             endTime = 0;
 
             if (ghost != null && ghost.Data != null) {
-                // Back to the own identity...
-                var own = ghost.Data.DefaultOutfit;
-                ghost.setLook(ghost.Data.PlayerName, own.ColorId, own.HatId, own.VisorId, own.SkinId, own.PetId);
+                // Back to the own identity (stay grey while a global disguise is still running -
+                // TOR resets everyone anyway when it ends)...
+                if (DisguiseActive()) {
+                    ghost.setLook("", 6, "", "", "", "");
+                } else {
+                    var own = ghost.Data.DefaultOutfit;
+                    ghost.setLook(ghost.Data.PlayerName, own.ColorId, own.HatId, own.VisorId, own.SkinId, own.PetId);
+                }
                 // ...and the poof (silent on meeting start - everyone is teleported anyway).
                 if (reason != 2) {
                     PoltergeistFx.SpawnPoof(ghost.GetTruePosition());
@@ -130,6 +180,7 @@ namespace UnknownsCollection {
             }
 
             if (Poltergeist.IsLocalPoltergeist()) SetPhysical(false);
+            // (The vent button is hidden by Tick's housekeeping the moment IsManifested is false.)
         }
 
         // Ghost client only: solid vs spectral. Manifesting requires clear ground (StandingClear), so
@@ -151,26 +202,34 @@ namespace UnknownsCollection {
             }
         }
 
-        // The manifest may only start on clear ground - never inside ship geometry.
-        private static bool StandingClear() {
+        // The manifest may only start on clear ground - never inside ship geometry. Radius 0.1
+        // (roughly half the player's own collision circle): the earlier 0.3 rejected most legal
+        // spots because it already grazed walls/props at distances where living players stand
+        // routinely. logBlockers is set on an actual click so the log names what rejected the spot.
+        private static bool StandingClear(bool logBlockers = false) {
             try {
                 var me = PlayerControl.LocalPlayer;
                 if (me == null) return false;
-                var hits = Physics2D.OverlapCircleAll(me.GetTruePosition(), 0.3f, Constants.ShipAndObjectsMask);
+                var hits = Physics2D.OverlapCircleAll(me.GetTruePosition(), 0.1f, Constants.ShipAndObjectsMask);
                 foreach (var h in hits)
-                    if (h != null && !h.isTrigger) return false;
+                    if (h != null && !h.isTrigger) {
+                        if (logBlockers)
+                            UnknownsCollectionPlugin.Logger?.LogInfo(
+                                $"[Poltergeist] manifest blocked by '{h.name}' (layer {h.gameObject.layer})");
+                        return false;
+                    }
                 return true;
             } catch { return false; }
         }
 
-        // ---- Button ----
+        // ---- Button + template selection ----
 
         public static void CreateButton(HudManager hud) {
             manifestButton = new TheOtherRoles.Objects.CustomButton(
                 () => {
                     if (IsManifested) return;
-                    var template = NearestLivingPlayer(3f);
-                    if (template == null || !StandingClear()) return;
+                    var template = CurrentTemplate();
+                    if (template == null || !StandingClear(logBlockers: true)) return;
                     float cost = Poltergeist.ManifestCost?.getFloat() ?? 60f;
                     if (Poltergeist.energy < cost) return;
                     Poltergeist.energy -= cost;
@@ -181,12 +240,44 @@ namespace UnknownsCollection {
                       && MeetingHud.Instance == null && ExileController.Instance == null
                       && !IsManifested,
                 () => Poltergeist.energy >= (Poltergeist.ManifestCost?.getFloat() ?? 60f)
-                      && NearestLivingPlayer(3f) != null && StandingClear(),
+                      && CurrentTemplate() != null && StandingClear(),
                 () => { },
                 UCAssets.ManifestIcon,
                 TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
                 hud, KeyCode.T, false, "MANIFEST");
             manifestButton.MaxTimer = 1f; manifestButton.Timer = 0f;
+        }
+
+        private static bool IsValidTemplate(PlayerControl p) =>
+            p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected
+            && (PlayerControl.LocalPlayer == null || p.PlayerId != PlayerControl.LocalPlayer.PlayerId);
+
+        // The player the manifest copies: the ghost's explicit pick (K key), or - if none picked /
+        // the pick died - the nearest living player as fallback (no distance cap; the ghost roams).
+        private static PlayerControl CurrentTemplate() {
+            var picked = Helpers.playerById(selectedTemplateId);
+            if (IsValidTemplate(picked)) return picked;
+            return NearestLivingPlayer(float.MaxValue);
+        }
+
+        // K cycles the manifest template through the living players (by player id, wraps around).
+        public static void PollTemplateSelection() {
+            try {
+                if (!Poltergeist.IsLocalPoltergeist() || IsManifested) return;
+                if (Input.GetKeyDown(KeyCode.K)) {
+                    var living = PlayerControl.AllPlayerControls.ToArray()
+                        .Where(IsValidTemplate).OrderBy(p => p.PlayerId).ToList();
+                    if (living.Count > 0) {
+                        int idx = living.FindIndex(p => p.PlayerId == selectedTemplateId);
+                        selectedTemplateId = living[(idx + 1) % living.Count].PlayerId;
+                    }
+                }
+                if (manifestButton != null) {
+                    var t = CurrentTemplate();
+                    manifestButton.buttonText = t != null && t.Data != null
+                        ? $"AS {t.Data.PlayerName} [K]" : "MANIFEST";
+                }
+            } catch { }
         }
 
         private static PlayerControl NearestLivingPlayer(float maxDist) {
@@ -206,7 +297,22 @@ namespace UnknownsCollection {
         // ---- Per-frame (from Poltergeist.HudUpdatePatch) ----
 
         public static void Tick() {
-            if (!IsManifested) return;
+            PollTemplateSelection();
+
+            if (!IsManifested) {
+                // Housekeeping: we force-Show the vent button below while manifested, and nothing in
+                // vanilla hides it again for a dead player - so it lingered (overlapping the HAND
+                // button). Hide it whenever the ghost is NOT manifested.
+                if (Poltergeist.IsLocalPoltergeist()) {
+                    var h = HudManager.Instance;
+                    if (h != null && h.ImpostorVentButton != null && h.ImpostorVentButton.isActiveAndEnabled)
+                        h.ImpostorVentButton.Hide();
+                }
+                return;
+            }
+
+            // Keep the disguise consistent with Camouflager camo / mushroom sabotage (see EnforceLook).
+            EnforceLook();
 
             // Duration is owned by the Poltergeist's client; host is the disconnect fallback.
             if (Time.time >= endTime) {
@@ -231,6 +337,22 @@ namespace UnknownsCollection {
         }
 
         // ---- Force-render the manifested ghost (vanilla re-hides dead players every FixedUpdate) ----
+
+        // Dead players are drawn with the GHOST animation set (floating, no legs) - PlayerPhysics
+        // re-picks the animation every LateUpdate from Data.IsDead. Forcing amDead=false while
+        // manifested makes every client play the normal idle/run animations, so the manifest walks
+        // and vents like a living player instead of appearing as a ghost.
+        [HarmonyPatch(typeof(PlayerPhysics), nameof(PlayerPhysics.HandleAnimation))]
+        static class AnimationPatch {
+            public static void Prefix(PlayerPhysics __instance, [HarmonyArgument(0)] ref bool amDead) {
+                try {
+                    if (!IsManifested || Poltergeist.poltergeist == null || __instance == null
+                        || __instance.myPlayer == null) return;
+                    if (__instance.myPlayer.PlayerId != Poltergeist.poltergeist.PlayerId) return;
+                    amDead = false;
+                } catch { }
+            }
+        }
 
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.FixedUpdate))]
         static class VisibilityPatch {
@@ -263,30 +385,32 @@ namespace UnknownsCollection {
             } catch { }
         }
 
-        // ---- Vent access for the manifested ghost (runs BEFORE TOR's VentCanUsePatch) ----
-
+        // ---- Vent access for the manifested ghost ----
+        // POSTFIX, not prefix: under HarmonyX a prefix returning false only skips the ORIGINAL -
+        // TOR's own Vent.CanUse prefix still ran after ours and re-denied the dead player via its
+        // "!pc.IsDead" check, which broke venting entirely. A postfix runs after all prefixes and
+        // has the last word.
         [HarmonyPatch(typeof(Vent), nameof(Vent.CanUse))]
-        [HarmonyPriority(Priority.High)]
         static class VentCanUsePatch {
-            public static bool Prefix(Vent __instance, ref float __result,
+            public static void Postfix(Vent __instance, ref float __result,
                 [HarmonyArgument(0)] NetworkedPlayerInfo pc,
                 [HarmonyArgument(1)] ref bool canUse, [HarmonyArgument(2)] ref bool couldUse) {
                 try {
-                    if (!IsManifested || Poltergeist.poltergeist == null || pc == null) return true;
-                    if (pc.PlayerId != Poltergeist.poltergeist.PlayerId) return true;
+                    if (!IsManifested || Poltergeist.poltergeist == null || pc == null) return;
+                    if (pc.PlayerId != Poltergeist.poltergeist.PlayerId) return;
                     if (!(Poltergeist.ManifestCanVent?.getBool() ?? true)) {
                         canUse = couldUse = false;
                         __result = float.MaxValue;
-                        return false;
+                        return;
                     }
+                    // Sealed and Jack-in-the-box vents keep their special deny rules from TOR.
+                    if (__instance.name.StartsWith("SealedVent_") || __instance.name.StartsWith("JackInTheBoxVent_")) return;
                     couldUse = true;
                     Vector2 pos = Poltergeist.poltergeist.GetTruePosition();
                     __result = Vector2.Distance(pos, __instance.transform.position);
                     canUse = __result <= __instance.UsableDistance;
-                    return false;
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] Vent.CanUse failed: {e}");
-                    return true;
                 }
             }
         }

@@ -92,7 +92,8 @@ namespace UnknownsCollection {
             try {
                 Ensure();
                 var e = new Effect {
-                    go = new GameObject("PoltergeistFx"),
+                    // layer 11 like every TOR world object - the ship camera does not render Default
+                    go = new GameObject("PoltergeistFx") { layer = 11 },
                     parts = new SpriteRenderer[count],
                     start = Time.time,
                     life = life,
@@ -103,7 +104,7 @@ namespace UnknownsCollection {
                 };
                 e.go.transform.position = new Vector3(at.x, at.y, -1.5f);
                 for (int i = 0; i < count; i++) {
-                    var go = new GameObject($"p{i}");
+                    var go = new GameObject($"p{i}") { layer = 11 };
                     go.transform.SetParent(e.go.transform);
                     var sr = go.AddComponent<SpriteRenderer>();
                     // Mix dots and streaks; streaks sell motion, dots sell volume.
@@ -190,10 +191,10 @@ namespace UnknownsCollection {
             }
             Ensure();
             if (auraGo == null) {
-                auraGo = new GameObject("PoltergeistAura");
+                auraGo = new GameObject("PoltergeistAura") { layer = 11 };
                 auraParts = new SpriteRenderer[7];
                 for (int i = 0; i < auraParts.Length; i++) {
-                    var go = new GameObject($"a{i}");
+                    var go = new GameObject($"a{i}") { layer = 11 };
                     go.transform.SetParent(auraGo.transform);
                     var sr = go.AddComponent<SpriteRenderer>();
                     sr.sprite = dot;
@@ -222,10 +223,10 @@ namespace UnknownsCollection {
             }
             Ensure();
             if (channelGo == null) {
-                channelGo = new GameObject("PoltergeistChannel");
+                channelGo = new GameObject("PoltergeistChannel") { layer = 11 };
                 channelParts = new SpriteRenderer[9];
                 for (int i = 0; i < channelParts.Length; i++) {
-                    var go = new GameObject($"c{i}");
+                    var go = new GameObject($"c{i}") { layer = 11 };
                     go.transform.SetParent(channelGo.transform);
                     var sr = go.AddComponent<SpriteRenderer>();
                     sr.sprite = dot;

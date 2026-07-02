@@ -173,7 +173,8 @@ namespace UnknownsCollection {
                 manipulator = null;
                 active = false;
                 fakeUntil = 0f;
-                manipulateButton = null;
+                // manipulateButton deliberately kept: resetVariables runs AFTER HudManager.Start
+                // at round start - nulling it here orphans the live button (see Collector.cs).
             }
         }
 
@@ -232,6 +233,14 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(MapCountOverlay), nameof(MapCountOverlay.Update))]
         [HarmonyPriority(Priority.First)]
         static class FakeAdminPatch {
+            // Own draw cadence. We must NOT share __instance.timer with TOR: under HarmonyX ALL
+            // prefixes run even after one returned false (false only skips the ORIGINAL method),
+            // so TOR's full-reimplementation prefix still executes every frame. With a shared
+            // timer the 0.1s threshold fired alternately in our prefix (fake counts) and in
+            // TOR's (real counts) -> the table flickered fake/real. Instead we pin
+            // __instance.timer to 0 while faking, which starves TOR's throttle so it never
+            // draws, and run our fake on this private timer.
+            private static float drawTimer = 1f; // starts above 0.1s -> first fake frame draws
             public static bool Prefix(MapCountOverlay __instance) {
                 try {
                     if (!IsFaking() || !(FakeAdmin?.getBool() ?? true)) return true;
@@ -241,12 +250,12 @@ namespace UnknownsCollection {
                     bool commsActive = false;
                     foreach (PlayerTask task in PlayerControl.LocalPlayer.myTasks.GetFastEnumerator())
                         if (task.TaskType == TaskTypes.FixComms) commsActive = true;
-                    if (commsActive) return true;
+                    if (commsActive) { drawTimer = 1f; return true; }
 
-                    // Same 0.1s throttle as vanilla/TOR.
-                    __instance.timer += Time.deltaTime;
-                    if (__instance.timer < 0.1f) return false;
-                    __instance.timer = 0f;
+                    __instance.timer = 0f; // starve TOR's prefix (see note above)
+                    drawTimer += Time.deltaTime;
+                    if (drawTimer < 0.1f) return false;
+                    drawTimer = 0f;
 
                     if (__instance.isSab) { // recover from a previous sab state exactly like TOR does
                         __instance.isSab = false;
@@ -285,7 +294,16 @@ namespace UnknownsCollection {
                     foreach (var panel in __instance.vitals) {
                         if (panel == null || !panel.IsDead) continue;
                         if (panel.PlayerInfo == null || panel.PlayerInfo.Disconnected) continue;
-                        panel.SetAlive(); // vanilla re-marks them dead on the frame the fake ends
+                        // SetAlive resets IsDead + the cardio line, but there is NO stored "alive"
+                        // background sprite (only VitalBgDead/VitalBgDiscon exist), so the red dead
+                        // background stays - the panel kept LOOKING dead. Restore it from the panel
+                        // prefab, whose Background still carries the alive sprite.
+                        panel.SetAlive();
+                        var prefab = __instance.PanelPrefab;
+                        if (prefab != null && prefab.Background != null && panel.Background != null)
+                            panel.Background.sprite = prefab.Background.sprite;
+                        // vanilla re-marks the panel dead every frame (IsDead is false again), so
+                        // the real state returns by itself on the frame the fake ends.
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Manipulator] vitals fake failed: {e}");

@@ -227,7 +227,7 @@ namespace UnknownsCollection {
                 currentAlpha = 1f;
                 wasAbilityActive = false;
                 originalSpeed = 0;
-                scoutButton = null;
+                // scoutButton deliberately kept (resetVariables runs after HudManager.Start).
             }
         }
 

@@ -36,6 +36,7 @@ namespace UnknownsCollection {
             public SpriteRenderer body;
             public SpriteRenderer glow;
             public SpriteRenderer[] sparkles;
+            public bool customBody; // drawn asset (tint white) vs procedural fallback (tint gold)
         }
 
         private static readonly List<Relic> relics = new();
@@ -51,39 +52,74 @@ namespace UnknownsCollection {
         public static void SpawnAll(List<Vector2> positions) {
             try {
                 Clear();
-                Ensure();
-                for (int i = 0; i < positions.Count; i++) {
-                    var r = new Relic { id = i, pos = positions[i] };
-                    r.go = new GameObject($"CollectorRelic{i}");
-                    r.go.transform.position = new Vector3(r.pos.x, r.pos.y, r.pos.y / 1000f);
-
-                    var glowGo = new GameObject("glow");
-                    glowGo.transform.SetParent(r.go.transform, false);
-                    r.glow = glowGo.AddComponent<SpriteRenderer>();
-                    r.glow.sprite = dotSprite;
-                    glowGo.transform.localScale = Vector3.one * 1.5f;
-
-                    var bodyGo = new GameObject("crystal");
-                    bodyGo.transform.SetParent(r.go.transform, false);
-                    r.body = bodyGo.AddComponent<SpriteRenderer>();
-                    r.body.sprite = crystalSprite;
-
-                    r.sparkles = new SpriteRenderer[3];
-                    for (int s = 0; s < 3; s++) {
-                        var sg = new GameObject($"spark{s}");
-                        sg.transform.SetParent(r.go.transform, false);
-                        r.sparkles[s] = sg.AddComponent<SpriteRenderer>();
-                        r.sparkles[s].sprite = dotSprite;
-                        sg.transform.localScale = Vector3.one * 0.12f;
-                    }
-
-                    SetAlpha(r, 0f); // invisible until Tick decides
-                    relics.Add(r);
-                }
+                for (int i = 0; i < positions.Count; i++)
+                    SpawnOne(i, positions[i]);
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Collector] {relics.Count} relics spawned.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Collector] relic spawn failed: {e}");
             }
+        }
+
+        // Single relic - used by SpawnAll and by the task-progress extra spawns (RPC subtype 3).
+        public static void SpawnOne(int id, Vector2 pos) {
+            try {
+                Ensure();
+                var r = new Relic { id = id, pos = pos };
+                // layer 11 like every TOR world object (Garlic/Trap) - the ship camera does not
+                // render the Default layer, which left the relics invisible on all clients.
+                r.go = new GameObject($"CollectorRelic{id}") { layer = 11 };
+                r.go.transform.position = new Vector3(r.pos.x, r.pos.y, r.pos.y / 1000f);
+
+                var glowGo = new GameObject("glow") { layer = 11 };
+                glowGo.transform.SetParent(r.go.transform, false);
+                r.glow = glowGo.AddComponent<SpriteRenderer>();
+                r.glow.sprite = dotSprite;
+                // Subtle halo behind the ~0.55-unit crystal (1.5 was a screen-filling blob).
+                glowGo.transform.localScale = Vector3.one * 0.8f;
+
+                var bodyGo = new GameObject("crystal") { layer = 11 };
+                bodyGo.transform.SetParent(r.go.transform, false);
+                r.body = bodyGo.AddComponent<SpriteRenderer>();
+                // Drawn asset (AssetGen: collector_relic.png); procedural crystal only as fallback.
+                var custom = UCAssets.CollectorRelicSprite;
+                r.customBody = custom != null;
+                r.body.sprite = custom ?? crystalSprite;
+
+                r.sparkles = new SpriteRenderer[3];
+                for (int s = 0; s < 3; s++) {
+                    var sg = new GameObject($"spark{s}") { layer = 11 };
+                    sg.transform.SetParent(r.go.transform, false);
+                    r.sparkles[s] = sg.AddComponent<SpriteRenderer>();
+                    r.sparkles[s].sprite = dotSprite;
+                    sg.transform.localScale = Vector3.one * 0.12f;
+                }
+
+                SetAlpha(r, 0f); // invisible until Tick decides
+                relics.Add(r);
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Collector] relic {id} at ({r.pos.x:F1}, {r.pos.y:F1}) room={RoomNameAt(r.pos)}");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Collector] relic spawn failed: {e}");
+            }
+        }
+
+        // Positions of all uncollected relics (host uses this to spread extra spawns).
+        public static List<Vector2> CurrentPositions() {
+            var list = new List<Vector2>(relics.Count);
+            foreach (var r in relics) list.Add(r.pos);
+            return list;
+        }
+
+        // Diagnostic only: name of the ship room containing `pos` (spawn-placement playtesting).
+        private static string RoomNameAt(Vector2 pos) {
+            try {
+                var ship = ShipStatus.Instance;
+                if (ship == null || ship.FastRooms == null) return "?";
+                foreach (var room in ship.FastRooms.Values)
+                    if (room != null && room.roomArea != null && room.roomArea.OverlapPoint(pos))
+                        return room.RoomId.ToString();
+            } catch { }
+            return "none";
         }
 
         public static Relic NearestRelic(Vector2 pos, float maxDist) {
@@ -128,6 +164,9 @@ namespace UnknownsCollection {
                     float bob = Mathf.Sin(now * 1.6f + r.id * 1.3f) * 0.06f;
                     r.body.transform.localPosition = new Vector3(0f, 0.12f + bob, 0f);
                     r.glow.transform.localPosition = new Vector3(0f, 0.10f + bob * 0.6f, 0.01f);
+                    // Channel feedback: the crystal being collected pulses visibly.
+                    float pulse = Collector.ChannelingRelicId == r.id ? 1f + 0.15f * Mathf.Sin(now * 12f) : 1f;
+                    r.body.transform.localScale = Vector3.one * pulse;
 
                     float a = viewerAlpha;
                     if (a > 0f && viewerAlpha < 0.9f) {
@@ -138,7 +177,7 @@ namespace UnknownsCollection {
                         a = dist > radius ? 0f : viewerAlpha * (1f - dist / radius);
                     }
 
-                    r.body.color = Tint(CrystalGold, a);
+                    r.body.color = Tint(r.customBody ? Color.white : CrystalGold, a);
                     r.glow.color = Tint(GlowGold, a * (0.28f + 0.12f * Mathf.Sin(now * 3f + r.id)));
                     for (int s = 0; s < r.sparkles.Length; s++) {
                         float ang = now * (1.2f + s * 0.4f) + s * 2.1f + r.id;
@@ -190,14 +229,14 @@ namespace UnknownsCollection {
             try {
                 Ensure();
                 var b = new Burst {
-                    go = new GameObject("RelicBurst"),
+                    go = new GameObject("RelicBurst") { layer = 11 },
                     parts = new SpriteRenderer[12],
                     start = Time.time,
                     seed = (int)(at.x * 13 + at.y * 7)
                 };
                 b.go.transform.position = new Vector3(at.x, at.y, -1.2f);
                 for (int i = 0; i < b.parts.Length; i++) {
-                    var go = new GameObject($"g{i}");
+                    var go = new GameObject($"g{i}") { layer = 11 };
                     go.transform.SetParent(b.go.transform, false);
                     b.parts[i] = go.AddComponent<SpriteRenderer>();
                     b.parts[i].sprite = dotSprite;

@@ -33,13 +33,14 @@ namespace UnknownsCollection {
                 UCAssets.PlayZap(victim.GetTruePosition());
 
                 if (dot == null) dot = BuildDotSprite();
-                var host = new GameObject("SaboteurZap");
+                // layer 11 like every TOR world object - the ship camera does not render Default
+                var host = new GameObject("SaboteurZap") { layer = 11 };
                 host.transform.position = new Vector3(
                     victim.GetTruePosition().x, victim.GetTruePosition().y, -1.0f);
 
                 var sparks = new SpriteRenderer[SparkCount];
                 for (int i = 0; i < SparkCount; i++) {
-                    var go = new GameObject($"zap{i}");
+                    var go = new GameObject($"zap{i}") { layer = 11 };
                     go.transform.SetParent(host.transform);
                     var sr = go.AddComponent<SpriteRenderer>();
                     sr.sprite = dot;

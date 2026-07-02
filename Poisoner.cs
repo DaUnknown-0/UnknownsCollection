@@ -233,7 +233,7 @@ namespace UnknownsCollection {
                 bodiesPoisonedThisRound.Clear();
                 _pendingPoisonDeaths.Clear();
                 antidoteUsesLeft = 0;
-                antidoteButton = null;
+                // antidoteButton deliberately kept (resetVariables runs after HudManager.Start).
                 antidoteTarget = null;
             }
         }

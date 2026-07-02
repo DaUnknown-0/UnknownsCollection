@@ -37,7 +37,7 @@ namespace UnknownsCollection {
         // ---- Theme ----
         public static readonly Color Color = new Color(1f, 0.78f, 0.25f); // relic gold
 
-        // ---- Options (IDs 1580-1588) ----
+        // ---- Options (IDs 1580-1589, 1596) ----
         public static CustomOption SpawnRate;
         public static CustomOption SpawnMinPlayers;
         public static CustomOption RelicsSpawned;
@@ -47,6 +47,8 @@ namespace UnknownsCollection {
         public static CustomOption ImpostorsSense;
         public static CustomOption SenseRadius;
         public static CustomOption HasTasks;
+        public static CustomOption CollectCooldown;  // button cooldown after a successful collect
+        public static CustomOption RelicPerTasks;    // spawn an extra relic every X crew tasks (0=off)
 
         // ---- Runtime state ----
         public static PlayerControl collector;
@@ -54,12 +56,18 @@ namespace UnknownsCollection {
         public static int collected;
         private static byte collectorPlayerId = byte.MaxValue;
         private static bool relicsSpawned;           // host: relics already placed this game
+        private static int relicIdCounter;           // host: next relic id for extra spawns
+        private static int extraRelicsGranted;       // host: task-progress relics already spawned
+        private static float nextTaskCheck;          // host: throttle for the task-progress check
+        private static float nextWinTry;             // host: throttle for the instant-win retry
 
         // Local channel state (Collector's client only).
         private static bool channeling;
         private static float channelStart;
         private static int channelRelicId = -1;
         private static Vector2 channelStartPos;
+        // Relic currently being channeled (or -1) - CollectorRelics pulses that crystal as feedback.
+        public static int ChannelingRelicId => channeling ? channelRelicId : -1;
 
         private const int CollectorWinReason = 19;   // Bug uses 18; TOR custom reasons end at 16
         private static byte winnerCollectorId = byte.MaxValue; // survives resetVariables (see Bug)
@@ -69,6 +77,7 @@ namespace UnknownsCollection {
         private const byte SubSetCollector = 0;  // playerId
         private const byte SubSpawnRelics = 1;   // count, then count * (x float, y float)
         private const byte SubCollect = 2;       // relicId
+        private const byte SubSpawnExtra = 3;    // relicId, x float, y float (task-progress spawn)
 
         // ---- Role identity ----
         private static RoleInfo collectorInfo;
@@ -99,6 +108,10 @@ namespace UnknownsCollection {
                     5f, 2f, 10f, 1f, SpawnRate);
                 HasTasks = CustomOption.Create(1588, Types.Neutral, "Collector Has Tasks",
                     false, SpawnRate);
+                CollectCooldown = CustomOption.Create(1589, Types.Neutral, "Collect Cooldown",
+                    15f, 0f, 60f, 2.5f, SpawnRate);
+                RelicPerTasks = CustomOption.Create(1596, Types.Neutral, "New Relic Every X Crew Tasks (0 = Off)",
+                    0f, 0f, 15f, 1f, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Collector] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Collector] CreateOptions failed: {e}");
@@ -144,7 +157,19 @@ namespace UnknownsCollection {
                 foreach (var p in positions) { w.Write(p.x); w.Write(p.y); }
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 CollectorRelics.SpawnAll(positions);
+                relicIdCounter = positions.Count; // extra spawns continue the id sequence
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Collector] SendSpawnRelics failed: {e}"); }
+        }
+
+        private static void SendSpawnExtra(int relicId, Vector2 p) {
+            try {
+                var w = BeginRpc(SubSpawnExtra);
+                w.Write((byte)relicId);
+                w.Write(p.x);
+                w.Write(p.y);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                CollectorRelics.SpawnOne(relicId, p);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Collector] SendSpawnExtra failed: {e}"); }
         }
 
         private static void SendCollect(int relicId) {
@@ -176,14 +201,19 @@ namespace UnknownsCollection {
             UCAssets.PlayRelicPickup(at);
             if (IsLocalCollector())
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Collector] Collected {collected}/{NeededCount()}.");
+            // Instant win happens in TryInstantWin (HudUpdate): a single RpcEndGame here proved
+            // fragile - the bypass test-freeze swallowed it and the win was lost for the round.
+        }
 
-            // Instant win: the host ends the game with our own reason the moment the goal is met.
-            if (HasAllRelics() && (WinMode?.getSelection() ?? 0) == 0
-                && AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost
-                && IsAlive(collector)) {
-                UnknownsCollectionPlugin.Logger?.LogInfo("[Collector] All relics collected - instant win.");
-                GameManager.Instance.RpcEndGame((GameOverReason)CollectorWinReason, false);
-            }
+        // Host: end the game with the Collector's own reason - RETRIED every 2s while the win
+        // condition holds, so a swallowed/suppressed RpcEndGame does not lose the win.
+        private static void TryInstantWin() {
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+            if ((WinMode?.getSelection() ?? 0) != 0 || !HasAllRelics() || !IsAlive(collector)) return;
+            if (Time.time < nextWinTry) return;
+            nextWinTry = Time.time + 2f;
+            UnknownsCollectionPlugin.Logger?.LogInfo("[Collector] All relics collected - instant win.");
+            GameManager.Instance.RpcEndGame((GameOverReason)CollectorWinReason, false);
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetCollector(playerId);
@@ -206,6 +236,13 @@ namespace UnknownsCollection {
                             break;
                         }
                         case SubCollect: ApplyCollect(reader.ReadByte()); break;
+                        case SubSpawnExtra: {
+                            int relicId = reader.ReadByte();
+                            float ex = reader.ReadSingle();
+                            float ey = reader.ReadSingle();
+                            CollectorRelics.SpawnOne(relicId, new Vector2(ex, ey));
+                            break;
+                        }
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Collector] HandleRpc failed: {e}");
@@ -222,9 +259,16 @@ namespace UnknownsCollection {
                 collectorPlayerId = byte.MaxValue;
                 collected = 0;
                 relicsSpawned = false;
+                relicIdCounter = 0;
+                extraRelicsGranted = 0;
+                nextTaskCheck = 0f;
+                nextWinTry = 0f;
                 channeling = false;
                 channelRelicId = -1;
-                collectButton = null;
+                // collectButton is deliberately NOT nulled: TOR runs resetVariables at ROUND START,
+                // AFTER HudManager.Start created the button. Nulling the static reference here left
+                // the live button working (OnClick lambdas use the statics directly) but killed all
+                // logic gated on "collectButton != null" - the channel never progressed or aborted.
                 CollectorRelics.Clear();
                 // NOTE: winnerCollectorId deliberately survives (read after reset at game end, like Bug).
             }
@@ -255,32 +299,38 @@ namespace UnknownsCollection {
             }
         }
 
-        // Relic placement runs LAST at intro end so it covers BOTH assignment paths (random pick above
-        // and a draft pick, which is marked before OnDestroy fires).
+        // Host: spawn the relics once the game is running. Callers: the intro-end hook below (the
+        // earliest sensible moment, covers random AND draft picks) and a per-frame fallback in
+        // HudUpdatePatch - in a solo/bypass test round the IntroCutscene.OnDestroy postfix chain
+        // demonstrably never reached us (no log line at all), so the intro hook alone is not enough.
+        private static void EnsureRelicsSpawned() {
+            try {
+                if (relicsSpawned) return;
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                if (!active || !AmongUsClient.Instance.IsGameStarted || ShipStatus.Instance == null) return;
+                relicsSpawned = true;
+                var positions = PickRelicPositions(RelicsSpawned != null ? Mathf.RoundToInt(RelicsSpawned.getFloat()) : 6);
+                if (positions.Count == 0) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning("[Collector] No relic anchors found on this map!");
+                    return;
+                }
+                SendSpawnRelics(positions);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Collector] relic placement failed: {e}");
+            }
+        }
+
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
         [HarmonyPriority(Priority.VeryLow)]
         static class IntroEndRelicsPatch {
-            public static void Postfix() {
-                try {
-                    if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || relicsSpawned) return;
-                    relicsSpawned = true;
-                    var positions = PickRelicPositions(RelicsSpawned != null ? Mathf.RoundToInt(RelicsSpawned.getFloat()) : 6);
-                    if (positions.Count == 0) {
-                        UnknownsCollectionPlugin.Logger?.LogWarning("[Collector] No relic anchors found on this map!");
-                        return;
-                    }
-                    SendSpawnRelics(positions);
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Collector] relic placement failed: {e}");
-                }
-            }
+            public static void Postfix() => EnsureRelicsSpawned();
         }
 
         // Map-agnostic anchors: task consoles exist on every map (Skeld/Mira/Polus/Airship/Fungle/
         // Submerged). Excludes critical-sabotage consoles + emergency button (shared rule with the
         // Saboteur traps) and enforces a minimum pairwise distance so relics spread over the map.
-        private static List<Vector2> PickRelicPositions(int count) {
+        // Shuffled task-console anchors (excluding critical-sabotage consoles + emergency button).
+        private static List<Vector2> CollectAnchors() {
             var anchors = new List<Vector2>();
             foreach (var c in UnityEngine.Object.FindObjectsOfType<Console>()) {
                 if (c == null) continue;
@@ -293,8 +343,20 @@ namespace UnknownsCollection {
                 int j = rnd.Next(i + 1);
                 (anchors[i], anchors[j]) = (anchors[j], anchors[i]);
             }
+            return anchors;
+        }
+
+        private static Vector2 RandomAnchorOffset() =>
+            new Vector2((float)(rnd.NextDouble() - 0.5) * 1.6f, (float)(rnd.NextDouble() - 0.5) * 1.6f);
+
+        private static List<Vector2> PickRelicPositions(int count) {
+            var anchors = CollectAnchors();
             var picked = new List<Vector2>();
-            foreach (float minDist in new[] { 10f, 6f, 3f, 0f }) { // relax if the map is small/dense
+            // Relaxing pairwise spread. Starting at 10 units effectively FORCED the same picks every
+            // round: with 6 relics only the map-extreme consoles satisfy 10u pairwise on Polus-sized
+            // maps, so the "random" shuffle always converged on the same rooms. 7u keeps the spread
+            // but leaves the shuffle real choice.
+            foreach (float minDist in new[] { 7f, 5f, 3f, 0f }) {
                 foreach (var a in anchors) {
                     if (picked.Count >= count) break;
                     bool tooClose = picked.Any(p => Vector2.Distance(p, a) < minDist);
@@ -302,13 +364,55 @@ namespace UnknownsCollection {
                 }
                 if (picked.Count >= count) break;
             }
-            // Small random offset so relics don't sit exactly inside console sprites.
+            // Random offset so relics don't sit exactly inside console sprites.
             for (int i = 0; i < picked.Count; i++)
-                picked[i] += new Vector2((float)(rnd.NextDouble() - 0.5) * 1.2f, (float)(rnd.NextDouble() - 0.5) * 1.2f);
+                picked[i] += RandomAnchorOffset();
             return picked;
         }
 
+        // One position for a task-progress extra relic: first shuffled anchor that keeps some
+        // distance to the relics still lying around (relaxing, so it always finds a spot).
+        private static Vector2? PickExtraRelicPosition() {
+            var anchors = CollectAnchors();
+            if (anchors.Count == 0) return null;
+            var existing = CollectorRelics.CurrentPositions();
+            foreach (float minDist in new[] { 7f, 5f, 3f, 0f })
+                foreach (var a in anchors)
+                    if (!existing.Any(p => Vector2.Distance(p, a) < minDist))
+                        return a + RandomAnchorOffset();
+            return anchors[0] + RandomAnchorOffset();
+        }
+
+        // Host: spawn one extra relic per X completed crew tasks (option, 0 = off). Task counts
+        // come from GameData (kept current by RecomputeTaskCounts, already adjusted by TaskPatch).
+        private static void TrySpawnTaskRelic() {
+            try {
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost || !relicsSpawned) return;
+                int per = RelicPerTasks != null ? Mathf.RoundToInt(RelicPerTasks.getFloat()) : 0;
+                if (per <= 0) return;
+                if (Time.time < nextTaskCheck) return;
+                nextTaskCheck = Time.time + 1f;
+                var gd = GameData.Instance;
+                if (gd == null) return;
+                int earned = gd.CompletedTasks / per;
+                while (extraRelicsGranted < earned) {
+                    extraRelicsGranted++;
+                    var pos = PickExtraRelicPosition();
+                    if (pos == null) return;
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[Collector] {gd.CompletedTasks} crew tasks done -> extra relic {relicIdCounter}.");
+                    SendSpawnExtra(relicIdCounter++, pos.Value);
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Collector] task relic spawn failed: {e}");
+            }
+        }
+
         // ---- Collect button + channel ----
+
+        // How close (units) the Collector must stand to a relic's CENTER. 1.4 felt broken in the
+        // playtest - standing visually "at" the relic was often just outside it.
+        private const float CollectRange = 2.0f;
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         [HarmonyPriority(Priority.Low)]
@@ -317,9 +421,22 @@ namespace UnknownsCollection {
                 try {
                     collectButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
-                            if (channeling) { channeling = false; return; }
-                            var relic = CollectorRelics.NearestRelic(PlayerControl.LocalPlayer.GetTruePosition(), 1.4f);
-                            if (relic == null) return;
+                            if (channeling) {
+                                UnknownsCollectionPlugin.Logger?.LogInfo("[Collector] channel cancelled by button press.");
+                                channeling = false;
+                                return;
+                            }
+                            Vector2 herePos = PlayerControl.LocalPlayer.GetTruePosition();
+                            var relic = CollectorRelics.NearestRelic(herePos, CollectRange);
+                            if (relic == null) {
+                                var any = CollectorRelics.NearestRelic(herePos, float.MaxValue);
+                                if (any != null)
+                                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                                        $"[Collector] collect pressed - nearest relic is {Vector2.Distance(herePos, any.pos):F1}u away (range {CollectRange}).");
+                                return;
+                            }
+                            UnknownsCollectionPlugin.Logger?.LogInfo(
+                                $"[Collector] channel started on relic {relic.id} ({Vector2.Distance(herePos, relic.pos):F1}u away).");
                             channeling = true;
                             channelStart = Time.time;
                             channelRelicId = relic.id;
@@ -330,7 +447,7 @@ namespace UnknownsCollection {
                               && !HasAllRelics(),
                         () => channeling
                               || (PlayerControl.LocalPlayer.CanMove
-                                  && CollectorRelics.NearestRelic(PlayerControl.LocalPlayer.GetTruePosition(), 1.4f) != null),
+                                  && CollectorRelics.NearestRelic(PlayerControl.LocalPlayer.GetTruePosition(), CollectRange) != null),
                         () => { channeling = false; },
                         UCAssets.CollectorIcon,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
@@ -349,8 +466,13 @@ namespace UnknownsCollection {
                 try {
                     CollectorRelics.Tick();
                     if (!active) return;
+                    EnsureRelicsSpawned(); // host fallback if the intro hook never fired
+                    TrySpawnTaskRelic();
+                    TryInstantWin();
 
-                    if (IsLocalCollector() && collectButton != null) {
+                    // NOTE: the channel logic must not be gated on collectButton - the button label
+                    // is cosmetic, the progress/abort handling is not.
+                    if (IsLocalCollector()) {
                         if (channeling) {
                             float dur = ChannelDuration?.getFloat() ?? 3f;
                             float progress = (Time.time - channelStart) / dur;
@@ -360,13 +482,24 @@ namespace UnknownsCollection {
                                            || PlayerControl.LocalPlayer.Data.IsDead;
                             if (moved || relicGone || blocked) {
                                 channeling = false;
+                                UnknownsCollectionPlugin.Logger?.LogInfo(
+                                    $"[Collector] channel aborted (moved={moved}, relicGone={relicGone}, blocked={blocked}).");
+                                // Make the silent abort visible - "the click did nothing" feedback.
+                                if (moved) Helpers.showFlash(new Color(1f, 0.75f, 0.2f, 0.3f), 0.2f);
                             } else if (progress >= 1f) {
                                 channeling = false;
                                 SendCollect(channelRelicId);
-                            } else {
+                                // Cooldown between collects (option): CustomButton blocks clicks
+                                // while Timer > 0 and renders the countdown.
+                                float cd = CollectCooldown?.getFloat() ?? 15f;
+                                if (collectButton != null && cd > 0f) {
+                                    collectButton.MaxTimer = cd;
+                                    collectButton.Timer = cd;
+                                }
+                            } else if (collectButton != null) {
                                 collectButton.buttonText = $"COLLECT {(int)(progress * 100)}%";
                             }
-                        } else {
+                        } else if (collectButton != null) {
                             collectButton.buttonText = $"RELICS {collected}/{NeededCount()}";
                         }
                     }

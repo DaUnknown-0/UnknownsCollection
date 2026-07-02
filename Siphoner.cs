@@ -263,7 +263,7 @@ namespace UnknownsCollection {
                 active = false;
                 lastDrainTime = 0f;
                 drainActive = false;
-                drainButton = null;
+                // drainButton deliberately kept (resetVariables runs after HudManager.Start).
             }
         }
 

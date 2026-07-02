@@ -45,6 +45,7 @@ namespace UnknownsCollection {
         private static float sweepSpeed;
         private static float resultTimer;
         private static bool shownSabotaged;
+        private static float armedAt;         // input dead-time after opening (see StartScan)
 
         // Wire state
         private const int WireCount = 4;
@@ -147,6 +148,10 @@ namespace UnknownsCollection {
         // ---- Scan ----------------------------------------------------------
         private static void StartScan() {
             phase = Phase.Scan;
+            // Dead-time: the mouse click that pressed the SEARCH button is still "down" in this
+            // very frame, so ActionDown() would fire immediately - and if the sweeping marker
+            // happened to sit inside the window, the result was revealed without playing at all.
+            armedAt = Time.time + 0.25f;
             markerPos = 0f;
             windowHalf = drunk ? 0.06f : 0.12f;                 // drunk: narrower window
             windowCenter = UnityEngine.Random.Range(0.2f, 0.8f);
@@ -168,7 +173,7 @@ namespace UnknownsCollection {
                 window.transform.localScale = new Vector3(4f * (windowHalf * 2f), 0.5f, 1f);
             }
 
-            if (ActionDown()) {
+            if (Time.time >= armedAt && ActionDown()) {
                 bool hitWindow = Mathf.Abs(shown - windowCenter) <= windowHalf;
                 if (hitWindow) {
                     // Reveal. Drunk result may lie.

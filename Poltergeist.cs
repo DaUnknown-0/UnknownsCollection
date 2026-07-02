@@ -394,9 +394,8 @@ namespace UnknownsCollection {
             handChanneling = false;
             speedHexApplied = false;
             hexMode = HexSpeed;
-            doorButton = null;
-            hexButton = null;
-            handButton = null;
+            // Button statics deliberately kept: resetVariables runs AFTER HudManager.Start at round
+            // start - nulling them orphans the live buttons (energy labels died; see Collector.cs).
             PoltergeistFx.Clear();
             PoltergeistManifest.Reset();
         }

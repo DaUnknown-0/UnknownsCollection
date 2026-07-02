@@ -10,6 +10,8 @@ modified**. The plugin only takes a hard dependency on TheOtherRoles.
 > Collection version** (the host gets a warning otherwise). All Impostor roles are also pickable in TOR's
 > **Role Draft**.
 
+📖 **Full documentation:** <https://daunknown-0.github.io/tor-mods-wiki/unknowns.html> (searchable, EN/DE).
+
 ---
 
 ## Roles
@@ -93,6 +95,15 @@ modified**. The plugin only takes a hard dependency on TheOtherRoles.
   manifest vent & kill refund, keeps tasks.
 
 Every role also has the two standard options: a **spawn chance** and a **minimum lobby size to spawn**.
+
+---
+
+## Audio & visuals
+
+Every role ships **custom button and role textures** and its own **stereo sound cues** for ability
+activations, kills, meeting reveals and wins (31 sound effects in total). Particle, glow and reveal
+effects share a common `UCFx` base so the whole collection stays visually consistent. Assets are loaded
+and cached once via `UCAssets`.
 
 ---
 

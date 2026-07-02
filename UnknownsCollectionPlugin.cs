@@ -223,14 +223,46 @@ public class UnknownsCollectionPlugin : BasePlugin
         private static bool CreditVisible() =>
             AppDomain.CurrentDomain.GetData(CreditKey) is bool b && b;
 
+        // Click-decode animation on the mod name: for a short moment the letters show as random
+        // glyphs that resolve left-to-right into "Unknown's Collection" - a text-only effect that
+        // fits the name. Purely cosmetic, driven by the per-frame line rebuild below.
+        private const string ModName = "Unknown's Collection";
+        private const string ScrambleGlyphs = "#%&?$@*<>!/=+";
+        private const float ScrambleDuration = 0.9f;
+        private static float scrambleStart = -1f;
+
+        private static string NameMarkup()
+        {
+            if (scrambleStart >= 0f && Time.time - scrambleStart >= ScrambleDuration) scrambleStart = -1f;
+            if (scrambleStart < 0f) return $"<color=#1FB8FF>{ModName}</color>";
+            float p = (Time.time - scrambleStart) / ScrambleDuration;
+            // slight overshoot so the last letters resolve before the effect ends
+            int resolved = Mathf.Clamp((int)(p * (ModName.Length + 3)), 0, ModName.Length);
+            var sb = new System.Text.StringBuilder(64);
+            sb.Append("<color=#1FB8FF>").Append(ModName, 0, resolved).Append("</color>");
+            if (resolved < ModName.Length)
+            {
+                sb.Append("<color=#C9F2FF>");
+                for (int i = resolved; i < ModName.Length; i++)
+                {
+                    char c = ModName[i];
+                    // keep spaces/apostrophe so the line width barely moves while decoding
+                    sb.Append(c == ' ' || c == '\'' ? c : ScrambleGlyphs[UnityEngine.Random.Range(0, ScrambleGlyphs.Length)]);
+                }
+                sb.Append("</color>");
+            }
+            return sb.ToString();
+        }
+
         public static void Postfix(PingTracker __instance)
         {
             if (__instance == null || __instance.text == null) return;
             string text = __instance.text.text;
             if (string.IsNullOrEmpty(text)) return;
 
-            // Click the mod name to toggle the shared credit line. PingTracker.text is a world-space
-            // TextMeshPro (no canvas), so the link raycast needs the rendering camera.
+            // Click the mod name to play the decode animation and toggle the shared credit line.
+            // PingTracker.text is a world-space TextMeshPro (no canvas), so the link raycast needs
+            // the rendering camera.
             if (Input.GetMouseButtonDown(0))
             {
                 Camera cam = Camera.main;
@@ -240,13 +272,24 @@ public class UnknownsCollectionPlugin : BasePlugin
                         : (canvas.worldCamera != null ? canvas.worldCamera : Camera.main);
                 int link = TMPro.TMP_TextUtilities.FindIntersectingLink(__instance.text, Input.mousePosition, cam);
                 if (link != -1 && __instance.text.textInfo.linkInfo[link].GetLinkID() == LinkId)
+                {
                     AppDomain.CurrentDomain.SetData(CreditKey, !CreditVisible());
+                    scrambleStart = Time.time;
+                }
             }
 
-            // Insert our version line once (guarded so it doesn't stack per frame).
-            if (!text.Contains(LinkId))
+            // Insert our version line - or, if it is already present (and possibly mid-animation),
+            // replace it so the decoding name rewrites every frame.
+            string line = $"<link=\"{LinkId}\">{NameMarkup()} v{VersionDisplay.FormatRich(Version)}</link>";
+            int linkStart = text.IndexOf($"<link=\"{LinkId}\">");
+            if (linkStart >= 0)
             {
-                string line = $"<link=\"{LinkId}\"><color=#1FB8FF>Unknown's Collection</color> v{VersionDisplay.FormatRich(Version)}</link>";
+                int linkEnd = text.IndexOf("</link>", linkStart);
+                if (linkEnd >= 0)
+                    text = text.Substring(0, linkStart) + line + text.Substring(linkEnd + "</link>".Length);
+            }
+            else
+            {
                 int nl = text.IndexOf('\n');
                 text = nl >= 0
                     ? text.Substring(0, nl + 1) + line + "\n" + text.Substring(nl + 1)

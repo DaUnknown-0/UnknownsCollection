@@ -46,6 +46,9 @@ namespace UnknownsCollection {
         public static Sprite SaboteurSearchIcon => GetSprite("UnknownsCollection.Resources.saboteur_search.png", 100f);
         public static Sprite ScoutIcon => GetSprite("UnknownsCollection.Resources.scout_transparent.png", 115f);
         public static Sprite SiphonerIcon => GetSprite("UnknownsCollection.Resources.siphoner_drain.png", 115f);
+        // Collector (gold) + Manipulator (red)
+        public static Sprite CollectorIcon => GetSprite("UnknownsCollection.Resources.collector_collect.png", 115f);
+        public static Sprite ManipulatorIcon => GetSprite("UnknownsCollection.Resources.manipulator_fake.png", 115f);
 
         public static Sprite GetSprite(string path, float pixelsPerUnit) {
             string key = path + "_" + pixelsPerUnit;
@@ -99,6 +102,10 @@ namespace UnknownsCollection {
         public static void PlayShadeVanish(float volume = 0.7f) => Play("shade_vanish", volume);
         public static void PlayFollowerShift(float volume = 0.8f) => Play("follower_shift", volume);
         public static void PlayCopycatLearn(float volume = 0.7f) => Play("copycat_learn", volume);
+
+        public static void PlayRelicPickup(Vector2 at, float volume = 0.7f) => PlayAt("collector_pickup", at, volume);
+        public static void PlayCollectorWin(float volume = 0.85f) => Play("collector_win", volume);
+        public static void PlayManipulatorWarp(float volume = 0.7f) => Play("manipulator_warp", volume);
 
         // Burning-fuse loop (seamless clip): started for the bomb carrier, stopped on pass/explode.
         public static void PlayFuseLoop(float volume = 0.7f) {

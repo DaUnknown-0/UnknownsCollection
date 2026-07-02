@@ -1,6 +1,6 @@
 # Unknown's Collection
 
-A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds **15 custom roles** to
+A [BepInEx](https://github.com/BepInEx/BepInEx) plugin that adds **17 custom roles** to
 [The Other Roles](https://github.com/TheOtherRolesAU/TheOtherRoles) (TOR) for *Among Us*.
 
 Each role is layered on top of TOR purely through Harmony patches — **the original TOR source is never
@@ -41,6 +41,11 @@ modified**. The plugin only takes a hard dependency on TheOtherRoles.
 - **The Shade** — Kills make the victim's body **vanish**; others find it by walking close, then it
   auto-reports. Bait victims stay visible so their own report still exposes the killer. *Options:* find
   distance.
+- **The Manipulator** — Makes the ship's **security devices lie** for a while, for everyone: the admin
+  table shows a fabricated (but synced and believable) player distribution, and vitals shows dead
+  players as alive. Works with whatever devices the map has (Skeld/Mira: admin; Fungle: vitals;
+  Polus/Airship: both); comms sabotage keeps its normal "signal lost" look. *Options:* cooldown,
+  duration, fake admin, fake vitals.
 
 ### Crewmate
 
@@ -64,6 +69,12 @@ modified**. The plugin only takes a hard dependency on TheOtherRoles.
   are left alone. *Options:* min players; optional glitchy win-screen effects.
 - **The Follower** — Takes over the **full role of the first player to die** (team, ability and win
   condition — including Impostor/Neutral). *Options:* min players.
+- **The Collector** — The host scatters **relics** across the map (anchored near task consoles, on
+  every map). Only the Collector sees them; impostors can optionally **sense** a faint shimmer nearby.
+  Collecting takes a few seconds of **channeling** (moving cancels; nearby players hear a quiet
+  glitter). Enough relics win — instantly or, per option, only if the Collector also survives to the
+  end (then it hijacks the next team win, like the Bug). *Options:* relics spawned/needed, channel
+  duration, win mode, impostor sense + radius, has tasks.
 - **The Copycat** — **Learns abilities by witnessing them** — Camouflage, Morph, Shield (unkillable),
   Shoot (Sheriff-style, backfires on Crew) and Vent (vent access). Each learned ability is a button; the
   Copycat wins **with the winning team** if alive and it used enough abilities. *Options:* max stored

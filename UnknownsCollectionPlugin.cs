@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.0.1.53";
+    public const string PluginVersion = "1.0.1.54";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
@@ -62,6 +62,8 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte ScoutRpcId = 203;
     public const byte BeaconRpcId = 204;
     public const byte PoltergeistRpcId = 208;
+    public const byte CollectorRpcId = 209;
+    public const byte ManipulatorRpcId = 210;
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -151,6 +153,14 @@ public class UnknownsCollectionPlugin : BasePlugin
         // haunts: door slams, hexes, a ghost hand on reactor consoles and a manifest disguise.
         Poltergeist.CreateOptions();
         Poltergeist.TryPatch(harmony);
+
+        // The Collector role (Neutral). Collect hidden relics scattered over the map to win alone.
+        Collector.CreateOptions();
+        Collector.TryPatch(harmony);
+
+        // The Manipulator role (Impostor). Makes the admin table and vitals lie for a while.
+        Manipulator.CreateOptions();
+        Manipulator.TryPatch(harmony);
 
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line + UCOptionsPatch).

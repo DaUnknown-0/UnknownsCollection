@@ -49,6 +49,8 @@ namespace UnknownsCollection {
         public const byte CopycatDraftId = 211;
         public const byte ScoutDraftId = 212;
         public const byte BeaconDraftId = 213;
+        public const byte CollectorDraftId = 214;
+        public const byte ManipulatorDraftId = 215;
 
         // ---- Draft entry table (all UC roles) ----
         private class Entry {
@@ -92,6 +94,10 @@ namespace UnknownsCollection {
                      false, () => Scout.SpawnRate,       () => Scout.SpawnMinPlayers,       Scout.MarkFromDraft),
                 Make(BeaconDraftId,      "Beacon",      Beacon.Color,        "Lights never affect you; crew shares your vision",
                      false, () => Beacon.SpawnRate,      () => Beacon.SpawnMinPlayers,      Beacon.MarkFromDraft),
+                Make(CollectorDraftId,   "Collector",   Collector.Color,     "Find and collect the hidden relics to win alone",
+                     false, () => Collector.SpawnRate,   () => Collector.SpawnMinPlayers,   Collector.MarkFromDraft),
+                Make(ManipulatorDraftId, "Manipulator", Palette.ImpostorRed, "Make the ship's security devices lie",
+                     true,  () => Manipulator.SpawnRate, () => Manipulator.SpawnMinPlayers, Manipulator.MarkFromDraft),
             };
             return entries;
         }

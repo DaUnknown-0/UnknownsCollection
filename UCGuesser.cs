@@ -70,6 +70,12 @@ namespace UnknownsCollection {
             Beacon.SpawnRate != null && Beacon.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod()
             && !(Beacon.NotGuessable != null && Beacon.NotGuessable.getBool());
+        private static bool CollectorGuessable() =>
+            Collector.SpawnRate != null && Collector.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+        private static bool ManipulatorGuessable() =>
+            Manipulator.SpawnRate != null && Manipulator.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
 
         private static void Sync(bool add) {
             // Impostor roles — insert after the base Impostor entry
@@ -80,6 +86,7 @@ namespace UnknownsCollection {
             SetEntry(Illusionist.IllusionistInfo(), add && IllusionistGuessable(), RoleInfo.impostor);
             SetEntry(Maniac.ManiacInfo(),     add && ManiacGuessable(),      RoleInfo.impostor);
             SetEntry(Shade.ShadeInfo(),       add && ShadeGuessable(),        RoleInfo.impostor);
+            SetEntry(Manipulator.ManipulatorInfo(), add && ManipulatorGuessable(), RoleInfo.impostor);
             // Crew / Neutral roles — insert after the base Crewmate entry
             SetEntry(Siphoner.SiphonerInfo(), add && SiphonerGuessable(),   RoleInfo.crewmate);
             SetEntry(Witness.WitnessInfo(),   add && WitnessGuessable(),    RoleInfo.crewmate);
@@ -88,6 +95,7 @@ namespace UnknownsCollection {
             SetEntry(Copycat.CopycatInfo(),   add && CopycatGuessable(),    RoleInfo.crewmate);
             SetEntry(Scout.ScoutInfo(),       add && ScoutGuessable(),      RoleInfo.crewmate);
             SetEntry(Beacon.BeaconInfo(),     add && BeaconGuessable(),     RoleInfo.crewmate);
+            SetEntry(Collector.CollectorInfo(), add && CollectorGuessable(), RoleInfo.crewmate);
         }
 
         private static void SetEntry(RoleInfo ri, bool want, RoleInfo after) {

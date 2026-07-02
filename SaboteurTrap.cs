@@ -45,23 +45,58 @@ namespace UnknownsCollection {
         // ---- placement ---------------------------------------------------------------------------
         public static int ActiveCount => traps.Count;
 
-        // Saboteur-local check: may a trap be placed at the local player's current spot? Forbidden in the
-        // emergency-button / reactor / O2 rooms (same-room rule).
+        // Saboteur-local check: may a trap be placed at the local player's current spot? Two layers:
+        //   1. Room rule: forbidden in the emergency-button / reactor / O2 rooms.
+        //   2. MAP-AGNOSTIC distance rule: forbidden within 4.5 units of any critical-sabotage console
+        //      (ResetReactor / ResetSeismic / StopCharles) or the emergency button itself. This is what
+        //      covers the Airship's helicopter consoles (their rooms are map-specific and not in the
+        //      switch) and any future map without touching this code again.
         public static bool CanPlaceHere() {
             try {
                 var room = HudManager.Instance?.roomTracker?.LastRoom?.RoomId;
-                if (room == null) return true; // unknown room (e.g. hallway) -> allowed
-                switch (room.Value) {
-                    case SystemTypes.Reactor:     // reactor / meltdown
-                    case SystemTypes.Laboratory:  // Polus seismic (reactor-equivalent)
-                    case SystemTypes.LifeSupp:    // O2
-                    case SystemTypes.Cafeteria:   // emergency button (Skeld/Mira/Fungle)
-                    case SystemTypes.MeetingRoom: // emergency button (other maps)
-                        return false;
-                    default:
-                        return true;
+                if (room != null) {
+                    switch (room.Value) {
+                        case SystemTypes.Reactor:     // reactor / meltdown
+                        case SystemTypes.Laboratory:  // Polus seismic (reactor-equivalent)
+                        case SystemTypes.LifeSupp:    // O2
+                        case SystemTypes.Cafeteria:   // emergency button (Skeld/Mira/Fungle)
+                        case SystemTypes.MeetingRoom: // emergency button (other maps)
+                            return false;
+                    }
                 }
+                return !NearCriticalSpot(PlayerControl.LocalPlayer.GetTruePosition(), 4.5f);
             } catch { return true; }
+        }
+
+        // True if `pos` is close to a critical-sabotage console or the emergency button. The console
+        // list is rebuilt per ShipStatus instance (same cache-invalidation rule as the Saboteur's
+        // task-console scan - stale cross-map caches held destroyed objects).
+        private static readonly List<Vector2> criticalSpots = new List<Vector2>();
+        private static ShipStatus criticalSpotsShip;
+        public static bool NearCriticalSpot(Vector2 pos, float dist) {
+            try {
+                var ship = ShipStatus.Instance;
+                if (ship == null) return false;
+                if (criticalSpotsShip != ship) {
+                    criticalSpotsShip = ship;
+                    criticalSpots.Clear();
+                    foreach (var c in UnityEngine.Object.FindObjectsOfType<Console>()) {
+                        if (c == null || c.TaskTypes == null) continue;
+                        foreach (var tt in c.TaskTypes) {
+                            if (tt == TaskTypes.ResetReactor || tt == TaskTypes.ResetSeismic
+                                || tt == TaskTypes.StopCharles) {
+                                criticalSpots.Add(c.transform.position);
+                                break;
+                            }
+                        }
+                    }
+                    if (ship.EmergencyButton != null)
+                        criticalSpots.Add(ship.EmergencyButton.transform.position);
+                }
+                foreach (var spot in criticalSpots)
+                    if (Vector2.Distance(pos, spot) < dist) return true;
+                return false;
+            } catch { return false; }
         }
 
         public static void Place(int id, float x, float y) {

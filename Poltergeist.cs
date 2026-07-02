@@ -296,16 +296,17 @@ namespace UnknownsCollection {
 
         private static void ApplyHandStart() {
             handChanneling = true;
-            // Anchored on the ghost's own position (same anchor the channel-ring FX uses, see the
-            // handChanneling tick below) rather than the console - distance-gated like Door Slam/Poof.
-            if (poltergeist != null) UCAssets.PlayGhostHandAt(poltergeist.GetTruePosition());
+            // Anchored on the REACTOR room centre (see ReactorAnchor), NOT the ghost's own hidden
+            // position - the cue is a public "something at the reactor" tell, distance-gated like Door
+            // Slam/Poof. Same anchor the channel-ring FX uses (see the handChanneling tick below).
+            if (poltergeist != null) UCAssets.PlayGhostHandAt(ReactorAnchor(poltergeist.GetTruePosition()));
         }
 
         private static void ApplyHandStop() {
             handChanneling = false;
-            // Release cue at the ghost's last known position, then let the channel-ring FADE instead of
+            // Release cue at the reactor (same anchor as start), then let the channel-ring FADE instead of
             // cutting it instantly (PoltergeistFx.SetChannel now starts a short fade-out internally).
-            if (poltergeist != null) UCAssets.PlayPoltergeistHandStopAt(poltergeist.GetTruePosition());
+            if (poltergeist != null) UCAssets.PlayPoltergeistHandStopAt(ReactorAnchor(poltergeist.GetTruePosition()));
             PoltergeistFx.SetChannel(Vector2.zero, false);
         }
 
@@ -361,6 +362,29 @@ namespace UnknownsCollection {
                 }
             } catch { }
             return 0;
+        }
+
+        // Fixed, PUBLIC anchor for the Ghost Hand FX (start/stop cue + channel ring): the reactor room's
+        // centre. The hand reaches the REACTOR, so the cue belongs there - a location that is already
+        // public and reveals nothing about the ghost. Anchoring on the ghost's own (otherwise invisible)
+        // live position leaked where the hidden Poltergeist was standing, even far from the console.
+        // Uses FastRooms (same room lookup the vanilla UsablesPatch uses); falls back to the passed
+        // position only if the reactor room can't be resolved (should not happen while a reactor sabotage
+        // is live). Reactor/Laboratory mirrors ActiveReactorSystem's own system list.
+        private static Vector2 ReactorAnchor(Vector2 fallback) {
+            try {
+                var ship = ShipStatus.Instance;
+                if (ship != null && ship.FastRooms != null) {
+                    foreach (var sys in new[] { SystemTypes.Reactor, SystemTypes.Laboratory }) {
+                        if (ship.FastRooms.ContainsKey(sys)) {
+                            var room = ship.FastRooms[sys];
+                            if (room != null && room.roomArea != null)
+                                return (Vector2)room.roomArea.bounds.center;
+                        }
+                    }
+                }
+            } catch { }
+            return fallback;
         }
 
         private static void StartGhostHand() {
@@ -643,7 +667,8 @@ namespace UnknownsCollection {
 
                     // Ghost Hand channel: drain + keep FX on the ghost, stop when spent or fixed.
                     if (handChanneling) {
-                        PoltergeistFx.SetChannel(poltergeist.GetTruePosition(), true);
+                        // Ring sits at the reactor (public), not on the ghost's hidden position.
+                        PoltergeistFx.SetChannel(ReactorAnchor(poltergeist.GetTruePosition()), true);
                         if (IsLocalPoltergeist()) {
                             energy -= (HandDrainPerSecond?.getFloat() ?? 5f) * Time.deltaTime;
                             bool sabotageGone = ActiveReactorSystem() == 0;

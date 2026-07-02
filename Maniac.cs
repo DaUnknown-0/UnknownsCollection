@@ -36,6 +36,7 @@ namespace UnknownsCollection {
         public static float bombPlacedAt;           // Time.time when bomb was planted
         public static float bombDetectedAt;         // Time.time when carrier was warned
         private static bool bombKillUsed;           // prevent double-kill on explosion
+        private const float BlastFreezeDuration = 1.5f; // short stun for survivors caught in the explosion
 
         private const byte RpcId = 199;
         private const byte SubSetManiac = 0;
@@ -284,8 +285,15 @@ namespace UnknownsCollection {
                     float range = BombRange();
                     var me = PlayerControl.LocalPlayer;
                     Vector2 pos = victim.GetTruePosition();
-                    if (me != null && Vector2.Distance(me.GetTruePosition(), pos) <= range)
+                    if (me != null && Vector2.Distance(me.GetTruePosition(), pos) <= range) {
                         Helpers.showFlash(new Color(1f, 0.3f, 0f, 0.6f), 0.4f);
+                        // Short freeze for survivors caught in the blast: the detonation briefly stuns
+                        // everyone nearby (moveable=false + Halt, mirroring TOR's Trapper trap freeze).
+                        // Applied per client to the LOCAL player only; the dying victim is skipped (being
+                        // murdered anyway) and dead/vented players are never frozen.
+                        if (!me.Data.IsDead && me.PlayerId != victimId && !me.inVent)
+                            FreezeLocal(BlastFreezeDuration);
+                    }
                     UCAssets.PlayExplosion(pos);
                     ManiacFx.SpawnExplosion(pos);
                 }
@@ -309,6 +317,27 @@ namespace UnknownsCollection {
             var t = carrier.cosmetics.nameText.text;
             int tagStart = t.IndexOf(" <color=#FF0000><b>[BOMB!]</b></color>", StringComparison.Ordinal);
             if (tagStart >= 0) carrier.cosmetics.nameText.text = t.Substring(0, tagStart);
+        }
+
+        // Briefly locks the LOCAL player in place (moveable=false + NetTransform.Halt), auto-releasing
+        // after `duration` via a HudManager coroutine - same freeze technique TOR's Trapper trap uses.
+        // Defensive: restores movement immediately if the HUD/coroutine host is missing.
+        private static void FreezeLocal(float duration) {
+            try {
+                var p = PlayerControl.LocalPlayer;
+                if (p == null) return;
+                p.moveable = false;
+                if (p.NetTransform != null) p.NetTransform.Halt();
+                var hud = HudManager.Instance;
+                if (hud == null) { p.moveable = true; return; }
+                hud.StartCoroutine(Effects.Lerp(duration, new Action<float>((t) => {
+                    if (t == 1f && p != null) p.moveable = true;
+                })));
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Maniac] FreezeLocal failed: {e.Message}");
+                var lp = PlayerControl.LocalPlayer;
+                if (lp != null) lp.moveable = true;
+            }
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetManiac(playerId);

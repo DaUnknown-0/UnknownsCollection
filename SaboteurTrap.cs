@@ -45,6 +45,18 @@ namespace UnknownsCollection {
         // Fallback tint (violet, distinct from Trapper) - only used when the custom icon is missing
         // and the trap has to reuse the Trapper button texture.
         private static readonly Color FallbackTint = new Color(0.72f, 0.25f, 1f, 0.85f);
+
+        // Real Trapper IN-GAME trap sprite, loaded from TOR's own assembly (same resource + 300 ppu that
+        // TOR's Objects/Trap uses). Shown to the VICTIM the moment the trap springs so a sprung Saboteur
+        // trap is visually indistinguishable from a Trapper trap. TOR's Trap class is internal, so we load
+        // the embedded sprite directly rather than call its getTrapSprite(). Cached after first load.
+        private static Sprite trapperTrapSprite;
+        private static Sprite TrapperTrapSprite() {
+            if (trapperTrapSprite != null) return trapperTrapSprite;
+            try { trapperTrapSprite = Helpers.loadSpriteFromResources("TheOtherRoles.Resources.Trapper_Trap_Ingame.png", 300f); }
+            catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Saboteur] Trapper trap sprite load failed: {e.Message}"); }
+            return trapperTrapSprite;
+        }
         private const float SteadyAlpha = 0.85f;   // final alpha once fully armed (matches the old flat 0.85)
         private const float GrowInTime = 0.2f;     // scale/alpha fade-in duration after placement
 
@@ -198,16 +210,30 @@ namespace UnknownsCollection {
                 // Single-use: stop it from triggering again, but keep the object alive so it can be SHOWN.
                 traps.Remove(t);
 
-                // Reveal the trap (and play a sound + spark burst) to the player who stepped in it - and
-                // to the Saboteur - so the victim realises they are trapped. (Mirrors TOR's Trapper.)
-                bool localInvolved = PlayerControl.LocalPlayer != null
-                    && (PlayerControl.LocalPlayer.PlayerId == playerId || Saboteur.IsLocalSaboteur());
+                // Reveal the trap to the player who stepped in it - and to the Saboteur - so the victim
+                // realises they are trapped. (Mirrors TOR's Trapper: only victim + trapper see it spring.)
+                bool localIsSaboteur = Saboteur.IsLocalSaboteur();
+                bool localIsVictim = PlayerControl.LocalPlayer != null && PlayerControl.LocalPlayer.PlayerId == playerId;
+                bool localInvolved = localIsVictim || localIsSaboteur;
                 if (t.obj != null && localInvolved) {
                     t.obj.SetActive(true);
-                    try {
-                        UCAssets.PlayTrapSnap(t.pos);
-                        SaboteurKillFx.PlayMiniBurst(t.pos);
-                    } catch { }
+                    if (localIsVictim && !localIsSaboteur) {
+                        // DISGUISE: to the victim the sprung trap looks EXACTLY like a triggered Trapper
+                        // trap - the real in-game sprite (white, full alpha) plus the Trapper's own trigger
+                        // sound - so they blame a Trapper instead of suspecting a Saboteur. No violet spark
+                        // burst here (that would give it away); TOR's Trapper reveal is sprite + sound only.
+                        if (t.sr != null) {
+                            var disguise = TrapperTrapSprite();
+                            if (disguise != null) { t.sr.sprite = disguise; t.sr.color = Color.white; }
+                        }
+                        try { SoundEffectsManager.play("trapperTrap"); } catch { }
+                    } else {
+                        // The Saboteur's own view keeps the saboteur marker + its snap/spark cue.
+                        try {
+                            UCAssets.PlayTrapSnap(t.pos);
+                            SaboteurKillFx.PlayMiniBurst(t.pos);
+                        } catch { }
+                    }
                 }
 
                 float dur = Saboteur.TrapStunDuration != null ? Saboteur.TrapStunDuration.getFloat() : 5f;
@@ -222,10 +248,10 @@ namespace UnknownsCollection {
                     hud.StartCoroutine(Effects.Lerp(dur, new Action<float>((p) => {
                         if (p == 1f) {
                             if (player != null) player.moveable = true;
-                            if (localInvolved) {
-                                // Stun-release cue: no dedicated "release" asset exists in the sound table,
-                                // so the trap-snap clip is reused at a much lower volume as the closest
-                                // available cue, paired with a short local fade-out flash for the visual beat.
+                            // Release cue ONLY for the Saboteur (violet snap + flash). The victim gets no
+                            // release effect: a real Trapper trap simply frees you when it expires, so a
+                            // violet flash on the victim's screen would break the disguise.
+                            if (localIsSaboteur) {
                                 try {
                                     UCAssets.PlayTrapSnap(t.pos, 0.35f);
                                     SpawnReleaseFlash(t.pos);

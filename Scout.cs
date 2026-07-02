@@ -164,10 +164,12 @@ namespace UnknownsCollection {
             abilityActive = true;
             float dur = Duration != null ? Duration.getFloat() : 10f;
             abilityEndTime = Time.time + dur;
-            if (scout != null) {
+            // Whoosh + poof are now Scout-only (per design): PlayScoutWhoosh uses PlayAt with no
+            // line-of-sight check, so an ungated cue leaked the Scout's exact position + activation
+            // timing through walls - beyond the transparency change, which is only visible on sight.
+            // The transparency itself stays public via SendTransparency below.
+            if (IsLocalScout() && scout != null) {
                 UCAssets.PlayScoutWhoosh(scout.GetTruePosition());
-                // Public just like the transparency itself - every client applies this the same way, so
-                // spawn locally here rather than adding a new RPC.
                 CrewFx.SpawnPoof(scout.GetTruePosition(), Color);
             }
             if (IsLocalScout()) {
@@ -184,7 +186,8 @@ namespace UnknownsCollection {
         private static void ApplyDeactivate() {
             abilityActive = false;
             abilityEndTime = 0;
-            if (scout != null) {
+            // Scout-only, same rationale as ApplyActivate (no LOS on PlayAt -> would leak through walls).
+            if (IsLocalScout() && scout != null) {
                 UCAssets.PlayScoutWhoosh(scout.GetTruePosition(), 0.4f);
                 CrewFx.SpawnPoof(scout.GetTruePosition(), Color);
             }

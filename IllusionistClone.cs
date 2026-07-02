@@ -223,8 +223,8 @@ namespace UnknownsCollection {
                 ApplyTransform(currentPos);
                 go.SetActive(true);
                 active = true;
-                UCAssets.PlayCloneShimmer(currentPos);
-                IllusionistFx.SpawnMaterializePoof(currentPos); // visual beat synced to the shimmer cue above
+                if (Illusionist.IsLocalIllusionist()) UCAssets.PlayCloneShimmer(currentPos); // sound Illusionist-only
+                IllusionistFx.SpawnMaterializePoof(currentPos); // visual beat stays public (clone is visible to all)
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Illusionist] clone spawned, {path.Count} points over {path.Count * interval:F1}s, {renderers.Length} renderers, anim={useAnim}.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] clone spawn failed: {e}");
@@ -389,7 +389,7 @@ namespace UnknownsCollection {
         // RpcExitVent - no TOR-side wrapper exposes it directly, confirmed via SoundEffectsManager.cs and
         // UsablesPatch.cs, neither of which registers a generic vent SFX name), so it can't be replayed
         // through a managed call here. Fallback per spec: a quiet illusionist_unravel cue instead.
-        private static void PlayVentSound() => UCAssets.PlayIllusionistUnravelAt(currentPos, 0.35f);
+        private static void PlayVentSound() { if (Illusionist.IsLocalIllusionist()) UCAssets.PlayIllusionistUnravelAt(currentPos, 0.35f); } // sound Illusionist-only
 
         private static void SetVisibleAll(bool on) {
             if (renderers == null) return;
@@ -550,8 +550,8 @@ namespace UnknownsCollection {
                 if (dissolveGo != null) { try { UnityEngine.Object.Destroy(dissolveGo); } catch { } } // any earlier fade still in flight
                 dissolveGo = fadeGo;
 
-                IllusionistFx.SpawnMaterializePoof(fadePos);
-                UCAssets.PlayIllusionistUnravelAt(fadePos);
+                IllusionistFx.SpawnMaterializePoof(fadePos); // visual dissolve stays public
+                if (Illusionist.IsLocalIllusionist()) UCAssets.PlayIllusionistUnravelAt(fadePos); // sound Illusionist-only
 
                 var hud = HudManager.Instance;
                 if (hud == null) { if (fadeGo != null) UnityEngine.Object.Destroy(fadeGo); dissolveGo = null; return; }

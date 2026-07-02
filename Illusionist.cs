@@ -162,7 +162,9 @@ namespace UnknownsCollection {
                 var w = BeginRpc(SubFlash);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 IllusionistClone.Flash(0.4f);
-                UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position()); // metallic "block" ping, sender side
+                // Sound is Illusionist-only (per design: only the Illusionist hears their own cues); the
+                // clone flash itself stays public. Sender IS the Illusionist, so this always plays here.
+                if (IsLocalIllusionist()) UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position());
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] SendCloneFlash failed: {e}"); }
         }
 
@@ -216,7 +218,9 @@ namespace UnknownsCollection {
                         }
                         case SubFlash:
                             IllusionistClone.Flash(0.4f);
-                            UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position()); // receiver side
+                            // Sound is Illusionist-only: on non-Illusionist clients this is skipped, so the
+                            // block ping no longer leaks the clone-hit to bystanders. Flash stays public.
+                            if (IsLocalIllusionist()) UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position());
                             break;
                         case SubDespawn: IllusionistClone.DespawnWithFx(); break;
                     }

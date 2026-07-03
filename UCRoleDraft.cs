@@ -242,12 +242,20 @@ namespace UnknownsCollection {
 
         // Intercept the draft pick for our sentinel roles: mark the player as that UC role instead of
         // running TOR's setRole switch (which has no case for these ids). Runs on every client.
+        // The mark() runs with the UCRevealFx promotion cue suppressed: its screen flash would disable
+        // HudManager.FullScreen at flash end - the renderer the Role Draft uses as its black backdrop -
+        // and permanently cut the draft's blackscreen (see UCPromotion.SuppressRevealForDraftPick).
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.setRole))]
         [HarmonyPriority(Priority.High)]
         static class SetRolePatch {
             public static bool Prefix(byte roleId, byte playerId) {
                 foreach (var e in Entries())
-                    if (roleId == e.id) { e.mark(playerId); return false; }
+                    if (roleId == e.id) {
+                        UCPromotion.SuppressRevealForDraftPick = true;
+                        try { e.mark(playerId); }
+                        finally { UCPromotion.SuppressRevealForDraftPick = false; }
+                        return false;
+                    }
                 return true;
             }
         }

@@ -129,11 +129,24 @@ namespace UnknownsCollection {
             } catch { return null; }
         }
 
+        // TOR convention: the (not yet grown-up) Mini is exempt from being targeted/killed. The Maniac
+        // honours that everywhere the bomb touches a player - plant target, pass target AND the blast.
+        private static bool IsProtectedMini(PlayerControl p) =>
+            p != null && Mini.mini != null && p == Mini.mini && !Mini.isGrownUp();
+
+        // Untargetable-list for setTarget(): excludes the (not grown-up) Mini from plant/pass targeting.
+        private static List<PlayerControl> BombUntargetables() {
+            var l = new List<PlayerControl>();
+            if (Mini.mini != null && !Mini.isGrownUp()) l.Add(Mini.mini);
+            return l;
+        }
+
         // Whether the bomb's blast may kill this player, given the "Explosion Hits" and "Pierces Shield"
         // options. Medic shields protect the shielded player; the Time Master shield protects the Time
         // Master while it's active. A shield only protects if the option does NOT pierce it.
         private static bool BlastCanKill(PlayerControl p) {
             if (!IsAlive(p)) return false;
+            if (IsProtectedMini(p)) return false;                                       // Mini is off-limits
             int hits = ExplosionHitsSel();
             if (hits == 0 && p.Data?.Role != null && p.Data.Role.IsImpostor) return false;   // spare all impostors
             if (hits == 1 && maniac != null && p.PlayerId == maniac.PlayerId) return false;    // spare only the maniac
@@ -530,7 +543,7 @@ namespace UnknownsCollection {
                 currentTarget = null;
                 return;
             }
-            currentTarget = PlayerControlFixedUpdatePatch.setTarget(true);
+            currentTarget = PlayerControlFixedUpdatePatch.setTarget(true, untargetablePlayers: BombUntargetables());
             if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, Color);
         }
 
@@ -590,7 +603,7 @@ namespace UnknownsCollection {
                     // PASS button shown to the bomb carrier
                     passButton = new TheOtherRoles.Objects.CustomButton(
                         () => {
-                            var target = PlayerControlFixedUpdatePatch.setTarget();
+                            var target = PlayerControlFixedUpdatePatch.setTarget(untargetablePlayers: BombUntargetables());
                             if (target == null || bombCarrier == null) return;
                             SendPassBomb(bombCarrier.PlayerId, target.PlayerId);
                             // Tiny debounce only: the button belongs to whoever CARRIES the bomb, so a
@@ -601,7 +614,7 @@ namespace UnknownsCollection {
                         () => active && LocalHasBomb()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove
-                              && PlayerControlFixedUpdatePatch.setTarget() != null,
+                              && PlayerControlFixedUpdatePatch.setTarget(untargetablePlayers: BombUntargetables()) != null,
                         () => { },
                         passSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,

@@ -908,9 +908,35 @@ namespace UnknownsCollection {
             TheOtherRoles.Objects.CustomButton.ButtonPositions.highRowRight + new Vector3(0f, 0.6f, 0f);
         private const float SlotEps = 0.25f;
 
+        // The VANILLA HUD buttons (vent/ability/pet/kill/sabotage) are NOT CustomButtons, but they live
+        // in the same bottom-right grid - e.g. the Vulture's vent button sits exactly on lowerRowRight.
+        // Collect the active ones as offsets from the UseButton anchor (the same anchor CustomButton
+        // positions against), so PlaceSearchButton treats their slots as occupied too.
+        private static readonly List<Vector3> vanillaOffsets = new List<Vector3>();
+        private static List<Vector3> ActiveVanillaButtonOffsets(HudManager hud) {
+            vanillaOffsets.Clear();
+            if (hud == null || hud.UseButton == null) return vanillaOffsets;
+            Vector3 anchor = hud.UseButton.transform.localPosition;
+            void Add(ActionButton b) {
+                if (b != null && b.isActiveAndEnabled)
+                    vanillaOffsets.Add(b.transform.localPosition - anchor);
+            }
+            Add(hud.ImpostorVentButton);
+            Add(hud.SabotageButton);
+            Add(hud.AbilityButton);
+            Add(hud.PetButton);
+            Add(hud.KillButton);
+            return vanillaOffsets;
+        }
+
+        private static bool SlotMatches(float x, float y, Vector3 slot) =>
+            Mathf.Abs(x - slot.x) < SlotEps && Mathf.Abs(y - slot.y) < SlotEps;
+
         private static void PlaceSearchButton() {
             if (searchButton == null || searchButton.actionButtonGameObject == null) return;
             if (!searchButton.actionButtonGameObject.activeSelf) return; // only while visible
+
+            var occupied = ActiveVanillaButtonOffsets(searchButton.hudManager ?? HudManager.Instance);
 
             Vector3 chosen = SearchFallbackSlot;
             foreach (var slot in SearchSlots) {
@@ -918,9 +944,11 @@ namespace UnknownsCollection {
                 foreach (var b in TheOtherRoles.Objects.CustomButton.buttons) {
                     if (b == null || b == searchButton || b.mirror) continue;
                     if (b.actionButtonGameObject == null || !b.actionButtonGameObject.activeSelf) continue;
-                    if (Mathf.Abs(b.PositionOffset.x - slot.x) < SlotEps
-                        && Mathf.Abs(b.PositionOffset.y - slot.y) < SlotEps) { free = false; break; }
+                    if (SlotMatches(b.PositionOffset.x, b.PositionOffset.y, slot)) { free = false; break; }
                 }
+                if (free)
+                    foreach (var off in occupied)
+                        if (SlotMatches(off.x, off.y, slot)) { free = false; break; }
                 if (free) { chosen = slot; break; }
             }
             searchButton.PositionOffset = chosen;

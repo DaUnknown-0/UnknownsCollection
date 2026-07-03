@@ -40,6 +40,13 @@ namespace UnknownsCollection {
 
         public static bool IsClaimed(byte playerId) => claimed.Contains(playerId);
 
+        // Set (and reset) by UCRoleDraft.SetRolePatch around a Role-Draft pick: the reveal's screen
+        // flash (Helpers.showFlash) disables HudManager.FullScreen when it finishes - the very renderer
+        // TOR's Role Draft uses as its black backdrop - so a reveal fired mid-draft permanently cuts
+        // the draft's blackscreen and exposes the game world/HUD behind it. A drafted player actively
+        // clicked their role anyway, so the promotion cue is skipped entirely for draft picks.
+        public static bool SuppressRevealForDraftPick = false;
+
         // suppressFx: pass true when the caller already gives the promoted player its own bespoke
         // reveal feedback, so UCRevealFx's generic gold/white cue does not double up with it.
         public static void Claim(byte playerId, bool suppressFx = false) {
@@ -47,7 +54,8 @@ namespace UnknownsCollection {
             claimed.Add(playerId);
             // Info-Leak-Regel: Claim() fires on EVERY client for EVERY UC role assignment - only the
             // player who was actually promoted may ever see/hear this, never bystanders.
-            if (!suppressFx && PlayerControl.LocalPlayer != null && playerId == PlayerControl.LocalPlayer.PlayerId)
+            if (!suppressFx && !SuppressRevealForDraftPick
+                && PlayerControl.LocalPlayer != null && playerId == PlayerControl.LocalPlayer.PlayerId)
                 UCRevealFx.PlayReveal();
         }
 

@@ -265,6 +265,11 @@ namespace UnknownsCollection {
             if (active) UCPromotion.Claim(saboteurPlayerId);
             RefillTokens();
             killUsedThisRound = false;
+            // Belt-and-suspenders: an untriggered trap from the PREVIOUS game must never survive
+            // into this one - stale entries kept counting against MaxActiveTraps, silently eating
+            // the new game's trap budget. No legitimate trap can exist this early (placement only
+            // opens after the intro), so a hard clear is always safe here.
+            SaboteurTrap.Clear();
             if (active)
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] The Saboteur is {saboteur.Data?.PlayerName}.");
         }

@@ -34,6 +34,17 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, float> limpUntil = new Dictionary<byte, float>();
         private static bool selfLimping;
 
+        // Players currently frozen by a sprung trap. The release (moveable = true) normally comes
+        // from a HUD coroutine - which dies with the HUD when the game ends mid-stun, leaving the
+        // player frozen into the lobby / next game. Clear() frees everyone in this register, and
+        // it also runs on OnGameEnd via UCFx.RegisterReset (see the static ctor).
+        private static readonly HashSet<byte> activeStuns = new HashSet<byte>();
+
+        static SaboteurTrap() { UCFx.RegisterReset(Clear); }
+
+        // Forces the static ctor (the RegisterReset above) at plugin load - ManipulatorFx pattern.
+        public static void Init() { }
+
         public int id;
         public Vector2 pos;
         public GameObject obj;
@@ -206,6 +217,7 @@ namespace UnknownsCollection {
                 player.moveable = false;
                 player.NetTransform.Halt();
                 t.stunned.Add(playerId);
+                activeStuns.Add(playerId);
 
                 // Single-use: stop it from triggering again, but keep the object alive so it can be SHOWN.
                 traps.Remove(t);
@@ -248,6 +260,7 @@ namespace UnknownsCollection {
                     hud.StartCoroutine(Effects.Lerp(dur, new Action<float>((p) => {
                         if (p == 1f) {
                             if (player != null) player.moveable = true;
+                            activeStuns.Remove(playerId);
                             // Release cue ONLY for the Saboteur (violet snap + flash). The victim gets no
                             // release effect: a real Trapper trap simply frees you when it expires, so a
                             // violet flash on the victim's screen would break the disguise.
@@ -260,7 +273,7 @@ namespace UnknownsCollection {
                             if (t.obj != null) UnityEngine.Object.Destroy(t.obj); // remove AFTER the stun
                         }
                     })));
-                else { player.moveable = true; if (t.obj != null) UnityEngine.Object.Destroy(t.obj); }
+                else { player.moveable = true; activeStuns.Remove(playerId); if (t.obj != null) UnityEngine.Object.Destroy(t.obj); }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] trap Trigger failed: {e}");
             }
@@ -333,6 +346,16 @@ namespace UnknownsCollection {
         }
 
         public static void Clear() {
+            // Free anyone still held by a trap: the release coroutine dies with the HUD on game
+            // end, which used to leave players frozen (moveable=false) into the lobby/next game.
+            foreach (byte pid in activeStuns) {
+                try {
+                    var p = Helpers.playerById(pid);
+                    if (p != null) p.moveable = true;
+                } catch { }
+            }
+            activeStuns.Clear();
+
             foreach (var t in traps)
                 if (t.obj != null) UnityEngine.Object.Destroy(t.obj);
             traps.Clear();

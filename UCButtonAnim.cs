@@ -128,7 +128,7 @@ namespace UnknownsCollection {
                 (UCAssets.ManiacPassIcon,           "maniac_pass",          115f),
                 (UCAssets.SaboteurSabotageIcon,     "saboteur_sabotage",    115f),
                 (UCAssets.SaboteurTrapIcon,         "saboteur_trap",        115f),
-                (UCAssets.SaboteurSelfLimpIcon,     "saboteur_selflimp",    115f),
+                // saboteur_selflimp deliberately NOT animated (user preference).
                 (UCAssets.SilencerIcon,             "silencer_silence",     115f),
                 (UCAssets.SaboteurSearchIcon,       "saboteur_search",      100f),
                 (UCAssets.ScoutIcon,                "scout_transparent",    115f),

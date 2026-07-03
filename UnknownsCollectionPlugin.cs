@@ -188,6 +188,9 @@ public class UnknownsCollectionPlugin : BasePlugin
         // Custom role kill overlays (Tesla/Saboteur-task/Poisoner/Shade/Maniac). Same pattern.
         UCKillOverlay.Init();
 
+        // Trap cleanup registration (frees trap-frozen players on round reset AND game end).
+        SaboteurTrap.Init();
+
         Logger.LogInfo($"{PluginName} v{PluginVersion} loaded.");
     }
 

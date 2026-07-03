@@ -69,6 +69,7 @@ namespace UnknownsCollection {
 
         private static TextMeshPro colorBlindSrc;     // live colorblind-mode color-name label (CosmeticsLayer.colorBlindText)
         private static TextMeshPro colorBlindClone;   // its standalone clone, kept in sync each frame
+        private static Vector3 colorBlindBaseScale = Vector3.one; // label scale at spawn, for the counter-flip
 
         private static Transform[] cosmeticTransforms; // transforms of cosmetics (hat, visor) that need to move with vents
         private static Vector3[] cosmeticOriginalPos;  // original localPosition for each cosmetic, parallel to cosmeticTransforms
@@ -193,6 +194,7 @@ namespace UnknownsCollection {
                         textGo.transform.localPosition = colorBlindSrc.transform.position - bodyWorld;
                         textGo.transform.localRotation = colorBlindSrc.transform.rotation;
                         textGo.transform.localScale = colorBlindSrc.transform.lossyScale;
+                        colorBlindBaseScale = textGo.transform.localScale;
                         colorBlindClone = textGo.GetComponent<TextMeshPro>();
                         textGo.SetActive(false); // MirrorAppearance() turns it on if/when the option is live
                     }
@@ -516,6 +518,14 @@ namespace UnknownsCollection {
             float sx = facingSign, sy = 1f;
             if (!useAnim) { sx *= ventScale; sy = ventScale; }   // fallback shrink
             go.transform.localScale = new Vector3(sx, sy, 1f);
+
+            // Counter-flip the colorblind label: it hangs under the root whose x-scale carries the
+            // facing, so a left-facing clone showed a MIRRORED color name ("kcalB") - an instant
+            // giveaway. Multiplying the label's local x by facingSign nets the flip out to always-
+            // readable text (vanilla never mirrors it either: it flips body sprites, not scale).
+            if (colorBlindClone != null)
+                colorBlindClone.transform.localScale = new Vector3(
+                    colorBlindBaseScale.x * facingSign, colorBlindBaseScale.y, colorBlindBaseScale.z);
         }
 
         // Pick the starting facing from the first noticeable horizontal move in the path.

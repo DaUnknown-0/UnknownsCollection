@@ -500,6 +500,8 @@ namespace UnknownsCollection {
 
         private static void ApplyKillFx(byte victimId) {
             var victim = Helpers.playerById(victimId);
+            // Custom kill overlay - task kills ONLY (normal Saboteur knife kills keep vanilla).
+            UCKillOverlay.ArmVictim(UCKillOverlay.Kind.SaboteurTask, victimId);
             SaboteurKillFx.Play(victim);
             // The Saboteur pays a kill-cooldown penalty for the sabotage kill - but NOT here: this FX RPC
             // is sent (and locally applied) BEFORE RpcUncheckedMurder (see HostHandleRequestKill), and

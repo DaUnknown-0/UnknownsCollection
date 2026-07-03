@@ -1,6 +1,20 @@
 // Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 
+/*
+ * Adds an "Unknown's Collection" sub-page to TOR's "Mod Options..." popup (gear menu).
+ *
+ * Lifecycle lessons baked in (the first version silently broke on the SECOND open):
+ *  - Cleanup must use GetComponentsInChildren(includeInactive: true) - the popup is inactive
+ *    while closed, so the default overload finds nothing and stale titles/toggles pile up.
+ *  - Never cache TMP templates/fonts across scenes. TOR re-creates its own titleText on every
+ *    MainMenuManager.Start for exactly this reason; we now clone title/font from TOR's live
+ *    objects on every open instead of a one-time template.
+ *  - Every click listener is wrapped in try/catch WITH logging, and the TOR popup is only
+ *    hidden AFTER our popup was built successfully - a throw used to leave both popups hidden,
+ *    which looked like "the menu just doesn't open" with a clean log.
+ */
+
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
@@ -16,9 +30,9 @@ namespace UnknownsCollection {
     public static class UCOptionsPatch {
         private static FieldInfo torPopUpField;
         private static FieldInfo torButtonPrefabField;
+        private static FieldInfo torTitleTextField;
 
         private static GameObject ucPopUp;
-        private static TextMeshPro ucTitleTemplate;
 
         private static readonly UCSelection[] AllOptions = {
             new("Bug Win Glitch Effects",
@@ -27,7 +41,14 @@ namespace UnknownsCollection {
                         !UnknownsCollectionPlugin.BugGlitchEnabled.Value;
                     return UnknownsCollectionPlugin.BugGlitchEnabled.Value;
                 },
-                () => UnknownsCollectionPlugin.BugGlitchEnabled.Value)
+                () => UnknownsCollectionPlugin.BugGlitchEnabled.Value),
+            new("Button Ready Pulse",
+                () => {
+                    UnknownsCollectionPlugin.ButtonPulseEnabled.Value =
+                        !UnknownsCollectionPlugin.ButtonPulseEnabled.Value;
+                    return UnknownsCollectionPlugin.ButtonPulseEnabled.Value;
+                },
+                () => UnknownsCollectionPlugin.ButtonPulseEnabled.Value)
         };
 
         [HarmonyPostfix]
@@ -41,12 +62,12 @@ namespace UnknownsCollection {
                 var parent = __instance.CensorChatButton.transform.parent;
                 if (parent == null) return;
 
-                // Find TOR's "Mod Options..." button
+                // Find TOR's "Mod Options..." button (TOR creates a fresh one per menu instance)
                 for (int i = 0; i < parent.childCount; i++) {
                     var child = parent.GetChild(i);
                     var tb = child.GetComponent<ToggleButtonBehaviour>();
                     if (tb?.Text?.text?.Contains("Mod Options") == true) {
-                        HookModOptionsButton(tb, __instance);
+                        HookModOptionsButton(tb);
                         break;
                     }
                 }
@@ -68,6 +89,7 @@ namespace UnknownsCollection {
                 }
                 torPopUpField = AccessTools.Field(type, "popUp");
                 torButtonPrefabField = AccessTools.Field(type, "buttonPrefab");
+                torTitleTextField = AccessTools.Field(type, "titleText");
                 if (torPopUpField == null) {
                     UnknownsCollectionPlugin.Logger?.LogWarning(
                         "[UCOptions] ResolveTORFields: field 'popUp' not found on ClientOptionsPatch - UC menu entry will not be added.");
@@ -82,18 +104,23 @@ namespace UnknownsCollection {
             }
         }
 
-        private static void HookModOptionsButton(
-                ToggleButtonBehaviour modBtn, OptionsMenuBehaviour optionsMenu) {
+        private static void HookModOptionsButton(ToggleButtonBehaviour modBtn) {
             var pb = modBtn.GetComponent<PassiveButton>();
             if (pb == null) return;
 
             pb.OnClick.AddListener((Action)(() => {
                 try {
                     var torPopUp = torPopUpField?.GetValue(null) as GameObject;
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[UCOptions] mod-options click: tor={(torPopUp == null ? "null" : torPopUp.activeSelf.ToString())} uc={(ucPopUp == null ? "null/destroyed" : ucPopUp.activeSelf.ToString())}");
                     if (torPopUp == null) return;
 
-                    EnsureUCPopup(torPopUp, optionsMenu);
+                    EnsureUCPopup(torPopUp);
                     AddNavButton(torPopUp);
+                    // If our popup was left open (e.g. the settings were closed over it), it
+                    // would now sit IN FRONT of TOR's freshly opened popup and swallow every
+                    // click - the whole menu looks dead. Always start from TOR's page.
+                    if (ucPopUp != null && ucPopUp.activeSelf) ucPopUp.SetActive(false);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError(
                         $"[UCOptions] HookModOptionsButton callback: {e}");
@@ -101,7 +128,9 @@ namespace UnknownsCollection {
             }));
         }
 
-        private static void EnsureUCPopup(GameObject torPopUp, OptionsMenuBehaviour optionsMenu) {
+        private static void EnsureUCPopup(GameObject torPopUp) {
+            // Unity's overloaded == also catches "destroyed" - e.g. after the popup got parented
+            // under the HUD in-game and died with it on scene change. Then we simply rebuild.
             if (ucPopUp != null) return;
 
             // Create UC sub-popup from the same prefab as TOR's popup
@@ -112,7 +141,8 @@ namespace UnknownsCollection {
             pos.z = -820f;
             t.localPosition = pos;
 
-            // Destroy all children except Background and CloseButton
+            // Destroy all children except Background and CloseButton (includeInactive so this
+            // also works while the clone source was closed)
             var children = new List<GameObject>();
             for (int i = 0; i < ucPopUp.transform.childCount; i++)
                 children.Add(ucPopUp.transform.GetChild(i).gameObject);
@@ -121,34 +151,35 @@ namespace UnknownsCollection {
                     Object.Destroy(child);
             }
 
-            // Wire the CloseButton to go back to TOR's popup instead of just closing
+            // Wire the CloseButton to go back to TOR's popup instead of just closing. TOR's popup
+            // is looked up fresh at click time (not captured) - it is a different object by then
+            // if either popup was rebuilt in between.
             var closeBtn = ucPopUp.transform.Find("CloseButton");
             if (closeBtn != null) {
                 var passive = closeBtn.GetComponent<PassiveButton>();
                 if (passive != null) {
                     passive.OnClick = new ButtonClickedEvent();
                     passive.OnClick.AddListener((Action)(() => {
-                        ucPopUp.SetActive(false);
-                        torPopUp.SetActive(true);
+                        try {
+                            ucPopUp.SetActive(false);
+                            var tor = torPopUpField?.GetValue(null) as GameObject;
+                            if (tor != null) tor.SetActive(true);
+                            UnknownsCollectionPlugin.Logger?.LogInfo(
+                                $"[UCOptions] close click: tor={(tor == null ? "null" : tor.activeSelf.ToString())}");
+                        } catch (Exception e) {
+                            UnknownsCollectionPlugin.Logger?.LogError(
+                                $"[UCOptions] close click: {e}");
+                        }
                     }));
                 }
             }
 
             ucPopUp.SetActive(false);
-
-            // Title template
-            var go = new GameObject("UCTitleTemplate");
-            var tmp = go.AddComponent<TextMeshPro>();
-            tmp.fontSize = 4;
-            tmp.alignment = TextAlignmentOptions.Center;
-            ucTitleTemplate = Object.Instantiate(tmp);
-            ucTitleTemplate.gameObject.SetActive(false);
-            Object.DontDestroyOnLoad(ucTitleTemplate);
         }
 
         private static void AddNavButton(GameObject torPopUp) {
-            // Already added?
-            foreach (var t in torPopUp.GetComponentsInChildren<ToggleButtonBehaviour>())
+            // Already added? (includeInactive: the popup may be closed at this point)
+            foreach (var t in torPopUp.GetComponentsInChildren<ToggleButtonBehaviour>(true))
                 if (t.name == "UCNavButton")
                     return;
 
@@ -156,7 +187,7 @@ namespace UnknownsCollection {
             var prefab = torButtonPrefabField?.GetValue(null) as ToggleButtonBehaviour;
             if (prefab == null) {
                 // Fallback: clone any existing toggle in TOR's popup
-                foreach (var t in torPopUp.GetComponentsInChildren<ToggleButtonBehaviour>()) {
+                foreach (var t in torPopUp.GetComponentsInChildren<ToggleButtonBehaviour>(true)) {
                     prefab = t; break;
                 }
             }
@@ -184,8 +215,19 @@ namespace UnknownsCollection {
             pb.OnMouseOver = new UnityEvent();
 
             pb.OnClick.AddListener((Action)(() => {
-                torPopUp.SetActive(false);
-                ShowUCPopup(torPopUp);
+                try {
+                    var tor = torPopUpField?.GetValue(null) as GameObject;
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[UCOptions] nav click: tor={(tor == null ? "null" : tor.activeSelf.ToString())} uc={(ucPopUp == null ? "null" : ucPopUp.activeSelf.ToString())}");
+                    if (tor == null) return;
+                    EnsureUCPopup(tor);      // rebuild if it died with a scene change
+                    ShowUCPopup(tor);        // build content FIRST...
+                    tor.SetActive(false);    // ...only hide TOR's popup once that worked
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[UCOptions] nav click done: uc active={ucPopUp.activeSelf} activeInHierarchy={ucPopUp.activeInHierarchy} parent={(ucPopUp.transform.parent == null ? "null" : ucPopUp.transform.parent.name)} pos={ucPopUp.transform.position}");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[UCOptions] nav click: {e}");
+                }
             }));
 
             pb.OnMouseOver.AddListener((Action)(() =>
@@ -204,36 +246,50 @@ namespace UnknownsCollection {
             }
             ucPopUp.transform.localPosition = torPopUp.transform.localPosition;
 
-            // Add / refresh title
-            CheckSetTitle();
-
-            // (Re)create toggles every time so state is fresh
-            foreach (var t in ucPopUp.GetComponentsInChildren<ToggleButtonBehaviour>())
+            // (Re)create title + toggles every time so state is fresh. includeInactive is
+            // essential: the popup is inactive while closed, and the default overload would skip
+            // its children entirely - stale UI then piled up on every reopen.
+            foreach (var t in ucPopUp.GetComponentsInChildren<ToggleButtonBehaviour>(true))
                 Object.Destroy(t.gameObject);
+            foreach (var tmp in ucPopUp.GetComponentsInChildren<TextMeshPro>(true))
+                if (tmp.name == "UCTitle")
+                    Object.Destroy(tmp.gameObject);
 
             SetUpUCOptions();
 
             ucPopUp.SetActive(true);
         }
 
-        private static void CheckSetTitle() {
-            // Remove stale title if any
-            foreach (var tmp in ucPopUp.GetComponentsInChildren<TextMeshPro>())
-                if (tmp.name == "UCTitle")
-                    Object.Destroy(tmp.gameObject);
-
-            if (ucTitleTemplate == null) return;
-            var title = Object.Instantiate(ucTitleTemplate, ucPopUp.transform);
-            title.GetComponent<RectTransform>().localPosition = Vector3.up * 2.3f;
-            title.gameObject.SetActive(true);
-            title.text = "Unknown's Collection";
-            title.name = "UCTitle";
-        }
-
         private static void SetUpUCOptions() {
-            // Grab a prefab from TOR's popup (any existing toggle)
+            // Grab a prefab from TOR's popup (recreated by TOR on every options-menu Start, so it
+            // is alive - unlike a template cached once, whose font asset can die across scenes)
             var src = torButtonPrefabField?.GetValue(null) as ToggleButtonBehaviour;
-            if (src == null) return;
+            if (src == null || src.Text == null) {
+                UnknownsCollectionPlugin.Logger?.LogWarning(
+                    "[UCOptions] SetUpUCOptions: TOR buttonPrefab unavailable - popup stays empty.");
+                return;
+            }
+
+            // TOR's title font if available (matches the "More Options..." look); the prefab's
+            // own font as fallback. Both are live objects, re-created by TOR when scenes change.
+            var torTitle = torTitleTextField?.GetValue(null) as TextMeshPro;
+            var font = torTitle != null ? torTitle.font : src.Text.font;
+
+            // Title, cloned from the live prefab text. The button text's rect is only ~2 units
+            // wide - without widening it + disabling wrapping, the title breaks after every few
+            // characters and floods the popup.
+            var title = Object.Instantiate(src.Text, ucPopUp.transform);
+            title.name = "UCTitle";
+            title.text = "Unknown's Collection";
+            if (font != null) title.font = font;
+            title.enableAutoSizing = false;
+            title.enableWordWrapping = false;
+            title.fontSize = title.fontSizeMin = title.fontSizeMax = 4f;
+            title.alignment = TextAlignmentOptions.Center;
+            title.rectTransform.sizeDelta = new Vector2(6f, 1.2f);
+            title.transform.localPosition = new Vector3(0f, 2.3f, -0.5f);
+            title.transform.localScale = Vector3.one;
+            title.gameObject.SetActive(true);
 
             for (int i = 0; i < AllOptions.Length; i++) {
                 var info = AllOptions[i];
@@ -245,7 +301,7 @@ namespace UnknownsCollection {
                 button.Background.color = button.onState ? Color.green : Palette.ImpostorRed;
                 button.Text.text = info.Title;
                 button.Text.fontSizeMin = button.Text.fontSizeMax = 1.8f;
-                button.Text.font = Object.Instantiate(ucTitleTemplate?.font);
+                if (font != null) button.Text.font = font;
                 button.Text.GetComponent<RectTransform>().sizeDelta = new Vector2(2, 2);
                 button.name = info.Title.Replace(" ", "") + "Toggle";
                 button.gameObject.SetActive(true);
@@ -259,8 +315,12 @@ namespace UnknownsCollection {
                 pb.OnMouseOver = new UnityEvent();
 
                 pb.OnClick.AddListener((Action)(() => {
-                    button.onState = info.OnClick();
-                    button.Background.color = button.onState ? Color.green : Palette.ImpostorRed;
+                    try {
+                        button.onState = info.OnClick();
+                        button.Background.color = button.onState ? Color.green : Palette.ImpostorRed;
+                    } catch (Exception e) {
+                        UnknownsCollectionPlugin.Logger?.LogError($"[UCOptions] toggle click: {e}");
+                    }
                 }));
 
                 pb.OnMouseOver.AddListener((Action)(() =>

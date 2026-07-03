@@ -207,6 +207,12 @@ namespace UnknownsCollection {
                 // client, so each client runs this exactly once. We use Exiled() (not uncheckedMurderPlayer)
                 // so the poison death leaves NO body to report — exactly like a guesser shot or a vote-out.
                 target.Exiled();
+                // Custom kill overlay: the Exiled() path never reaches KillOverlay.ShowKillAnimation,
+                // so trigger it directly - with the vanilla audience (victim + killer only). The
+                // overlay queue holds it until the meeting/exile UI is gone.
+                var lp = PlayerControl.LocalPlayer;
+                if (lp != null && (lp.PlayerId == targetId || (poisoner != null && lp.PlayerId == poisoner.PlayerId)))
+                    UCKillOverlay.PlayFor(UCKillOverlay.Kind.Poisoner, poisoner?.Data, target.Data);
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Player {targetId} died from poison (no body).");
             }
             poisonedReporters.Remove(targetId);

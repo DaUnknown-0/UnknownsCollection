@@ -254,6 +254,10 @@ namespace UnknownsCollection {
 
         private static void ApplyKillFx(byte plusVictimId, byte minusVictimId) {
             try {
+                // Arm the custom kill overlay before the murder RPCs land (this FX RPC is sent
+                // first by the same sender, so it runs first on every client too).
+                if (plusVictimId != byte.MaxValue) UCKillOverlay.ArmVictim(UCKillOverlay.Kind.Tesla, plusVictimId);
+                if (minusVictimId != byte.MaxValue) UCKillOverlay.ArmVictim(UCKillOverlay.Kind.Tesla, minusVictimId);
                 // byte.MaxValue marks a spared pole (no death there -> no burst there).
                 var p = plusVictimId != byte.MaxValue ? Helpers.playerById(plusVictimId) : null;
                 var m = minusVictimId != byte.MaxValue ? Helpers.playerById(minusVictimId) : null;

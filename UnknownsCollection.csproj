@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.0.1.56</Version>
+        <Version>1.0.1.57</Version>
         <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade (Impostor); Siphoner, Witness, Scout, Beacon (Crewmate); Bug, Follower, Copycat (Neutral); Poltergeist (ghost, keeps its team).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
@@ -90,6 +90,20 @@
         <EmbeddedResource Include="Resources\shade_vanish.raw" />
         <EmbeddedResource Include="Resources\follower_shift.raw" />
         <EmbeddedResource Include="Resources\copycat_learn.raw" />
+        <!-- Animated button icon frames (16 per icon, AssetGen anim/ output). Default logical
+             names: UnknownsCollection.Resources.anim.<file> - matched by UCAssets.GetFrames(). -->
+        <EmbeddedResource Include="Resources\anim\*.png" />
+        <!-- Kill-overlay sprite parts (UCKillOverlay). -->
+        <EmbeddedResource Include="Resources\overlay_crew_body.png" />
+        <EmbeddedResource Include="Resources\overlay_crew_visor.png" />
+        <EmbeddedResource Include="Resources\overlay_bolt_a.png" />
+        <EmbeddedResource Include="Resources\overlay_bolt_b.png" />
+        <EmbeddedResource Include="Resources\overlay_console.png" />
+        <EmbeddedResource Include="Resources\overlay_vial.png" />
+        <EmbeddedResource Include="Resources\overlay_shadow.png" />
+        <EmbeddedResource Include="Resources\overlay_bomb.png" />
+        <EmbeddedResource Include="Resources\overlay_burst.png" />
+        <EmbeddedResource Include="Resources\overlay_white.png" />
     </ItemGroup>
 
     <ItemGroup>

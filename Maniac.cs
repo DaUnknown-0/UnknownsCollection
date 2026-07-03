@@ -275,6 +275,9 @@ namespace UnknownsCollection {
         }
 
         private static void ApplyExplode(byte victimId) {
+            // Arm the custom kill overlay for the blast: the murder RPCs follow right behind this
+            // one, but the victim LIST is only known host-side - hence a short time window.
+            UCKillOverlay.ArmWindow(UCKillOverlay.Kind.ManiacBomb);
             if (bombCarrier != null && bombCarrier.PlayerId == victimId) {
                 StopFuse();
                 // Red explosion flash for everyone nearby + a distance-attenuated boom + a public

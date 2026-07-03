@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.0.1.56";
+    public const string PluginVersion = "1.0.1.57";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
@@ -67,6 +67,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
+    public static ConfigEntry<bool> ButtonPulseEnabled { get; set; }
 
     internal static Assembly TORAssembly;
 
@@ -120,6 +121,8 @@ public class UnknownsCollectionPlugin : BasePlugin
         // Per-player settings (config file + in-game toggle via UC Options menu).
         BugGlitchEnabled = Config.Bind("Bug", "Bug Win Glitch Effects", true,
             "Enable visual/sound glitch effects on the Bug win screen");
+        ButtonPulseEnabled = Config.Bind("Buttons", "Button Ready Pulse", false,
+            "Gently pulse ability buttons in size while the ability is usable (the animated icons are unaffected). Off by default - some players find the size wobble distracting.");
 
         // The Bug role (Neutral). Survive until the end and win with the winning team.
         Bug.CreateOptions();
@@ -177,6 +180,13 @@ public class UnknownsCollectionPlugin : BasePlugin
         // Register in the shared Mod Manager registry (cross-plugin, via AppDomain - no hard reference
         // to Useful TOR Stuff). Mirrors how ForceImpostorMod registers itself.
         RegisterInModManager(enabled);
+
+        // Cosmetic button animations (flipbook icons + ready-pulse). Init() only forces the
+        // static ctor so its UCFx tick/reset registration happens before the first round.
+        UCButtonAnim.Init();
+
+        // Custom role kill overlays (Tesla/Saboteur-task/Poisoner/Shade/Maniac). Same pattern.
+        UCKillOverlay.Init();
 
         Logger.LogInfo($"{PluginName} v{PluginVersion} loaded.");
     }

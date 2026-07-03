@@ -26,6 +26,7 @@ namespace UnknownsCollection {
         public static CustomOption ExplosionRange;
         public static CustomOption ExplosionHits;   // 1496 - who the blast kills (all / no impostors / no maniac)
         public static CustomOption ShieldPierce;     // 1497 - which shields the bomb ignores (none/medic/time/both)
+        public static CustomOption ExcludeBomber;    // 1498 - Maniac and TOR's Bomber never share a game
 
         public static PlayerControl maniac;
         public static bool active;
@@ -69,6 +70,8 @@ namespace UnknownsCollection {
                     new string[] { "Everyone But Impostors", "Everyone But The Maniac", "Everyone" }, SpawnRate);
                 ShieldPierce = CustomOption.Create(1497, Types.Impostor, "Maniac Bomb Pierces Shield",
                     new string[] { "None", "Medic Shield", "Time Master Shield", "Both Shields" }, SpawnRate);
+                ExcludeBomber = CustomOption.Create(1498, Types.Impostor, "Maniac And Bomber Exclude Each Other",
+                    true, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Maniac] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] CreateOptions failed: {e}");
@@ -358,6 +361,63 @@ namespace UnknownsCollection {
 
         public static void MarkFromDraft(byte playerId) => ApplySetManiac(playerId);
 
+        // ====================================================================
+        // Bomber exclusion (option 1498): two bomb-themed impostors in one game read as the same
+        // role and muddy the counterplay, so by default the Maniac and TOR's Bomber never share a
+        // game. Two enforcement points:
+        //   - Role Draft: both directions via TOR's own blockedRolePairings (Bomber picked -> Maniac
+        //     not offered, Maniac picked -> Bomber not offered) - the same mechanism TOR uses for
+        //     Vampire/Warlock. The dictionary is internal, so it's reached via reflection and synced
+        //     at every ShowTeam (the option can change between games).
+        //   - Random assignment: the IntroEnd pick below simply yields when a Bomber exists (TOR
+        //     assigns the Bomber before the intro ends, so one direction covers it).
+        // ====================================================================
+        public static bool ExcludeBomberOn() => ExcludeBomber == null || ExcludeBomber.getBool();
+
+        private static System.Reflection.FieldInfo blockedPairingsField;
+        private static Dictionary<byte, byte[]> BlockedPairings() {
+            try {
+                blockedPairingsField ??= AccessTools.Field(typeof(CustomOptionHolder), "blockedRolePairings");
+                return blockedPairingsField?.GetValue(null) as Dictionary<byte, byte[]>;
+            } catch { return null; }
+        }
+
+        private static void AddPair(Dictionary<byte, byte[]> dict, byte key, byte val) {
+            if (dict.TryGetValue(key, out var arr)) {
+                if (!arr.Contains(val)) dict[key] = arr.Concat(new[] { val }).ToArray();
+            } else dict[key] = new[] { val };
+        }
+
+        private static void RemovePair(Dictionary<byte, byte[]> dict, byte key, byte val) {
+            if (!dict.TryGetValue(key, out var arr)) return;
+            var rest = arr.Where(b => b != val).ToArray();
+            if (rest.Length == 0) dict.Remove(key);
+            else dict[key] = rest;
+        }
+
+        // Synced in a ShowTeam PREFIX: the pairing dictionary is only enumerated later (inside the
+        // draft's pick loop), so mutating it here can never collide with a live foreach.
+        [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.ShowTeam))]
+        static class BomberPairingSyncPatch {
+            public static void Prefix() {
+                try {
+                    var dict = BlockedPairings();
+                    if (dict == null) return;
+                    byte bomber = (byte)RoleId.Bomber;
+                    byte maniacDraft = UCRoleDraft.ManiacDraftId;
+                    if (ExcludeBomberOn()) {
+                        AddPair(dict, bomber, maniacDraft);
+                        AddPair(dict, maniacDraft, bomber);
+                    } else {
+                        RemovePair(dict, bomber, maniacDraft);
+                        RemovePair(dict, maniacDraft, bomber);
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] Bomber pairing sync failed: {e}");
+                }
+            }
+        }
+
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
         [HarmonyPriority(Priority.High)]
         static class HandleRpcPatch {
@@ -404,6 +464,9 @@ namespace UnknownsCollection {
                     if (SpawnRate == null || SpawnRate.getSelection() <= 0) return;
                     if (!TeslaVersionHandshake.EveryoneHasMod()) return;
                     if (LobbyPlayerCount() < (SpawnMinPlayers?.getFloat() ?? 6f)) return;
+                    // Bomber exclusion: TOR assigns the Bomber before the intro ends, so yielding
+                    // here covers the random-assignment path (see BomberPairingSyncPatch for drafts).
+                    if (ExcludeBomberOn() && Bomber.bomber != null) return;
 
                     int chance = SpawnRate.getSelection() * 10;
                     if (rnd.Next(1, 101) > chance) return;

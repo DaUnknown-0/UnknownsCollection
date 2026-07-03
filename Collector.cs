@@ -50,6 +50,7 @@ namespace UnknownsCollection {
         public static CustomOption CollectCooldown;  // button cooldown after a successful collect
         public static CustomOption RelicPerTasks;    // spawn an extra relic every X crew tasks (0=off)
         public static CustomOption ExtraRaisesGoal;  // each extra relic also raises the needed count
+        public static CustomOption OnlyLivingTasks;  // 1598 - only living crewmates' tasks feed the relic counter
 
         // ---- Runtime state ----
         public static PlayerControl collector;
@@ -119,6 +120,8 @@ namespace UnknownsCollection {
                     0f, 0f, 15f, 1f, SpawnRate);
                 ExtraRaisesGoal = CustomOption.Create(1597, Types.Neutral, "Extra Relics Raise The Needed Count",
                     true, SpawnRate);
+                OnlyLivingTasks = CustomOption.Create(1598, Types.Neutral, "Only Count Living Crews Tasks",
+                    false, SpawnRate);
                 CollectorFx.Init(); // force its static ctor early - see CollectorFx.Init() comment
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Collector] Options created.");
             } catch (Exception e) {
@@ -410,8 +413,29 @@ namespace UnknownsCollection {
             return anchors[0] + RandomAnchorOffset();
         }
 
-        // Host: spawn one extra relic per X completed crew tasks (option, 0 = off). Task counts
-        // come from GameData (kept current by RecomputeTaskCounts, already adjusted by TaskPatch).
+        // The task count feeding the relic counter. Default: GameData.CompletedTasks (kept current by
+        // RecomputeTaskCounts, already adjusted by TaskPatch below - collector excluded, TOR's Lawyer/
+        // Thief/killing-Lover exclusions applied). With "Only Count Living Crews Tasks" ON the count is
+        // recomputed over LIVING players only, using TOR's own per-player rules (TasksHandler.taskInfo
+        // already drops impostors/fake-task roles) plus the same extra exclusions RecomputeTaskCounts
+        // and TaskPatch apply. Note this count can DROP when a crewmate dies - already-granted relics
+        // stay, the counter simply needs to catch up again before the next one spawns.
+        private static int RelicTaskCount(GameData gd) {
+            if (OnlyLivingTasks == null || !OnlyLivingTasks.getBool()) return gd.CompletedTasks;
+            int done = 0;
+            foreach (var pi in gd.AllPlayers.GetFastEnumerator()) {
+                if (pi == null || pi.Disconnected || pi.IsDead) continue;
+                if (pi.Object && pi.Object.hasAliveKillingLover()) continue;               // TasksHandler rule
+                if (Lawyer.lawyer != null && pi.PlayerId == Lawyer.lawyer.PlayerId) continue; // TasksHandler rule
+                if (Thief.thief != null && pi.PlayerId == Thief.thief.PlayerId) continue;     // TasksHandler rule
+                if (collector != null && pi.PlayerId == collector.PlayerId
+                    && !(HasTasks?.getBool() ?? false)) continue;                          // TaskPatch rule
+                done += TasksHandler.taskInfo(pi).Item1;
+            }
+            return done;
+        }
+
+        // Host: spawn one extra relic per X completed crew tasks (option, 0 = off).
         private static void TrySpawnTaskRelic() {
             try {
                 if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost || !relicsSpawned) return;
@@ -421,13 +445,14 @@ namespace UnknownsCollection {
                 nextTaskCheck = Time.time + 1f;
                 var gd = GameData.Instance;
                 if (gd == null) return;
-                int earned = gd.CompletedTasks / per;
+                int count = RelicTaskCount(gd);
+                int earned = count / per;
                 while (extraRelicsGranted < earned) {
                     extraRelicsGranted++;
                     var pos = PickExtraRelicPosition();
                     if (pos == null) return;
                     UnknownsCollectionPlugin.Logger?.LogInfo(
-                        $"[Collector] {gd.CompletedTasks} crew tasks done -> extra relic {relicIdCounter}.");
+                        $"[Collector] {count} counted crew tasks -> extra relic {relicIdCounter}.");
                     SendSpawnExtra(relicIdCounter++, pos.Value);
                 }
             } catch (Exception e) {

@@ -247,8 +247,9 @@ namespace UnknownsCollection {
 
             var visorGo = new GameObject("visor") { layer = hudLayer };
             visorGo.transform.SetParent(go.transform, false);
-            visorGo.transform.localPosition = new Vector3(fig.visorX, 0.44f, 0f);
-            visorGo.transform.localScale = new Vector3(0.78f, 0.78f, 1f);
+            // Anchor matches the redrawn 256px body (visor center at 168,74 -> +0.40/+0.54 units).
+            visorGo.transform.localPosition = new Vector3(fig.visorX, 0.54f, 0f);
+            visorGo.transform.localScale = new Vector3(1f, 1f, 1f);
             fig.visor = visorGo.AddComponent<SpriteRenderer>();
             fig.visor.sprite = UCAssets.OverlayCrewVisor;
             fig.visor.color = Color.white;

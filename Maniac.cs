@@ -593,7 +593,10 @@ namespace UnknownsCollection {
                             var target = PlayerControlFixedUpdatePatch.setTarget();
                             if (target == null || bombCarrier == null) return;
                             SendPassBomb(bombCarrier.PlayerId, target.PlayerId);
-                            passButton.Timer = 2f;
+                            // Tiny debounce only: the button belongs to whoever CARRIES the bomb, so a
+                            // real cooldown just punishes the recipient of a hot potato. 0.1s still
+                            // swallows an accidental double-click before the pass RPC round-trips.
+                            passButton.Timer = 0.1f;
                         },
                         () => active && LocalHasBomb()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,

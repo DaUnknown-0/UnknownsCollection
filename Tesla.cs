@@ -402,6 +402,39 @@ namespace UnknownsCollection {
         }
 
         // ====================================================================
+        // Guess refund: a charged player shot by a Guesser DURING a meeting gives the charge back.
+        // RPCProcedure.guesserShoot runs identically on every client (RPC procedure), so mutating the
+        // local state here is consistent everywhere - no extra RPC needed. The dead player leaves
+        // chargedHistory; if they were part of the pair confirmed THIS meeting, the whole pair is
+        // refunded (surviving partner freed too, pair dropped) and the Tesla's meeting UI reopens so
+        // a fresh pair can be picked in the same meeting.
+        // ====================================================================
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.guesserShoot))]
+        static class GuesserShootRefundPatch {
+            public static void Postfix([HarmonyArgument(1)] byte dyingTargetId) {
+                try {
+                    if (!active) return;
+                    bool inPair = dyingTargetId != byte.MaxValue
+                                  && (dyingTargetId == plusId || dyingTargetId == minusId);
+                    if (!inPair && !chargedHistory.Contains(dyingTargetId)) return;
+
+                    chargedHistory.Remove(dyingTargetId);
+                    if (inPair) {
+                        byte partner = dyingTargetId == plusId ? minusId : plusId;
+                        if (partner != byte.MaxValue) chargedHistory.Remove(partner);
+                        plusId = minusId = byte.MaxValue;
+                        dangerLocal = false;
+                        TeslaMeetingUI.ReopenForRefund();
+                    }
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[Tesla] Charge refunded - charged player {dyingTargetId} was guessed (pair refund: {inPair}).");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] guess refund failed: {e}");
+                }
+            }
+        }
+
+        // ====================================================================
         // Meeting: reset the countdown to full (the ONLY thing that refills it).
         // ====================================================================
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
@@ -479,9 +512,12 @@ namespace UnknownsCollection {
             // an electrocution burst on a player who visibly survives would be a false public tell.
             SendKillFx(killPlus ? plus.PlayerId : byte.MaxValue, killMinus ? minus.PlayerId : byte.MaxValue);
 
-            byte killerId = IsAlive(tesla) ? tesla.PlayerId : byte.MaxValue;
-            if (killPlus) RpcUncheckedMurder(killerId == byte.MaxValue ? plusId : killerId, plusId);
-            if (killMinus) RpcUncheckedMurder(killerId == byte.MaxValue ? minusId : killerId, minusId);
+            // Source = the victim themselves (self-kill pattern, same as the Maniac's blast): vanilla
+            // MurderPlayer snaps the SOURCE onto the target, so using the Tesla as source teleported
+            // them across the map to the electrocution - a hard identity reveal. Self-source also
+            // keeps killer-attribution info (Detective/Medic reports) from pointing at the Tesla.
+            if (killPlus) RpcUncheckedMurder(plusId, plusId);
+            if (killMinus) RpcUncheckedMurder(minusId, minusId);
 
             SendClear();
         }

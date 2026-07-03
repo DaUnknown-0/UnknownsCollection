@@ -122,6 +122,47 @@ namespace UnknownsCollection {
             return message;
         }
 
+        // --- F1: Cross-mod lobby handshake board (publish-only) ---
+        // Same documented AppDomain contract as Useful/Chance (plain strings / Dictionary<int,string>
+        // only, no cross-assembly types):
+        //   TORMods.Handshake.Registry        → comma-separated guids that have published
+        //   TORMods.Handshake.{guid}.name     → short display name
+        //   TORMods.Handshake.{guid}.status   → Dictionary<int,string>: clientId → "code<0x1F>version"
+        //                                       code ∈ ok | old | new | mod ; missing clients omitted
+        // UsefulTORStuff OWNS and renders the combined per-player "Mod-Check" overview; this mod only
+        // PUBLISHES its snapshot so it shows up as a column there. Wire format (RPC 191) unchanged.
+        private const string HandshakeRegistryKey = "TORMods.Handshake.Registry";
+        private const string HandshakeKeyPrefix = "TORMods.Handshake.";
+        private const char StatusSep = '';
+
+        private static void PublishSnapshot() {
+            try {
+                if (AmongUsClient.Instance == null) return;
+                var status = new Dictionary<int, string>();
+                // 3-part local version, same as BuildMismatchMessage: the handshake only transmits
+                // Major.Minor.Build, so a 4-part test build must not read as "newer" than its own wire echo.
+                var localV = UnknownsCollectionPlugin.Version;
+                var local3 = new Version(localV.Major, localV.Minor, localV.Build);
+                foreach (var kv in playerVersions) {
+                    PlayerVersion pv = kv.Value;
+                    string code;
+                    int diff = local3.CompareTo(pv.version);
+                    if (diff > 0) code = "old";
+                    else if (diff < 0) code = "new";
+                    else code = pv.GuidMatches() ? "ok" : "mod";
+                    status[kv.Key] = code + StatusSep + pv.version;
+                }
+                string guid = UnknownsCollectionPlugin.PluginGuid;
+                AppDomain.CurrentDomain.SetData(HandshakeKeyPrefix + guid + ".name", "Unknown's");
+                AppDomain.CurrentDomain.SetData(HandshakeKeyPrefix + guid + ".status", status);
+                var reg = AppDomain.CurrentDomain.GetData(HandshakeRegistryKey) as string ?? "";
+                if (!reg.Split(',').Contains(guid))
+                    AppDomain.CurrentDomain.SetData(HandshakeRegistryKey, reg == "" ? guid : reg + "," + guid);
+            } catch (Exception ex) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Handshake] snapshot publish failed: {ex.Message}");
+            }
+        }
+
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class OnGameJoinedPatch {
             public static void Postfix() { playerVersions.Clear(); versionSent = false; }
@@ -144,7 +185,11 @@ namespace UnknownsCollection {
         static class GameStartManagerUpdatePatch {
             public static void Postfix(GameStartManager __instance) {
                 if (PlayerControl.LocalPlayer != null && !versionSent) { versionSent = true; ShareVersion(); }
-                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                if (AmongUsClient.Instance == null) return;
+                // F1: publish the snapshot every lobby frame (all clients, BEFORE the host-only
+                // return) so UsefulTORStuff's combined Mod-Check overview gets a UC column.
+                PublishSnapshot();
+                if (!AmongUsClient.Instance.AmHost) return;
                 if (__instance.startState == GameStartManager.StartingStates.Countdown) return;
 
                 var text = __instance.GameStartText;

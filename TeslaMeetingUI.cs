@@ -59,6 +59,10 @@ namespace UnknownsCollection {
                 for (int i = 0; i < n; i++) {
                     PlayerVoteArea pva = hud.playerStates[i];
                     if (pva.AmDead) continue;
+                    // Belt-and-suspenders vs. AmDead: after a mid-meeting guess kill (ReopenForRefund
+                    // path) the actual player data is authoritative even if the vote-area flag lags.
+                    var pc = Helpers.playerById(pva.TargetPlayerId);
+                    if (pc == null || pc.Data == null || pc.Data.IsDead) continue;
                     if (pva.TargetPlayerId == selfId && !canSelf) continue;
                     if (Tesla.chargedHistory.Contains(pva.TargetPlayerId)) continue; // no repeats
 
@@ -93,6 +97,15 @@ namespace UnknownsCollection {
             try {
                 if (locked || hud.state == MeetingHud.VoteStates.Results) return;
                 if (renderers == null || renderers[i] == null) return;
+                // The checkboxes are built at meeting start; a player guessed MID-meeting leaves a
+                // stale clickable row behind. Never let a dead player into the pair.
+                var pc = Helpers.playerById(hud.playerStates[i].TargetPlayerId);
+                if (pc == null || pc.Data == null || pc.Data.IsDead) {
+                    renderers[i].color = Color.gray;
+                    if (i == plusSel) plusSel = -1;
+                    if (i == minusSel) minusSel = -1;
+                    return;
+                }
 
                 if (i == plusSel) { plusSel = -1; renderers[i].color = Color.white; return; }
                 if (i == minusSel) { minusSel = -1; renderers[i].color = Color.white; return; }
@@ -139,6 +152,29 @@ namespace UnknownsCollection {
                 HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer,
                     $"Charged: <color=#1FB8FFFF>+ {plusName}</color>, <color=#FF8C00FF>- {minusName}</color>");
             } catch { }
+        }
+
+        // Reopen the selection UI after a mid-meeting guess refunded the confirmed pair (see
+        // Tesla.GuesserShootRefundPatch): drop the old checkboxes and rebuild fresh - dead rows
+        // (including the just-guessed player) and still-charged players fall out naturally in
+        // Build(). Local, alive Tesla only, and only while that meeting is still on screen.
+        public static void ReopenForRefund() {
+            try {
+                if (!LocalIsTesla()) return;
+                var hud = MeetingHud.Instance;
+                if (hud == null || builtFor != hud) return;
+                if (buttons != null)
+                    foreach (var b in buttons)
+                        if (b != null) UnityEngine.Object.Destroy(b.gameObject);
+                Reset();
+                Build(hud);
+                try {
+                    HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer,
+                        "A charged player was guessed - your charge returned. Pick a new pair.");
+                } catch { }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] meeting UI reopen failed: {e}");
+            }
         }
 
         // Build the UI when the meeting opens (host path + client path, like TOR's Swapper buttons).

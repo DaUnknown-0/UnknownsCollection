@@ -217,13 +217,20 @@ namespace UnknownsCollection {
             }
         }
 
+        // True while the intro cutscene (and therefore a potential draft) is on screen. Set/cleared by
+        // the ShowTeam/OnDestroy patches below; used by the showFlash guard.
+        private static bool introActive;
+
         // Add the draft entries just before the team/role-draft intro builds its role list. This is the
         // ONLY place allRoleInfos membership is synced: it runs as a Prefix, i.e. before ShowTeam's body
         // (and thus before RoleDraft's postfix-chained CoSelectRoles coroutine even exists), so there is
         // no live "foreach (... in RoleInfo.allRoleInfos)" it could ever collide with.
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.ShowTeam))]
         static class ShowTeamPatch {
-            public static void Prefix() { if (DraftWillRun()) SyncEntries(); }
+            public static void Prefix() {
+                introActive = true;
+                if (DraftWillRun()) SyncEntries();
+            }
         }
 
         // Remove them once the intro ends (after CoSelectRoles has finished enumerating and returned), so
@@ -231,13 +238,31 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
         [HarmonyPriority(Priority.First)] // before the role random-pick postfixes
         static class OnDestroyPatch {
-            public static void Postfix() { RemoveAll(); }
+            public static void Postfix() { introActive = false; RemoveAll(); }
         }
 
         // Safety: also drop them on a full reset.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { RemoveAll(); }
+            public static void Postfix() { introActive = false; RemoveAll(); }
+        }
+
+        // GLOBAL flash guard while the draft intro is on screen. Helpers.showFlash disables
+        // HudManager.FullScreen when its fade ends - the very renderer TOR's Role Draft uses as its
+        // black backdrop (it only re-sets the COLOR each frame, never re-enables it). ANY flash fired
+        // during a draft therefore permanently cuts the blackscreen and exposes the game world/HUD
+        // behind the draft UI. The generic UCRevealFx cue is already suppressed for draft picks
+        // (SuppressRevealForDraftPick), but roles with bespoke promote cues (e.g. Tesla's "You are THE
+        // TESLA!" flash in ApplySetTesla) - and any future/foreign flash source - go through here, so
+        // block them ALL at the source for the duration of the draft intro. Random (non-draft)
+        // promotions at IntroCutscene.OnDestroy are unaffected: introActive is already false there.
+        [HarmonyPatch(typeof(Helpers), nameof(Helpers.showFlash))]
+        static class ShowFlashDraftGuardPatch {
+            public static bool Prefix() {
+                if (!(introActive && DraftWillRun())) return true;
+                UnknownsCollectionPlugin.Logger?.LogInfo("[UCRoleDraft] showFlash suppressed (Role Draft on screen).");
+                return false;
+            }
         }
 
         // Intercept the draft pick for our sentinel roles: mark the player as that UC role instead of

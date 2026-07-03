@@ -125,22 +125,29 @@ namespace UnknownsCollection {
 
         // ---- Sounds: Poltergeist ----
 
+        // Tight falloff for ALL positional Poltergeist cues: with the default 4→22-unit curve they
+        // were still at ~74 % volume 10 units away - effectively map-wide ("played globally / too
+        // loud" in playtests). Haunt cues are meant to be heard around the haunt only, roughly within
+        // vision range: full volume up to 2 units, silent by 9.
+        private const float PolterFull = 2f;
+        private const float PolterSilent = 9f;
+
         public static void PlayManifest(float volume = VolStd) => Play("poltergeist_manifest", volume);
-        public static void PlayPoof(Vector2 at, float volume = 0.9f) => PlayAt("poltergeist_poof", at, volume);
-        public static void PlayDoorSlam(Vector2 at, float volume = VolLoud) => PlayAt("poltergeist_door", at, volume);
+        public static void PlayPoof(Vector2 at, float volume = 0.9f) => PlayAt("poltergeist_poof", at, volume, PolterFull, PolterSilent);
+        public static void PlayDoorSlam(Vector2 at, float volume = VolLoud) => PlayAt("poltergeist_door", at, volume, PolterFull, PolterSilent);
         public static void PlayHex(float volume = 0.7f) => Play("poltergeist_hex", volume);
         public static void PlayGhostHand(float volume = VolSoft) => Play("poltergeist_hand", volume);
 
         // Position-bound variants of the cues above (distance-gated, per design decision: manifest-start,
         // hex-cast and ghost-hand-start are audible around the ghost/target position, not just locally).
-        public static void PlayManifestAt(Vector2 at, float volume = VolStd) => PlayAt("poltergeist_manifest", at, volume);
-        public static void PlayHexAt(Vector2 at, float volume = 0.7f) => PlayAt("poltergeist_hex", at, volume);
-        public static void PlayGhostHandAt(Vector2 at, float volume = VolSoft) => PlayAt("poltergeist_hand", at, volume);
+        public static void PlayManifestAt(Vector2 at, float volume = VolStd) => PlayAt("poltergeist_manifest", at, volume, PolterFull, PolterSilent);
+        public static void PlayHexAt(Vector2 at, float volume = 0.7f) => PlayAt("poltergeist_hex", at, volume, PolterFull, PolterSilent);
+        public static void PlayGhostHandAt(Vector2 at, float volume = VolSoft) => PlayAt("poltergeist_hand", at, volume, PolterFull, PolterSilent);
 
         // New Poltergeist cues (hand release, hex expiring, manifest-kill reveal).
-        public static void PlayPoltergeistHandStopAt(Vector2 at, float volume = VolSoft) => PlayAt("poltergeist_handstop", at, volume);
-        public static void PlayPoltergeistHexEndAt(Vector2 at, float volume = VolStd) => PlayAt("poltergeist_hexend", at, volume);
-        public static void PlayPoltergeistRevealAt(Vector2 at, float volume = VolLoud) => PlayAt("poltergeist_reveal", at, volume);
+        public static void PlayPoltergeistHandStopAt(Vector2 at, float volume = VolSoft) => PlayAt("poltergeist_handstop", at, volume, PolterFull, PolterSilent);
+        public static void PlayPoltergeistHexEndAt(Vector2 at, float volume = VolStd) => PlayAt("poltergeist_hexend", at, volume, PolterFull, PolterSilent);
+        public static void PlayPoltergeistRevealAt(Vector2 at, float volume = VolLoud) => PlayAt("poltergeist_reveal", at, volume, PolterFull, PolterSilent);
 
         // ---- Sounds: role cues ----
 
@@ -247,13 +254,16 @@ namespace UnknownsCollection {
             }
         }
 
-        // World-anchored cue: full volume within 4 units of the local player, fading to silent by 22
-        // units using a smoothstep curve (feels more present up close, more natural falloff than a
-        // linear ramp - same audible range as before). Also derives simple stereo panning from the
+        // World-anchored cue: full volume within fullDist units of the local player, fading to silent
+        // by silentDist units using a smoothstep curve (feels more present up close, more natural
+        // falloff than a linear ramp). Defaults keep the historical 4→22 curve for public events
+        // (explosion, zap, ...); cues that should only be heard around their source pass a tighter
+        // pair (see the Poltergeist constants below). Also derives simple stereo panning from the
         // world-space X difference between the cue and the local player (the AU camera never rotates,
         // so world-X maps directly to screen-X). Defensive against a missing local player and a missing
         // AudioSource (e.g. SFX disabled).
-        private static AudioSource PlayAt(string name, Vector2 at, float volume) {
+        private static AudioSource PlayAt(string name, Vector2 at, float volume,
+                                          float fullDist = 4f, float silentDist = 22f) {
             try {
                 float vol = volume;
                 Vector2? localPos = null;
@@ -262,7 +272,7 @@ namespace UnknownsCollection {
                     Vector2 lp = local.GetTruePosition();
                     localPos = lp;
                     float d = Vector2.Distance(lp, at);
-                    float k = Mathf.Clamp01(1f - (d - 4f) / 18f);
+                    float k = Mathf.Clamp01(1f - (d - fullDist) / Mathf.Max(0.01f, silentDist - fullDist));
                     vol *= k * k * (3f - 2f * k); // smoothstep
                 }
                 if (vol <= 0.02f) return null;

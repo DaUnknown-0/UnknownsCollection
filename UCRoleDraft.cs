@@ -209,7 +209,12 @@ namespace UnknownsCollection {
                 foreach (var e in Entries()) {
                     var dict = e.impostor ? imp : crew;
                     if (dict == null) continue;
-                    if (Draftable(e)) dict[e.id] = e.rateOpt().getSelection();
+                    // Already given out this draft -> rate 0, NOT Remove: TOR's availability filter
+                    // only skips a role when its settings entry EXISTS with value 0. This is our own
+                    // no-repeat layer on top of TOR's alreadyPicked (which is skipped on any client
+                    // where receivePick dies before its Add - see SetRolePatch below).
+                    if (pickedBy.ContainsKey(e.id)) dict[e.id] = 0;
+                    else if (Draftable(e)) dict[e.id] = e.rateOpt().getSelection();
                     else dict.Remove(e.id);
                 }
             } catch (Exception e) {
@@ -221,6 +226,14 @@ namespace UnknownsCollection {
         // the ShowTeam/OnDestroy patches below; used by the showFlash guard.
         private static bool introActive;
 
+        // Our own record of which sentinel roles were picked this draft (roleId -> playerId). TOR's
+        // alreadyPicked would normally prevent repeats, but its Add sits AFTER the setRole call in
+        // RoleDraft.receivePick - any exception on that path skips it on that client and the role is
+        // offered again (observed in playtests: two players ended up as the Bug). This dictionary is
+        // filled in SetRolePatch BEFORE the mark runs, feeds the rate-0 filter in InjectDraftRates,
+        // and doubles as the first-wins guard against a duplicate pick actually re-assigning the role.
+        private static readonly Dictionary<byte, byte> pickedBy = new();
+
         // Add the draft entries just before the team/role-draft intro builds its role list. This is the
         // ONLY place allRoleInfos membership is synced: it runs as a Prefix, i.e. before ShowTeam's body
         // (and thus before RoleDraft's postfix-chained CoSelectRoles coroutine even exists), so there is
@@ -229,6 +242,7 @@ namespace UnknownsCollection {
         static class ShowTeamPatch {
             public static void Prefix() {
                 introActive = true;
+                pickedBy.Clear(); // fresh draft, fresh no-repeat record
                 if (DraftWillRun()) SyncEntries();
             }
         }
@@ -244,7 +258,7 @@ namespace UnknownsCollection {
         // Safety: also drop them on a full reset.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { introActive = false; RemoveAll(); }
+            public static void Postfix() { introActive = false; pickedBy.Clear(); RemoveAll(); }
         }
 
         // GLOBAL flash guard while the draft intro is on screen. Helpers.showFlash disables
@@ -276,8 +290,28 @@ namespace UnknownsCollection {
             public static bool Prefix(byte roleId, byte playerId) {
                 foreach (var e in Entries())
                     if (roleId == e.id) {
+                        // First-wins: a duplicate pick for an already-assigned single-slot role must
+                        // never re-assign it to a second player (the statics would silently overwrite
+                        // the first winner). Deterministic on every client - the pick RPCs arrive in
+                        // the same order everywhere.
+                        if (pickedBy.TryGetValue(roleId, out byte firstPlayer) && firstPlayer != playerId) {
+                            UnknownsCollectionPlugin.Logger?.LogWarning(
+                                $"[UCRoleDraft] Duplicate draft pick for role id {roleId} by player {playerId} " +
+                                $"ignored - already assigned to player {firstPlayer}.");
+                            return false;
+                        }
+                        // Record BEFORE the mark: even if the mark throws, this client keeps knowing
+                        // the role is gone (feeds the rate-0 filter in InjectDraftRates).
+                        pickedBy[roleId] = playerId;
+
+                        // The mark must NEVER throw out of here: this prefix runs inside TOR's
+                        // RoleDraft.receivePick, and an escaping exception would skip its
+                        // alreadyPicked.Add - the role would then be offered AGAIN to later pickers.
                         UCPromotion.SuppressRevealForDraftPick = true;
                         try { e.mark(playerId); }
+                        catch (Exception ex) {
+                            UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] mark({e.info?.name}) failed: {ex}");
+                        }
                         finally { UCPromotion.SuppressRevealForDraftPick = false; }
                         return false;
                     }

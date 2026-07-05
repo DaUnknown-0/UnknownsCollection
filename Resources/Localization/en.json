@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Not a starting role: the first player to die rises as the Poltergeist and keeps haunting for their original team. A slowly regenerating energy pool pays for four powers: slamming doors shut, hexing players (speed, blind or night vision), acting as one hand at the reactor, or briefly appearing as a copy of a living player.",
  "uc.ui.options.bug_glitch_toggle": "Bug Win Glitch Effects",
  "uc.ui.options.button_pulse_toggle": "Button Ready Pulse",
+ "uc.ui.options.kill_anim_uc_toggle": "UC Kill Animations",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR Kill Animations",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Modded by DaUnknown",

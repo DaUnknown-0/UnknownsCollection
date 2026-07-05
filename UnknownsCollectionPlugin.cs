@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.1.4.2";
+    public const string PluginVersion = "1.1.4.3";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
@@ -69,6 +69,8 @@ public class UnknownsCollectionPlugin : BasePlugin
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
     public static ConfigEntry<bool> ButtonPulseEnabled { get; set; }
     public static ConfigEntry<bool> HelpMenuGerman { get; set; }
+    public static ConfigEntry<bool> KillAnimationsUC { get; set; }
+    public static ConfigEntry<bool> KillAnimationsTOR { get; set; }
 
     internal static Assembly TORAssembly;
 
@@ -124,6 +126,12 @@ public class UnknownsCollectionPlugin : BasePlugin
             "Enable visual/sound glitch effects on the Bug win screen");
         ButtonPulseEnabled = Config.Bind("Buttons", "Button Ready Pulse", false,
             "Gently pulse ability buttons in size while the ability is usable (the animated icons are unaffected). Off by default - some players find the size wobble distracting.");
+        // Custom kill cutscenes (pure local cosmetics -> per-player config, NOT host-synced).
+        // UC roles keep their overlays by default; the TOR-role pack is opt-in (user decision).
+        KillAnimationsUC = Config.Bind("KillAnimations", "UC Role Kill Animations", true,
+            "Custom kill cutscenes for Unknown's Collection roles (Tesla, Saboteur task kills, Poisoner, Shade, Maniac bomb). Off = vanilla kill overlay.");
+        KillAnimationsTOR = Config.Bind("KillAnimations", "TOR Role Kill Animations", false,
+            "Custom kill cutscenes for TOR roles with special kills (Sheriff, Vampire, Warlock, Witch, Ninja, Bomber, Guesser, Thief, Jackal/Sidekick, Bounty Hunter). Off = vanilla kill overlay.");
         HelpMenuGerman = Config.Bind("HelpMenu", "German", true,
             "Language of the in-game '?' role help menu (true = Deutsch, false = English). Also toggleable from the menu itself.");
 

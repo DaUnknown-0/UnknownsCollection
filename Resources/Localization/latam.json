@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "No es un rol inicial: el primer jugador en morir se levanta como Poltergeist y sigue acechando para su equipo original. Un pozo de energía que se regenera lentamente paga cuatro poderes: cerrar puertas de golpe, hechizar jugadores (velocidad, ceguera o visión nocturna), actuar como una mano en el reactor, o aparecer brevemente como copia de un jugador vivo.",
  "uc.ui.options.bug_glitch_toggle": "Efectos de Glitch al Ganar Bug",
  "uc.ui.options.button_pulse_toggle": "Pulso de Botón Listo",
+ "uc.ui.options.kill_anim_uc_toggle": "Animaciones de kill UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Animaciones de kill TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Modeado por DaUnknown",

@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Geen startrol: de eerste speler die sterft rijst op als de Poltergeist en blijft spoken voor zijn oorspronkelijke team. Een langzaam aanvullende energiepool betaalt voor vier krachten: deuren dichtslaan, spelers beheksen (snelheid, blindheid of nachtzicht), als één hand bij de reactor optreden, of even verschijnen als kopie van een levende speler.",
  "uc.ui.options.bug_glitch_toggle": "Glitcheffecten Bij Bug-overwinning",
  "uc.ui.options.button_pulse_toggle": "Knoppuls Wanneer Klaar",
+ "uc.ui.options.kill_anim_uc_toggle": "UC-kill-animaties",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR-kill-animaties",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Gemodded door DaUnknown",

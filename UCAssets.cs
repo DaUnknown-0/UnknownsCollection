@@ -67,6 +67,20 @@ namespace UnknownsCollection {
         public static Sprite OverlayBomb => GetSprite("UnknownsCollection.Resources.overlay_bomb.png", 100f);
         public static Sprite OverlayBurst => GetSprite("UnknownsCollection.Resources.overlay_burst.png", 100f);
         public static Sprite OverlayWhite => GetSprite("UnknownsCollection.Resources.overlay_white.png", 100f);
+        // TOR-role kill overlays (second wave)
+        public static Sprite OverlayRevolver => GetSprite("UnknownsCollection.Resources.overlay_revolver.png", 100f);
+        public static Sprite OverlayStar => GetSprite("UnknownsCollection.Resources.overlay_star.png", 100f);
+        public static Sprite OverlayMuzzle => GetSprite("UnknownsCollection.Resources.overlay_muzzle.png", 100f);
+        public static Sprite OverlayFangs => GetSprite("UnknownsCollection.Resources.overlay_fangs.png", 100f);
+        public static Sprite OverlaySigil => GetSprite("UnknownsCollection.Resources.overlay_sigil.png", 100f);
+        public static Sprite OverlayHat => GetSprite("UnknownsCollection.Resources.overlay_hat.png", 100f);
+        public static Sprite OverlayKatana => GetSprite("UnknownsCollection.Resources.overlay_katana.png", 100f);
+        public static Sprite OverlayReticle => GetSprite("UnknownsCollection.Resources.overlay_reticle.png", 100f);
+        public static Sprite OverlayMask => GetSprite("UnknownsCollection.Resources.overlay_mask.png", 100f);
+        public static Sprite OverlayRoleCard => GetSprite("UnknownsCollection.Resources.overlay_rolecard.png", 100f);
+        public static Sprite OverlayClaw => GetSprite("UnknownsCollection.Resources.overlay_claw.png", 100f);
+        public static Sprite OverlayWanted => GetSprite("UnknownsCollection.Resources.overlay_wanted.png", 100f);
+        public static Sprite OverlayCoin => GetSprite("UnknownsCollection.Resources.overlay_coin.png", 100f);
 
         // ---- Animated button icon frames ----
 

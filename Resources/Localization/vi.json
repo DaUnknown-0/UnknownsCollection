@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Không phải vai trò khởi đầu: người chơi đầu tiên chết sẽ trỗi dậy thành Poltergeist và tiếp tục ám cho đội ban đầu của mình. Một hồ năng lượng hồi phục chậm sẽ trả cho bốn sức mạnh: đóng sập cửa, nguyền rủa người chơi (tốc độ, mù hoặc tầm nhìn ban đêm), hoạt động như một bàn tay tại lò phản ứng, hoặc xuất hiện trong chốc lát dưới dạng bản sao của một người chơi còn sống.",
  "uc.ui.options.bug_glitch_toggle": "Hiệu Ứng Lỗi Khi Bug Thắng",
  "uc.ui.options.button_pulse_toggle": "Nhấp Nháy Khi Nút Sẵn Sàng",
+ "uc.ui.options.kill_anim_uc_toggle": "Hoạt ảnh hạ gục UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Hoạt ảnh hạ gục TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Được mod bởi DaUnknown",

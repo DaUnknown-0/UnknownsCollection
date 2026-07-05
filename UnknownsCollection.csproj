@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.1.4.2</Version>
+        <Version>1.1.4.3</Version>
         <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade (Impostor); Siphoner, Witness, Scout, Beacon (Crewmate); Bug, Follower, Copycat (Neutral); Poltergeist (ghost, keeps its team).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
@@ -104,6 +104,20 @@
         <EmbeddedResource Include="Resources\overlay_bomb.png" />
         <EmbeddedResource Include="Resources\overlay_burst.png" />
         <EmbeddedResource Include="Resources\overlay_white.png" />
+        <!-- TOR-role kill-overlay parts + cues (UCKillOverlay second wave). -->
+        <EmbeddedResource Include="Resources\overlay_revolver.png" />
+        <EmbeddedResource Include="Resources\overlay_star.png" />
+        <EmbeddedResource Include="Resources\overlay_muzzle.png" />
+        <EmbeddedResource Include="Resources\overlay_fangs.png" />
+        <EmbeddedResource Include="Resources\overlay_sigil.png" />
+        <EmbeddedResource Include="Resources\overlay_hat.png" />
+        <EmbeddedResource Include="Resources\overlay_katana.png" />
+        <EmbeddedResource Include="Resources\overlay_reticle.png" />
+        <EmbeddedResource Include="Resources\overlay_mask.png" />
+        <EmbeddedResource Include="Resources\overlay_rolecard.png" />
+        <EmbeddedResource Include="Resources\overlay_claw.png" />
+        <EmbeddedResource Include="Resources\overlay_wanted.png" />
+        <EmbeddedResource Include="Resources\overlay_coin.png" />
         <!-- Localization tables (UCLocalization): one flat JSON map per language. Explicit
              LogicalName so the lookup never depends on the root-namespace default. -->
         <EmbeddedResource Include="Resources\Localization\*.json" LogicalName="UnknownsCollection.Resources.Localization.%(Filename)%(Extension)" />

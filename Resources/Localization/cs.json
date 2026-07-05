@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Není to počáteční role: první hráč, který zemře, povstane jako Poltergeist a dál straší za svůj původní tým. Pomalu se obnovující zásoba energie platí za čtyři síly: přibouchávání dveří, uhranutí hráčů (rychlost, oslepení nebo noční vidění), fungování jako jedna ruka u reaktoru nebo krátké zjevení jako kopie žijícího hráče.",
  "uc.ui.options.bug_glitch_toggle": "Efekty glitche při vítězství Buga",
  "uc.ui.options.button_pulse_toggle": "Puls připravenosti tlačítka",
+ "uc.ui.options.kill_anim_uc_toggle": "Animace zabití UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Animace zabití TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Moddováno DaUnknown",

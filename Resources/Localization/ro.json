@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Nu este un rol de start: primul jucător care moare renaște ca Poltergeist și continuă să bântuie pentru echipa sa originală. O rezervă de energie care se regenerează încet plătește pentru patru puteri: trântirea ușilor, blestemarea jucătorilor (viteză, orbire sau vedere nocturnă), acțiunea ca o singură mână la reactor sau apariția scurtă ca o copie a unui jucător viu.",
  "uc.ui.options.bug_glitch_toggle": "Efecte de glitch la victoria lui Bug",
  "uc.ui.options.button_pulse_toggle": "Puls de pregătire al butonului",
+ "uc.ui.options.kill_anim_uc_toggle": "Animații de kill UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Animații de kill TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Moddat de DaUnknown",

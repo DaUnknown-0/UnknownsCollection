@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "初期役職ではない：最初に死亡したプレイヤーがPoltergeistとして復活し、元のチームのために憑依し続ける。ゆっくり回復するエネルギープールが4つの能力を賄う：ドアを叩きつけて閉める、プレイヤーに呪いをかける(速度、盲目、暗視)、リアクターの片方の手として機能する、または生存プレイヤーのコピーとして一時的に現れる。",
  "uc.ui.options.bug_glitch_toggle": "Bug勝利時のグリッチ演出",
  "uc.ui.options.button_pulse_toggle": "ボタン準備完了パルス",
+ "uc.ui.options.kill_anim_uc_toggle": "UCキル演出",
+ "uc.ui.options.kill_anim_tor_toggle": "TORキル演出",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Mod制作: DaUnknown",

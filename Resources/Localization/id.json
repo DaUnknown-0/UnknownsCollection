@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Bukan peran awal: pemain pertama yang mati bangkit sebagai Poltergeist dan terus menghantui demi tim aslinya. Kumpulan energi yang pulih perlahan membiayai empat kekuatan: membanting pintu tertutup, mengutuk pemain (kecepatan, buta, atau penglihatan malam), bertindak sebagai satu tangan di reaktor, atau sesaat muncul sebagai salinan pemain yang hidup.",
  "uc.ui.options.bug_glitch_toggle": "Efek Glitch Kemenangan Bug",
  "uc.ui.options.button_pulse_toggle": "Denyut Tombol Siap",
+ "uc.ui.options.kill_anim_uc_toggle": "Animasi kill UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Animasi kill TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Dimodifikasi oleh DaUnknown",

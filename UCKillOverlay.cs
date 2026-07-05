@@ -36,8 +36,22 @@ using TheOtherRoles;
 using UnityEngine;
 
 namespace UnknownsCollection {
-    public static class UCKillOverlay {
-        public enum Kind : byte { None, Tesla, SaboteurTask, Poisoner, Shade, ManiacBomb }
+    public static partial class UCKillOverlay {
+        // Tesla..ManiacBomb = UC roles (gated by KillAnimationsUC); everything after = TOR roles
+        // (gated by KillAnimationsTOR, detection + choreographies in UCKillOverlayTOR.cs).
+        public enum Kind : byte {
+            None, Tesla, SaboteurTask, Poisoner, Shade, ManiacBomb,
+            SheriffShot, SheriffMisfire, VampireKill, WarlockKill, WitchKill,
+            NinjaDash, BomberBomb, GuesserShot, ThiefSteal, ThiefFail, JackalClaw, BountyHit
+        }
+
+        private static bool UcAnimsOn {
+            get { try { return UnknownsCollectionPlugin.KillAnimationsUC == null || UnknownsCollectionPlugin.KillAnimationsUC.Value; } catch { return true; } }
+        }
+        private static bool TorAnimsOn {
+            get { try { return UnknownsCollectionPlugin.KillAnimationsTOR == null || UnknownsCollectionPlugin.KillAnimationsTOR.Value; } catch { return true; } }
+        }
+        private static bool KindEnabled(Kind k) => k >= Kind.SheriffShot ? TorAnimsOn : UcAnimsOn;
 
         private const float DimMax = 0.82f;
 
@@ -73,7 +87,9 @@ namespace UnknownsCollection {
                 try {
                     Kind kind = Select(killer, victim);
                     if (kind == Kind.None) return true;
-                    PlayFor(kind, killer, victim);
+                    // If vanilla fires the overlay DURING a meeting (Guesser shot), ours must play
+                    // right there too instead of queueing until the meeting ends.
+                    PlayFor(kind, killer, victim, MeetingHud.Instance != null);
                     return false;                       // suppress the vanilla overlay
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[UCKillOverlay] hook: {e}");
@@ -83,6 +99,12 @@ namespace UnknownsCollection {
         }
 
         private static Kind Select(NetworkedPlayerInfo killer, NetworkedPlayerInfo victim) {
+            Kind k = SelectRaw(killer, victim);
+            // Per-family toggle (UC Options popup): disabled kinds fall back to the vanilla overlay.
+            return k != Kind.None && KindEnabled(k) ? k : Kind.None;
+        }
+
+        private static Kind SelectRaw(NetworkedPlayerInfo killer, NetworkedPlayerInfo victim) {
             float now = Time.time;
             if (victim != null && armedVictims.TryGetValue(victim.PlayerId, out var armed)) {
                 armedVictims.Remove(victim.PlayerId);
@@ -96,7 +118,8 @@ namespace UnknownsCollection {
             if (killer != null && victim != null && Shade.active && Shade.shade != null
                 && killer.PlayerId == Shade.shade.PlayerId && killer.PlayerId != victim.PlayerId)
                 return Kind.Shade;
-            return Kind.None;
+            // TOR meeting kills (Guesser) - identity check lives in UCKillOverlayTOR.cs.
+            return SelectTorMeeting(killer, victim);
         }
 
         // ==================== queue (survives meetings; poison deaths arrive at MeetingHud.Close) ====================
@@ -106,15 +129,19 @@ namespace UnknownsCollection {
             public int killerColor;
             public int victimColor;
             public float expires;
+            public bool playInMeeting;   // Guesser: vanilla shows its overlay OVER the meeting UI
         }
         private static readonly List<Pending> pending = new();
 
-        public static void PlayFor(Kind kind, NetworkedPlayerInfo killer, NetworkedPlayerInfo victim) {
+        public static void PlayFor(Kind kind, NetworkedPlayerInfo killer, NetworkedPlayerInfo victim,
+                                   bool playInMeeting = false) {
+            if (!KindEnabled(kind)) return;   // toggled off -> whatever vanilla does happens instead
             pending.Add(new Pending {
                 kind = kind,
                 killerColor = ColorIdOf(killer),
                 victimColor = ColorIdOf(victim),
-                expires = Time.time + 20f
+                expires = Time.time + 20f,
+                playInMeeting = playInMeeting
             });
         }
 
@@ -157,6 +184,7 @@ namespace UnknownsCollection {
 
         private static GameObject root;
         private static Kind activeKind = Kind.None;
+        private static bool activePlaysInMeeting;
         private static float startTime;
         private static float duration;
         private static System.Random rng;
@@ -178,7 +206,9 @@ namespace UnknownsCollection {
             bool uiBlocked = MeetingHud.Instance != null || ExileController.Instance != null;
 
             if (root != null) {
-                if (uiBlocked) { Clear(); return; }     // a meeting interrupts the show
+                // A meeting interrupts the show - except for sequences that (like the vanilla
+                // Guesser overlay) are MEANT to play on top of the meeting UI.
+                if (uiBlocked && !activePlaysInMeeting) { Clear(); return; }
                 float t = (Time.time - startTime) / duration;
                 if (t >= 1f) { Clear(); return; }
                 try { UpdateSeq(Mathf.Clamp01(t)); }
@@ -189,11 +219,12 @@ namespace UnknownsCollection {
                 return;
             }
 
-            if (pending.Count == 0 || uiBlocked) return;
+            if (pending.Count == 0) return;
             var hud = HudManager.Instance;
             if (hud == null) return;
 
             var next = pending[0];
+            if (uiBlocked && !next.playInMeeting) return;
             pending.RemoveAt(0);
             try { Build(hud, next); }
             catch (Exception e) {
@@ -206,9 +237,11 @@ namespace UnknownsCollection {
             if (root != null) UnityEngine.Object.Destroy(root);
             root = null;
             activeKind = Kind.None;
+            activePlaysInMeeting = false;
             killerFig = null; victimFig = null;
             dim = flash = propA = propB = propC = null;
             particles = null;
+            extraFig = null;                 // TOR sequences (poster mini-fig etc.)
             armedVictims.Clear();
             windowKind = Kind.None;
             pending.Clear();
@@ -273,6 +306,7 @@ namespace UnknownsCollection {
             root.transform.localPosition = new Vector3(0f, 0f, -500f);
 
             activeKind = p.kind;
+            activePlaysInMeeting = p.playInMeeting;
             startTime = Time.time;
             soundPhase = 0;
             rng = new System.Random(Environment.TickCount);
@@ -320,6 +354,10 @@ namespace UnknownsCollection {
                     propB = Make("burst", UCAssets.OverlayBurst, -0.6f, -0.2f, 40, new Color(1f, 1f, 1f, 0f), 0.3f);
                     particles = MakeParticles(8, UCFx.Smoke, new Color(0.45f, 0.45f, 0.5f), 35, false);
                     break;
+
+                default:
+                    BuildTor(p);   // TOR-role sequences live in UCKillOverlayTOR.cs
+                    break;
             }
         }
 
@@ -361,6 +399,7 @@ namespace UnknownsCollection {
                 case Kind.Poisoner: UpdatePoisoner(t, exit); break;
                 case Kind.Shade: UpdateShade(t, exit); break;
                 case Kind.ManiacBomb: UpdateManiac(t, exit); break;
+                default: UpdateTorSeq(t, exit); break;   // UCKillOverlayTOR.cs
             }
         }
 

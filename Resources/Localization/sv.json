@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Ingen startroll: den första spelaren som dör återuppstår som Poltergeist och fortsätter spöka för sitt ursprungliga lag. En långsamt återhämtande energipool betalar för fyra krafter: slamma igen dörrar, hexa spelare (hastighet, blind eller nattsyn), agera som en hand vid reaktorn, eller kort framträda som en kopia av en levande spelare.",
  "uc.ui.options.bug_glitch_toggle": "Bug vinst-glitcheffekter",
  "uc.ui.options.button_pulse_toggle": "Knapp-redo-puls",
+ "uc.ui.options.kill_anim_uc_toggle": "UC-dödsanimationer",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR-dödsanimationer",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Moddad av DaUnknown",

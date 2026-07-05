@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Не стартовая роль: первый умерший игрок восстаёт как Poltergeist и продолжает преследовать за свою исходную команду. Медленно восстанавливающийся запас энергии оплачивает четыре силы: с грохотом захлопывать двери, накладывать чары на игроков (скорость, слепота или ночное зрение), действовать как одна рука у реактора, или ненадолго появляться как копия живого игрока.",
  "uc.ui.options.bug_glitch_toggle": "Глюк-эффекты при победе Bug",
  "uc.ui.options.button_pulse_toggle": "Пульсация готовой кнопки",
+ "uc.ui.options.kill_anim_uc_toggle": "Анимации убийств UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Анимации убийств TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Модификация от DaUnknown",

@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Ní ról tosaigh é: éiríonn an chéad imreoir a fhaigheann bás mar Poltergeist agus leanann sé ag cur eagla ar son a fhoirne bunaidh. Íocann linn fuinnimh atá ag athghiniúint go mall as ceithre chumhacht: doirse a phlabadh, ortha a chur ar imreoirí (luas, dallacht nó radharc oíche), gníomhú mar lámh amháin ag an imoibreoir, nó láithriú go hachomair mar chóip d'imreoir beo.",
  "uc.ui.options.bug_glitch_toggle": "Maisíochtaí Glitch Bua Bug",
  "uc.ui.options.button_pulse_toggle": "Preab Cnaipe Réidh",
+ "uc.ui.options.kill_anim_uc_toggle": "Beochana maraithe UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Beochana maraithe TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Modaithe ag DaUnknown",

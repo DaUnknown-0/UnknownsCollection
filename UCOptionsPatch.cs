@@ -48,7 +48,21 @@ namespace UnknownsCollection {
                         !UnknownsCollectionPlugin.ButtonPulseEnabled.Value;
                     return UnknownsCollectionPlugin.ButtonPulseEnabled.Value;
                 },
-                () => UnknownsCollectionPlugin.ButtonPulseEnabled.Value)
+                () => UnknownsCollectionPlugin.ButtonPulseEnabled.Value),
+            new(() => UCLocalization.Tr("uc.ui.options.kill_anim_uc_toggle"),
+                () => {
+                    UnknownsCollectionPlugin.KillAnimationsUC.Value =
+                        !UnknownsCollectionPlugin.KillAnimationsUC.Value;
+                    return UnknownsCollectionPlugin.KillAnimationsUC.Value;
+                },
+                () => UnknownsCollectionPlugin.KillAnimationsUC.Value),
+            new(() => UCLocalization.Tr("uc.ui.options.kill_anim_tor_toggle"),
+                () => {
+                    UnknownsCollectionPlugin.KillAnimationsTOR.Value =
+                        !UnknownsCollectionPlugin.KillAnimationsTOR.Value;
+                    return UnknownsCollectionPlugin.KillAnimationsTOR.Value;
+                },
+                () => UnknownsCollectionPlugin.KillAnimationsTOR.Value)
         };
 
         [HarmonyPostfix]

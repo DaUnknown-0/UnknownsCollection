@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Nie jest rolą początkową: pierwszy gracz, który umiera, powstaje jako Poltergeist i dalej nawiedza dla swojej pierwotnej drużyny. Powoli regenerująca się pula energii opłaca cztery moce: zatrzaskiwanie drzwi, rzucanie klątw na graczy (prędkość, ślepota lub noktowizja), działanie jako jedna ręka przy reaktorze, lub krótkie pojawienie się jako kopia żywego gracza.",
  "uc.ui.options.bug_glitch_toggle": "Efekty glitcha zwycięstwa Buga",
  "uc.ui.options.button_pulse_toggle": "Puls gotowości przycisku",
+ "uc.ui.options.kill_anim_uc_toggle": "Animacje zabójstw UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Animacje zabójstw TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Zmodyfikowane przez DaUnknown",

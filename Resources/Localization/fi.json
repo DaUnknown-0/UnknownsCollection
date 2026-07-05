@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Ei aloitusrooli: ensimmäinen kuoleva pelaaja nousee Poltergeistiksi ja jatkaa kummittelua alkuperäiselle joukkueelleen. Hitaasti palautuva energiavarasto maksaa neljästä voimasta: ovien paiskaaminen kiinni, pelaajien hexaaminen (nopeus, sokeus tai yönäkö), toimiminen yhtenä kätenä reaktorilla tai hetkellinen ilmestyminen elossa olevan pelaajan kopiona.",
  "uc.ui.options.bug_glitch_toggle": "Bugin voitto-glitch-efektit",
  "uc.ui.options.button_pulse_toggle": "Painikkeen valmiuspulssi",
+ "uc.ui.options.kill_anim_uc_toggle": "UC-tappoanimaatiot",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR-tappoanimaatiot",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Moddannut DaUnknown",

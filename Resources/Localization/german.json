@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Keine Start-Rolle: Der erste Tote des Spiels erhebt sich als Poltergeist und spukt für sein ursprüngliches Team weiter. Seine langsam regenerierende Energie bezahlt vier Kräfte: Türen zuschlagen, Spieler verhexen (Tempo, Blenden oder Nachtsicht), am Reaktor als eine Hand mithelfen oder kurz als Kopie eines Lebenden erscheinen.",
  "uc.ui.options.bug_glitch_toggle": "Bug-Sieg-Glitch-Effekte",
  "uc.ui.options.button_pulse_toggle": "Button-Bereit-Pulsieren",
+ "uc.ui.options.kill_anim_uc_toggle": "UC-Kill-Animationen",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR-Kill-Animationen",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Modifiziert von DaUnknown",

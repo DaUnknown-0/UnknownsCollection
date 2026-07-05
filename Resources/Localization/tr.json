@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Başlangıç rolü değildir: ölen ilk oyuncu Poltergeist olarak yükselir ve kendi eski takımı için musallat olmaya devam eder. Yavaşça yenilenen bir enerji havuzu dört gücü karşılar: kapıları çarparak kapatmak, oyunculara lanet okumak (hız, körlük ya da gece görüşü), reaktörde tek bir el gibi davranmak ya da kısa süreliğine hayattaki bir oyuncunun kopyası olarak belirmek.",
  "uc.ui.options.bug_glitch_toggle": "Bug Zafer Glitch Efektleri",
  "uc.ui.options.button_pulse_toggle": "Düğme Hazır Nabzı",
+ "uc.ui.options.kill_anim_uc_toggle": "UC Öldürme Animasyonları",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR Öldürme Animasyonları",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "DaUnknown tarafından modlandı",

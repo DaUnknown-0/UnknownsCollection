@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Hindi isang starting role: ang unang player na mamatay ay babangon bilang Poltergeist at magpapatuloy sa pagmumulto para sa orihinal na team nila. Isang mabagal na bumabalik na energy pool ang nagbabayad para sa apat na kapangyarihan: pagsara nang malakas ng mga pinto, paghex sa players (speed, blind, o night vision), pagiging isang kamay sa reactor, o saglit na paglitaw bilang kopya ng isang buhay na player.",
  "uc.ui.options.bug_glitch_toggle": "Glitch Effects sa Panalo ng Bug",
  "uc.ui.options.button_pulse_toggle": "Pulse Kapag Ready na ang Button",
+ "uc.ui.options.kill_anim_uc_toggle": "UC Kill Animations",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR Kill Animations",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Ginawa ni DaUnknown",

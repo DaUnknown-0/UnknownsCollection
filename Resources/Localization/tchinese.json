@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "並非初始角色：第一個死亡的玩家會以Poltergeist的身分復活，並繼續為其原陣營作祟。一個緩慢恢復的能量池支付四種能力的消耗：猛然關門、對玩家施咒（加速、致盲或夜視）、在反應爐充當一隻手，或短暫以存活玩家的複製形態出現。",
  "uc.ui.options.bug_glitch_toggle": "Bug勝利故障特效",
  "uc.ui.options.button_pulse_toggle": "按鈕就緒脈衝效果",
+ "uc.ui.options.kill_anim_uc_toggle": "UC擊殺動畫",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR擊殺動畫",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "模組製作：DaUnknown",

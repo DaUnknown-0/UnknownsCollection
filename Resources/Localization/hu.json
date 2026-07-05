@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Nem kezdő szerep: az első meghaló játékos Poltergeistként támad fel, és tovább kísért eredeti csapatáért. Egy lassan újratöltődő energiatartalék négy erőt fizet ki: ajtók becsapása, játékosok megátkozása (sebesség, vakság vagy éjjellátás), egy kézként való működés a reaktornál, vagy rövid megjelenés egy élő játékos másolataként.",
  "uc.ui.options.bug_glitch_toggle": "Bug győzelmi hibaeffektek",
  "uc.ui.options.button_pulse_toggle": "Gomb készenléti pulzálás",
+ "uc.ui.options.kill_anim_uc_toggle": "UC ölés-animációk",
+ "uc.ui.options.kill_anim_tor_toggle": "TOR ölés-animációk",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Moddolta: DaUnknown",

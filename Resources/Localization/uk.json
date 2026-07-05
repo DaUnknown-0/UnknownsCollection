@@ -289,6 +289,8 @@
  "uc.help.poltergeist": "Не стартова роль: перший гравець, що гине, повстає як Poltergeist і продовжує переслідувати заради своєї початкової команди. Повільно відновлюваний запас енергії оплачує чотири сили: захлопування дверей, накладання прокльону на гравців (швидкість, сліпота чи нічне бачення), дію як однієї руки на реакторі, або короткочасну появу як копія живого гравця.",
  "uc.ui.options.bug_glitch_toggle": "Ефекти глюків перемоги Bug",
  "uc.ui.options.button_pulse_toggle": "Пульсація готовності кнопки",
+ "uc.ui.options.kill_anim_uc_toggle": "Анімації вбивств UC",
+ "uc.ui.options.kill_anim_tor_toggle": "Анімації вбивств TOR",
  "uc.ui.options.nav_title": "Unknown's Collection",
  "uc.ui.modname": "Unknown's Collection",
  "uc.ui.credit": "Модифіковано DaUnknown",

@@ -57,6 +57,12 @@ namespace UnknownsCollection {
 
         private static bool IsPlayer(PlayerControl p, byte id) => p != null && p.PlayerId == id;
 
+        // ArmVictim + a diagnostic line, so playtests can verify detection in the BepInEx log.
+        private static void Arm(Kind kind, byte victimId) {
+            ArmVictim(kind, victimId);
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[UCKillOverlay] TOR kill armed: {kind} victim={victimId}");
+        }
+
         // ==================== detection (observe-only prefixes on TOR) ====================
 
         // Thief steal: armed from the steal RPC itself (see header). Runs BEFORE TOR's handler,
@@ -67,7 +73,7 @@ namespace UnknownsCollection {
                 try {
                     if (!TorAnimsOn) return;
                     if (Thief.thief != null && Thief.thief.PlayerId != playerId)
-                        ArmVictim(Kind.ThiefSteal, playerId);
+                        Arm(Kind.ThiefSteal, playerId);
                 } catch { }
             }
         }
@@ -85,31 +91,35 @@ namespace UnknownsCollection {
                     // Thief: only the failed-steal suicide is left to catch here (steal kills are
                     // armed from thiefStealsRole; by now a stealing thief is no longer Thief.thief).
                     if (IsPlayer(Thief.thief, sourceId)) {
-                        if (self) ArmVictim(Kind.ThiefFail, targetId);
+                        if (self) Arm(Kind.ThiefFail, targetId);
                         return;
                     }
                     // Sheriff (incl. a promoted Deputy - TOR repoints Sheriff.sheriff): hit or misfire.
                     if (IsPlayer(Sheriff.sheriff, sourceId)) {
-                        ArmVictim(self ? Kind.SheriffMisfire : Kind.SheriffShot, targetId);
+                        Arm(self ? Kind.SheriffMisfire : Kind.SheriffShot, targetId);
+                        return;
+                    }
+                    // Bomb deaths are exactly the Bomber's masked kills (each client kills itself
+                    // locally) - checked BEFORE the self bail-out, because the bomber caught in his
+                    // OWN blast arrives as source==target==bomber and is a bomb victim like anyone.
+                    if (IsPlayer(Bomber.bomber, sourceId)) {
+                        if (masked) Arm(Kind.BomberBomb, targetId);
                         return;
                     }
                     if (self) return;
-                    if (IsPlayer(Ninja.ninja, sourceId)) { ArmVictim(Kind.NinjaDash, targetId); return; }
+                    if (IsPlayer(Ninja.ninja, sourceId)) { Arm(Kind.NinjaDash, targetId); return; }
                     if (IsPlayer(Jackal.jackal, sourceId) || IsPlayer(Sidekick.sidekick, sourceId)) {
-                        ArmVictim(Kind.JackalClaw, targetId);
+                        Arm(Kind.JackalClaw, targetId);
                         return;
                     }
                     // Direct kills only for these three - their masked kills stay vanilla-anonymous.
-                    if (IsPlayer(Vampire.vampire, sourceId)) { if (!masked) ArmVictim(Kind.VampireKill, targetId); return; }
-                    if (IsPlayer(Witch.witch, sourceId)) { if (!masked) ArmVictim(Kind.WitchKill, targetId); return; }
-                    if (IsPlayer(Warlock.warlock, sourceId)) { if (!masked) ArmVictim(Kind.WarlockKill, targetId); return; }
-                    // Bomb deaths are exactly the Bomber's masked kills (each client kills itself);
-                    // his normal knife kills are unmasked and stay vanilla.
-                    if (IsPlayer(Bomber.bomber, sourceId)) { if (masked) ArmVictim(Kind.BomberBomb, targetId); return; }
+                    if (IsPlayer(Vampire.vampire, sourceId)) { if (!masked) Arm(Kind.VampireKill, targetId); return; }
+                    if (IsPlayer(Witch.witch, sourceId)) { if (!masked) Arm(Kind.WitchKill, targetId); return; }
+                    if (IsPlayer(Warlock.warlock, sourceId)) { if (!masked) Arm(Kind.WarlockKill, targetId); return; }
                     // Bounty hit: only when the target IS the bounty (regular kills stay vanilla).
                     // BountyHunter.bounty may only be known on some clients - then only those play it.
                     if (IsPlayer(BountyHunter.bountyHunter, sourceId) && IsPlayer(BountyHunter.bounty, targetId))
-                        ArmVictim(Kind.BountyHit, targetId);
+                        Arm(Kind.BountyHit, targetId);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[UCKillOverlay] TOR murder observer: {e.Message}");
                 }

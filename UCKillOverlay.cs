@@ -42,7 +42,9 @@ namespace UnknownsCollection {
         public enum Kind : byte {
             None, Tesla, SaboteurTask, Poisoner, Shade, ManiacBomb,
             SheriffShot, SheriffMisfire, VampireKill, WarlockKill, WitchKill,
-            NinjaDash, BomberBomb, GuesserShot, ThiefSteal, ThiefFail, JackalClaw, BountyHit
+            NinjaDash, BomberBomb, GuesserShot, ThiefSteal, ThiefFail, JackalClaw, BountyHit,
+            // anonymous death variants (killer identity stays hidden - no killer figure on stage)
+            VampireBiteDeath, WarlockCurse, WitchSpellDeath
         }
 
         private static bool UcAnimsOn {
@@ -57,12 +59,16 @@ namespace UnknownsCollection {
 
         // ==================== context arming (called from role RPC handlers) ====================
 
-        private static readonly Dictionary<byte, (Kind kind, float until)> armedVictims = new();
+        // killerColor: for MASKED kills ShowKillAnimation only ever sees (victim, victim) - the
+        // arming side knows the real killer and passes its color id here (-1 = take it from the
+        // ShowKillAnimation arguments, the unmasked case).
+        private static readonly Dictionary<byte, (Kind kind, float until, int killerColor)> armedVictims = new();
         private static Kind windowKind = Kind.None;
         private static float windowUntil;
+        private static int lastArmedKillerColor = -1;   // set by SelectRaw when consuming an armed entry
 
-        public static void ArmVictim(Kind kind, byte victimId, float ttl = 5f) {
-            armedVictims[victimId] = (kind, Time.time + ttl);
+        public static void ArmVictim(Kind kind, byte victimId, float ttl = 5f, int killerColor = -1) {
+            armedVictims[victimId] = (kind, Time.time + ttl, killerColor);
         }
         public static void ArmWindow(Kind kind, float ttl = 3f) {
             windowKind = kind;
@@ -89,7 +95,7 @@ namespace UnknownsCollection {
                     if (kind == Kind.None) return true;
                     // If vanilla fires the overlay DURING a meeting (Guesser shot), ours must play
                     // right there too instead of queueing until the meeting ends.
-                    PlayFor(kind, killer, victim, MeetingHud.Instance != null);
+                    PlayFor(kind, killer, victim, MeetingHud.Instance != null, lastArmedKillerColor);
                     return false;                       // suppress the vanilla overlay
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[UCKillOverlay] hook: {e}");
@@ -99,6 +105,7 @@ namespace UnknownsCollection {
         }
 
         private static Kind Select(NetworkedPlayerInfo killer, NetworkedPlayerInfo victim) {
+            lastArmedKillerColor = -1;
             Kind k = SelectRaw(killer, victim);
             // Per-family toggle (UC Options popup): disabled kinds fall back to the vanilla overlay.
             return k != Kind.None && KindEnabled(k) ? k : Kind.None;
@@ -108,7 +115,10 @@ namespace UnknownsCollection {
             float now = Time.time;
             if (victim != null && armedVictims.TryGetValue(victim.PlayerId, out var armed)) {
                 armedVictims.Remove(victim.PlayerId);
-                if (now <= armed.until) return armed.kind;
+                if (now <= armed.until) {
+                    lastArmedKillerColor = armed.killerColor;
+                    return armed.kind;
+                }
             }
             if (windowKind != Kind.None) {
                 if (now <= windowUntil) return windowKind;
@@ -134,11 +144,13 @@ namespace UnknownsCollection {
         private static readonly List<Pending> pending = new();
 
         public static void PlayFor(Kind kind, NetworkedPlayerInfo killer, NetworkedPlayerInfo victim,
-                                   bool playInMeeting = false) {
+                                   bool playInMeeting = false, int killerColorOverride = -1) {
             if (!KindEnabled(kind)) return;   // toggled off -> whatever vanilla does happens instead
             pending.Add(new Pending {
                 kind = kind,
-                killerColor = ColorIdOf(killer),
+                // masked kills report the victim as its own killer - the arming side supplies
+                // the REAL killer's color then (see ArmVictim)
+                killerColor = killerColorOverride >= 0 ? killerColorOverride : ColorIdOf(killer),
                 victimColor = ColorIdOf(victim),
                 expires = Time.time + 20f,
                 playInMeeting = playInMeeting

@@ -12,13 +12,15 @@
  *    showAnimation) - an observe-only prefix reads the TRUE killer there (the overlay itself
  *    later only sees a masked killer for showAnimation==0 kills) and arms the matching Kind
  *    for the victim, exactly like the UC roles' FX-RPC arming.
- *  - showAnimation==0 ("masked") kills are the ANONYMOUS ones (Vampire bite death, Warlock
- *    curse proxy kill): vanilla hides the killer from the victim there, so those deliberately
- *    KEEP the vanilla overlay - a themed cutscene would leak the killer role to a freshly
- *    dead player (explicit design decision). Vampire/Witch/Warlock therefore only skin their
- *    DIRECT kills. The two masked exceptions leak nothing new: the Bomber's bomb death is
- *    audibly/visibly a bomb anyway (sequence stays killer-less), and the Thief's failed-steal
- *    suicide is only ever seen by the Thief himself.
+ *  - showAnimation==0 ("masked") kills (Vampire bite death, Warlock curse proxy kill, bomb
+ *    deaths) get their cutscene at the DEATH, never at the bite/spell moment - a marked player
+ *    who is still alive must not learn what is coming (user decision). The killer figure IS
+ *    shown to the dead victim: TOR reveals every role to ghosts anyway, so nothing new leaks
+ *    (user decision). Because ShowKillAnimation only sees (victim, victim) for masked kills,
+ *    the REAL killer color travels through the arming side (ArmVictim killerColor). The Witch's
+ *    spell death resolves at meeting end via Exiled() and uses the Poisoner-style direct
+ *    PlayFor + queue instead (WitchSpellDeath, hooked at uncheckedExilePlayer - RPC 110 is
+ *    witch-exile-exclusive across the whole mod family).
  *  - Thief steal kills are armed from RPCProcedure.thiefStealsRole (its parameter IS the
  *    victim); by the time the murder RPC lands, thiefStealsRole has already cleared
  *    Thief.thief via clearAndReload, so the murder hook can no longer attribute it.
@@ -58,8 +60,15 @@ namespace UnknownsCollection {
         private static bool IsPlayer(PlayerControl p, byte id) => p != null && p.PlayerId == id;
 
         // ArmVictim + a diagnostic line, so playtests can verify detection in the BepInEx log.
-        private static void Arm(Kind kind, byte victimId) {
-            ArmVictim(kind, victimId);
+        // Passes the REAL killer's color along: masked kills reach ShowKillAnimation as
+        // (victim, victim), so the killer figure's color must come from the arming side.
+        private static void Arm(Kind kind, byte victimId, byte killerId) {
+            int color = -1;
+            try {
+                var k = TheOtherRoles.Helpers.playerById(killerId);
+                if (k?.Data?.DefaultOutfit != null) color = k.Data.DefaultOutfit.ColorId;
+            } catch { }
+            ArmVictim(kind, victimId, 5f, color);
             UnknownsCollectionPlugin.Logger?.LogInfo($"[UCKillOverlay] TOR kill armed: {kind} victim={victimId}");
         }
 
@@ -73,7 +82,7 @@ namespace UnknownsCollection {
                 try {
                     if (!TorAnimsOn) return;
                     if (Thief.thief != null && Thief.thief.PlayerId != playerId)
-                        Arm(Kind.ThiefSteal, playerId);
+                        Arm(Kind.ThiefSteal, playerId, Thief.thief.PlayerId);
                 } catch { }
             }
         }
@@ -91,37 +100,63 @@ namespace UnknownsCollection {
                     // Thief: only the failed-steal suicide is left to catch here (steal kills are
                     // armed from thiefStealsRole; by now a stealing thief is no longer Thief.thief).
                     if (IsPlayer(Thief.thief, sourceId)) {
-                        if (self) Arm(Kind.ThiefFail, targetId);
+                        if (self) Arm(Kind.ThiefFail, targetId, sourceId);
                         return;
                     }
                     // Sheriff (incl. a promoted Deputy - TOR repoints Sheriff.sheriff): hit or misfire.
                     if (IsPlayer(Sheriff.sheriff, sourceId)) {
-                        Arm(self ? Kind.SheriffMisfire : Kind.SheriffShot, targetId);
+                        Arm(self ? Kind.SheriffMisfire : Kind.SheriffShot, targetId, sourceId);
                         return;
                     }
                     // Bomb deaths are exactly the Bomber's masked kills (each client kills itself
                     // locally) - checked BEFORE the self bail-out, because the bomber caught in his
                     // OWN blast arrives as source==target==bomber and is a bomb victim like anyone.
                     if (IsPlayer(Bomber.bomber, sourceId)) {
-                        if (masked) Arm(Kind.BomberBomb, targetId);
+                        if (masked) Arm(Kind.BomberBomb, targetId, sourceId);
                         return;
                     }
                     if (self) return;
-                    if (IsPlayer(Ninja.ninja, sourceId)) { Arm(Kind.NinjaDash, targetId); return; }
+                    if (IsPlayer(Ninja.ninja, sourceId)) { Arm(Kind.NinjaDash, targetId, sourceId); return; }
                     if (IsPlayer(Jackal.jackal, sourceId) || IsPlayer(Sidekick.sidekick, sourceId)) {
-                        Arm(Kind.JackalClaw, targetId);
+                        Arm(Kind.JackalClaw, targetId, sourceId);
                         return;
                     }
-                    // Direct kills only for these three - their masked kills stay vanilla-anonymous.
-                    if (IsPlayer(Vampire.vampire, sourceId)) { if (!masked) Arm(Kind.VampireKill, targetId); return; }
-                    if (IsPlayer(Witch.witch, sourceId)) { if (!masked) Arm(Kind.WitchKill, targetId); return; }
-                    if (IsPlayer(Warlock.warlock, sourceId)) { if (!masked) Arm(Kind.WarlockKill, targetId); return; }
+                    // Vampire/Warlock: direct kills and the masked variants (delayed bite death /
+                    // curse proxy kill) both play - the cutscene fires at the death, where the
+                    // victim is a ghost and sees all roles anyway.
+                    if (IsPlayer(Vampire.vampire, sourceId)) { Arm(masked ? Kind.VampireBiteDeath : Kind.VampireKill, targetId, sourceId); return; }
+                    if (IsPlayer(Witch.witch, sourceId)) { if (!masked) Arm(Kind.WitchKill, targetId, sourceId); return; }
+                    if (IsPlayer(Warlock.warlock, sourceId)) { Arm(masked ? Kind.WarlockCurse : Kind.WarlockKill, targetId, sourceId); return; }
                     // Bounty hit: only when the target IS the bounty (regular kills stay vanilla).
                     // BountyHunter.bounty may only be known on some clients - then only those play it.
                     if (IsPlayer(BountyHunter.bountyHunter, sourceId) && IsPlayer(BountyHunter.bounty, targetId))
-                        Arm(Kind.BountyHit, targetId);
+                        Arm(Kind.BountyHit, targetId, sourceId);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[UCKillOverlay] TOR murder observer: {e.Message}");
+                }
+            }
+        }
+
+        // Witch spell deaths resolve at meeting end via Exiled() (never through ShowKillAnimation) -
+        // same situation as the Poisoner, so the same direct-PlayFor path: the queue waits for the
+        // exile UI, audience is victim + witch (the sequence itself stays anonymous - no killer
+        // figure). Hook point: RPCProcedure.uncheckedExilePlayer - RPC 110 is sent EXCLUSIVELY by
+        // TOR's witch-execution block (verified across TOR and the whole mod family), and it runs
+        // exactly once per client, so no dedup is needed.
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.uncheckedExilePlayer))]
+        static class WitchExileObserverPatch {
+            public static void Prefix(byte targetId) {
+                try {
+                    if (!TorAnimsOn || Witch.witch == null) return;
+                    var lp = PlayerControl.LocalPlayer;
+                    if (lp == null) return;
+                    if (lp.PlayerId != targetId && lp.PlayerId != Witch.witch.PlayerId) return;   // audience
+                    var target = TheOtherRoles.Helpers.playerById(targetId);
+                    if (target == null || target.Data == null) return;
+                    PlayFor(Kind.WitchSpellDeath, Witch.witch.Data, target.Data);
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[UCKillOverlay] TOR kill armed: WitchSpellDeath victim={targetId}");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[UCKillOverlay] witch exile observer: {e.Message}");
                 }
             }
         }
@@ -162,16 +197,22 @@ namespace UnknownsCollection {
                     particles = MakeParticles(7, UCFx.Smoke, new Color(0.35f, 0.35f, 0.38f), 20, false);
                     break;
 
+                // The killer figure shows in the death variants too: TOR reveals every role to
+                // ghosts anyway, so the dead victim learns nothing it would not see regardless
+                // (user decision). The REAL killer color travels via the arming side.
                 case Kind.VampireKill:
+                case Kind.VampireBiteDeath:   // bite death: same scene, just no garlic on stage
                     duration = 1.65f;
                     killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
+                    if (p.kind == Kind.VampireKill)
+                        propB = Make("garlic", TorSprite("TheOtherRoles.Resources.Garlic.png", 180f), 1.7f, -0.95f, 12, new Color(1f, 1f, 1f, 0f), 1.15f);
                     victimFig = MakeFig(p.victimColor, true, 0.45f, -0.35f, 10);
                     propA = Make("fangs", UCAssets.OverlayFangs, 0.45f, 3f, 20, new Color(1f, 1f, 1f, 0f), 1.05f);
-                    propB = Make("garlic", TorSprite("TheOtherRoles.Resources.Garlic.png", 180f), 1.7f, -0.95f, 12, new Color(1f, 1f, 1f, 0f), 1.15f);
                     particles = MakeParticles(6, UCFx.Smoke, new Color(0.45f, 0.1f, 0.16f), 18, false);
                     break;
 
                 case Kind.WarlockKill:
+                case Kind.WarlockCurse:       // curse proxy kill: identical scene
                     duration = 1.65f;
                     killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
                     victimFig = MakeFig(p.victimColor, true, 0.55f, -0.35f, 10);
@@ -180,6 +221,7 @@ namespace UnknownsCollection {
                     break;
 
                 case Kind.WitchKill:
+                case Kind.WitchSpellDeath:    // spell death (after the meeting): same scene
                     duration = 1.7f;
                     killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
                     victimFig = MakeFig(p.victimColor, true, 2.3f, -0.35f, 10);
@@ -257,8 +299,11 @@ namespace UnknownsCollection {
                 case Kind.SheriffShot: UpdateSheriffShot(t, exit); break;
                 case Kind.SheriffMisfire: UpdateSheriffMisfire(t, exit); break;
                 case Kind.VampireKill: UpdateVampireKill(t, exit); break;
+                case Kind.VampireBiteDeath: UpdateVampireKill(t, exit); break;   // garlic guard
                 case Kind.WarlockKill: UpdateWarlockKill(t, exit); break;
+                case Kind.WarlockCurse: UpdateWarlockKill(t, exit); break;
                 case Kind.WitchKill: UpdateWitchKill(t, exit); break;
+                case Kind.WitchSpellDeath: UpdateWitchKill(t, exit); break;
                 case Kind.NinjaDash: UpdateNinjaDash(t, exit); break;
                 case Kind.BomberBomb: UpdateBomberBomb(t, exit); break;
                 case Kind.GuesserShot: UpdateGuesserShot(t, exit); break;
@@ -376,14 +421,18 @@ namespace UnknownsCollection {
         }
 
         // The vampire lunges in and the fangs snap shut; the garlic right next to it came too late.
+        // Also runs the anonymous VampireBiteDeath (killerFig/propB are null there - the delayed
+        // bite catches up with the victim out of nowhere).
         private static void UpdateVampireKill(float t, float exit) {
             float ein = EaseOut(Seg(t, 0f, 0.18f));
             victimFig.SetAlpha(ein * exit);
-            SetAlpha(propB, ein * 0.95f * exit);   // garlic on the floor
+            if (propB != null) SetAlpha(propB, ein * 0.95f * exit);   // garlic on the floor
 
             float lunge = EaseOut(Seg(t, 0.05f, 0.3f));
-            killerFig.SetPos(Mathf.Lerp(-4.2f, -0.75f, lunge), -0.35f);
-            killerFig.SetAlpha(Mathf.Min(ein + lunge, 1f) * exit);
+            if (killerFig != null) {
+                killerFig.SetPos(Mathf.Lerp(-4.2f, -0.75f, lunge), -0.35f);
+                killerFig.SetAlpha(Mathf.Min(ein + lunge, 1f) * exit);
+            }
 
             // fangs drop onto the victim and CHOMP
             float dropF = Smooth(Seg(t, 0.3f, 0.46f));
@@ -395,8 +444,10 @@ namespace UnknownsCollection {
             SetAlpha(flash, chomp > 0f ? Mathf.Max(0f, 0.3f - 1.8f * (t - 0.46f)) : 0f);
 
             // the garlic rocks indignantly - it did NOT prevent this one
-            float rock = Seg(t, 0.5f, 0.75f);
-            propB.transform.localRotation = Quaternion.Euler(0, 0, 14f * Mathf.Sin(rock * 16f) * (rock > 0f && rock < 1f ? 1f : 0f));
+            if (propB != null) {
+                float rock = Seg(t, 0.5f, 0.75f);
+                propB.transform.localRotation = Quaternion.Euler(0, 0, 14f * Mathf.Sin(rock * 16f) * (rock > 0f && rock < 1f ? 1f : 0f));
+            }
 
             // the victim pales and sinks
             float pale = Smooth(Seg(t, 0.5f, 0.8f));
@@ -418,12 +469,15 @@ namespace UnknownsCollection {
             }
         }
 
-        // A curse circle ignites under the victim and drags it down.
+        // A curse circle ignites under the victim and drags it down. Also runs the anonymous
+        // WarlockCurse proxy-kill variant (killerFig is null there - the circle strikes alone).
         private static void UpdateWarlockKill(float t, float exit) {
             float ein = EaseOut(Seg(t, 0f, 0.18f));
             victimFig.SetAlpha(ein * exit);
-            killerFig.SetPos(Mathf.Lerp(-4.2f, -2.4f, ein), -0.35f);
-            killerFig.SetAlpha(ein * exit);
+            if (killerFig != null) {
+                killerFig.SetPos(Mathf.Lerp(-4.2f, -2.4f, ein), -0.35f);
+                killerFig.SetAlpha(ein * exit);
+            }
 
             if (t >= 0.24f) Sound(1, () => TorSfx("warlockCurse"));
 

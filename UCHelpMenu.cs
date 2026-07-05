@@ -109,6 +109,7 @@ namespace UnknownsCollection {
         private static string sessionLang;          // null = follow the active language
         private static bool langDropdownOpen;
         private static string searchQuery = "";
+        private static bool searchFocused;          // typing only goes to the search after clicking it
         private static int scrollLines;
         private static int maxScroll;
 
@@ -432,6 +433,7 @@ namespace UnknownsCollection {
             searchLabel = null;
             langDropdownOpen = false;
             searchQuery = "";
+            searchFocused = false;
             scrollLines = 0;
             genericKind = -1;
             stage = null; // died with the panel
@@ -517,7 +519,15 @@ namespace UnknownsCollection {
                 var clear = NewText(panel.transform, "x", 1.2f, new Color(1f, 1f, 1f, 0.5f), TextAlignmentOptions.Center);
                 clear.transform.localPosition = new Vector3(searchX + searchW / 2f - 0.16f, searchY, -0.1f);
                 hits.Add(new HitBox { anchor = clear.transform, w = 0.3f, h = 0.34f, onClick = () => {
-                    searchQuery = ""; scrollLines = 0; BuildList();
+                    searchQuery = ""; searchFocused = true; scrollLines = 0; BuildList();
+                } });
+                // Clicking the field FOCUSES it; only then does typed input go to the search
+                // (added after the clear-x so the x keeps winning inside its own little area).
+                var searchHit = new GameObject("searchHit");
+                searchHit.transform.SetParent(panel.transform, false);
+                searchHit.transform.localPosition = new Vector3(searchX, searchY, 0f);
+                hits.Add(new HitBox { anchor = searchHit.transform, w = searchW, h = 0.34f, onClick = () => {
+                    searchFocused = true;
                 } });
 
                 // ---- role list (left): scrollable, filterable; built by BuildList ----
@@ -1729,6 +1739,21 @@ namespace UnknownsCollection {
         }
 
         // ====================================================================
+        // While the search field is FOCUSED, typed letters must not walk the player around -
+        // mirror the vanilla chat: CanMove reports false for the local player for as long as
+        // the focus lasts. With the field unfocused the panel leaves movement alone entirely.
+        // ====================================================================
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.CanMove), MethodType.Getter)]
+        static class BlockMoveWhileTypingPatch {
+            public static void Postfix(PlayerControl __instance, ref bool __result) {
+                try {
+                    if (__result && searchFocused && panel != null && __instance.AmOwner)
+                        __result = false;
+                } catch { }
+            }
+        }
+
+        // ====================================================================
         // Per-frame: visibility gate + manual hover/click resolution.
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
@@ -1743,7 +1768,11 @@ namespace UnknownsCollection {
                     if (button.activeSelf != visible) button.SetActive(visible);
                     if (!visible) { if (panel != null) ClosePanel(); return; }
 
-                    if (panel != null && Input.GetKeyDown(KeyCode.Escape)) { ClosePanel(); return; }
+                    if (panel != null && Input.GetKeyDown(KeyCode.Escape)) {
+                        if (searchFocused) searchFocused = false; // first Escape only leaves the field
+                        else ClosePanel();
+                        return;
+                    }
 
                     // Mouse mapping through the SAME camera that renders (and fits) the UI layer.
                     var cam = FitCamera(button.layer);
@@ -1758,13 +1787,16 @@ namespace UnknownsCollection {
                         ApplyCameraFit(panel); // keep centred + scaled even if the camera changes
                         if (stage != null) { stageT += Time.deltaTime; AnimateStage(); }
 
-                        // live search: type to filter, backspace to delete (captured only
-                        // while the panel is open); wheel scrolls the role list
-                        string typed = Input.inputString;
+                        // live search: type to filter, backspace to delete - but ONLY while the
+                        // field is focused (clicked); otherwise the keys stay with the game so
+                        // the player can keep walking with the guide open. Enter leaves the field.
+                        string typed = searchFocused ? Input.inputString : null;
                         if (!string.IsNullOrEmpty(typed)) {
                             bool changed = false;
                             foreach (char ch in typed) {
-                                if (ch == '\b') {
+                                if (ch == '\r' || ch == '\n') {
+                                    searchFocused = false;
+                                } else if (ch == '\b') {
                                     if (searchQuery.Length > 0) { searchQuery = searchQuery.Substring(0, searchQuery.Length - 1); changed = true; }
                                 } else if (ch >= ' ' && ch != '\u007f' && searchQuery.Length < 24) {
                                     searchQuery += ch; changed = true;
@@ -1778,8 +1810,10 @@ namespace UnknownsCollection {
                             if (next != scrollLines) { scrollLines = next; BuildList(); }
                         }
                         if (searchLabel != null) {
-                            bool blink = Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
+                            bool blink = searchFocused && Mathf.Repeat(Time.unscaledTime, 1f) < 0.55f;
                             searchLabel.text = T("uc.helpui.search") + ": " + searchQuery + (blink ? "_" : " ");
+                            // dimmed while unfocused so "click first, then type" is readable at a glance
+                            searchLabel.color = new Color(1f, 1f, 1f, searchFocused ? 0.95f : 0.55f);
                         }
                         local = panel.transform.InverseTransformPoint(world);
                         foreach (var h in hits) {
@@ -1794,6 +1828,9 @@ namespace UnknownsCollection {
                     }
 
                     if (!Input.GetMouseButtonDown(0)) return;
+
+                    // any click drops the search focus; the search-field hitbox re-sets it
+                    searchFocused = false;
 
                     // The "?" button is NOT scaled (AspectPosition-anchored), so its test stays in
                     // world space.

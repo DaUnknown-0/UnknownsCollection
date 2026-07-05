@@ -49,7 +49,14 @@ namespace UnknownsCollection {
             Vent = 4
         }
 
-        private static readonly string[] AbilityNames = { "CAMO", "MORPH", "SHIELD", "SHOOT", "VENT" };
+        private static string AbilityButtonText(Ability a) => a switch {
+            Ability.Camouflage => UCLocalization.Tr("uc.ui.copycat.button_camo"),
+            Ability.Morphling => UCLocalization.Tr("uc.ui.copycat.button_morph"),
+            Ability.Shield => UCLocalization.Tr("uc.ui.copycat.button_shield"),
+            Ability.Shoot => UCLocalization.Tr("uc.ui.copycat.button_shoot"),
+            Ability.Vent => UCLocalization.Tr("uc.ui.copycat.button_vent"),
+            _ => ""
+        };
 
         // Effect durations (seconds).
         private const float CamoDuration = 10f;
@@ -705,7 +712,7 @@ namespace UnknownsCollection {
                 () => { /* nothing on meeting */ },
                 GetAbilitySprite(ability),
                 pos,
-                __instance, KeyCode.None, false, AbilityNames[(int)ability]);
+                __instance, KeyCode.None, false, AbilityButtonText(ability));
             button.MaxTimer = AbilityCooldown(ability);
             button.Timer = button.MaxTimer; // start on cooldown (elapses before the ability is ever learned)
             abilityButtons[ability] = button;

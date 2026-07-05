@@ -301,7 +301,7 @@ namespace UnknownsCollection {
                         () => { if (IsLocalScout()) SendDeactivate(); },
                         sprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
-                        __instance, KeyCode.F, false, "SCOUT");
+                        __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.scout.button_scout"));
                     scoutButton.MaxTimer = Cooldown != null ? Cooldown.getFloat() : 25f;
                     scoutButton.Timer = 10f;
                 } catch (Exception e) {

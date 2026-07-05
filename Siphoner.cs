@@ -350,7 +350,7 @@ namespace UnknownsCollection {
                             if (drainActive) SendToggleDrain(false);
                             drainButton.Timer = DrainCooldown != null ? DrainCooldown.getFloat() : 20f;
                         },
-                        false, "DRAIN");
+                        false, UCLocalization.Tr("uc.ui.siphoner.button_drain"));
                     drainButton.EffectDuration = duration;
                     drainButton.MaxTimer = cd;
                     drainButton.Timer = 5f;

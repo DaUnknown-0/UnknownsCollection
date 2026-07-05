@@ -246,7 +246,7 @@ namespace UnknownsCollection {
                 // player's only dedicated "you are THE Tesla" signal. Exact pattern of
                 // Poltergeist.ApplySetPoltergeist's own local-only rise flash+sound.
                 if (tesla == PlayerControl.LocalPlayer) {
-                    Helpers.showFlash(Color, 2.5f, "You are THE TESLA! Charge two players and bring them together.");
+                    Helpers.showFlash(Color, 2.5f, UCLocalization.Tr("uc.ui.tesla.promote_flash"));
                     UCAssets.PlayTeslaPromote();
                 }
             }

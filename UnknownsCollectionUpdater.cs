@@ -119,14 +119,14 @@ namespace UnknownsCollection {
                 popup.Show();
                 button = popup.transform.GetChild(2).gameObject;
                 button.SetActive(false);
-                popup.TextAreaTMP.text = "Updating Unknown's Collection\nPlease wait...";
+                popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.updating");
             }
 
             var asset = release.Assets.Find(FilterPluginAsset);
             if (asset == null) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"Update download: release {release?.Tag} has no '{PluginAssetName}' asset — aborting.");
                 _updateState = 3;
-                if (!managerMode) { popup.TextAreaTMP.text = "Update wasn't successful\nTry again later,\nor update manually."; button.SetActive(true); }
+                if (!managerMode) { popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.failed"); button.SetActive(true); }
                 _busy = false;
                 yield break;
             }
@@ -139,17 +139,18 @@ namespace UnknownsCollection {
                 _updateProgress = www.downloadProgress;
                 if (!managerMode) {
                     int stars = Mathf.CeilToInt(www.downloadProgress * 10);
-                    popup.TextAreaTMP.text = $"Updating Unknown's Collection\nPlease wait...\nDownloading...\n{new String((char)0x25A0, stars) + new String((char)0x25A1, 10 - stars)}";
+                    popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.downloading",
+                        new String((char)0x25A0, stars) + new String((char)0x25A1, 10 - stars));
                 }
                 yield return new WaitForEndOfFrame();
             }
 
             if (www.isNetworkError || www.isHttpError) {
                 _updateState = 3;
-                if (!managerMode) { popup.TextAreaTMP.text = "Update wasn't successful\nTry again later,\nor update manually."; button.SetActive(true); }
+                if (!managerMode) { popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.failed"); button.SetActive(true); }
                 _busy = false; yield break;
             }
-            if (!managerMode) popup.TextAreaTMP.text = "Updating Unknown's Collection\nPlease wait...\n\nDownload complete\ncopying file...";
+            if (!managerMode) popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.copying");
 
             var filePath = Path.Combine(Paths.PluginPath, asset.Name);
             if (File.Exists(filePath + ".old")) File.Delete(filePath + ".old");
@@ -165,7 +166,7 @@ namespace UnknownsCollection {
 
             if (!hasError) {
                 _updateState = 2;
-                if (!managerMode) popup.TextAreaTMP.text = "Unknown's Collection\nupdated successfully\nPlease restart the game.";
+                if (!managerMode) popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.success");
             } else _updateState = 3;
             if (!managerMode) button.SetActive(true);
             _busy = false;
@@ -291,22 +292,22 @@ namespace UnknownsCollection {
             passiveButton.OnClick.AddListener((Action)(() => { StartDownloadRelease(target); button.SetActive(false); }));
 
             var text = button.transform.GetComponentInChildren<TMPro.TMP_Text>();
-            StartCoroutine(Effects.Lerp(0.1f, (Action<float>)(p => text.SetText("Update Unknown's Collection"))));
+            StartCoroutine(Effects.Lerp(0.1f, (Action<float>)(p => text.SetText(UCLocalization.Tr("uc.updater.button_update")))));
             passiveButton.OnMouseOut.AddListener((Action)(() => text.color = new Color(0.12f, 0.72f, 1f)));
             passiveButton.OnMouseOver.AddListener((Action)(() => text.color = Color.white));
             text.color = new Color(0.12f, 0.72f, 1f);
 
             if (_showPopUp) {
-                var announcement = $"<size=150%>A new UNKNOWN'S COLLECTION update to {target.Tag} is available</size>\n{target.Description}";
+                var announcement = UCLocalization.Tr("uc.updater.announcement", target.Tag, target.Description);
                 var mgr = FindObjectOfType<MainMenuManager>(true);
                 if (mgr != null)
-                    mgr.StartCoroutine(CoShowAnnouncement(announcement, shortTitle: "Unknown's Collection Update", date: target.PublishedAt));
+                    mgr.StartCoroutine(CoShowAnnouncement(announcement, date: target.PublishedAt));
             }
             _showPopUp = false;
         }
 
         [HideFromIl2Cpp]
-        public IEnumerator CoShowAnnouncement(string announcement, bool show = true, string shortTitle = "Unknown's Collection Update", string title = "", string date = "") {
+        public IEnumerator CoShowAnnouncement(string announcement, bool show = true, string shortTitle = "", string title = "", string date = "") {
             for (float t = 30f; t > 0f; t -= 0.25f) {
                 if (UnityEngine.Object.FindObjectOfType<AnnouncementPopUp>() == null) break;
                 yield return new WaitForSeconds(0.25f);
@@ -323,8 +324,8 @@ namespace UnknownsCollection {
                 Id = "unknownsCollectionAnnouncement",
                 Language = 0,
                 Number = 6974,
-                Title = title == "" ? "Unknown's Collection Announcement" : title,
-                ShortTitle = shortTitle,
+                Title = title == "" ? UCLocalization.Tr("uc.updater.announcement_title") : title,
+                ShortTitle = shortTitle == "" ? UCLocalization.Tr("uc.updater.announcement_shorttitle") : shortTitle,
                 SubTitle = "",
                 PinState = false,
                 Date = date == "" ? DateTime.Now.Date.ToString() : date,

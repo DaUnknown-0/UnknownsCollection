@@ -366,7 +366,7 @@ namespace UnknownsCollection {
             recordIndicatorText.fontSize = 2f;
             recordIndicatorText.alignment = TMPro.TextAlignmentOptions.Center;
             recordIndicatorText.enableWordWrapping = false;
-            recordIndicatorText.text = "* REC"; // plain ASCII - the HUD font has no dot/circle glyph
+            recordIndicatorText.text = UCLocalization.Tr("uc.ui.illusionist.record_indicator"); // plain ASCII - the HUD font has no dot/circle glyph
             recordIndicatorText.gameObject.SetActive(false);
         }
 
@@ -413,7 +413,7 @@ namespace UnknownsCollection {
                         () => { },
                         recordSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft,
-                        __instance, KeyCode.R, false, "RECORD");
+                        __instance, KeyCode.R, false, UCLocalization.Tr("uc.ui.illusionist.button_record"));
                     recordButton.MaxTimer = 0f;
                     recordButton.Timer = 0f;
 
@@ -429,7 +429,7 @@ namespace UnknownsCollection {
                         () => { },
                         playbackSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
-                        __instance, KeyCode.F, false, "PLAYBACK");
+                        __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.illusionist.button_playback"));
                     playbackButton.MaxTimer = PlaybackCooldown != null ? PlaybackCooldown.getFloat() : 30f;
                     playbackButton.Timer = 10f;
                 } catch (Exception e) {

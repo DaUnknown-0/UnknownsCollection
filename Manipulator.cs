@@ -223,7 +223,7 @@ namespace UnknownsCollection {
                         // Impostor: right-side slots overlap the kill button; upperRowLeft is shared
                         // with plant/lights-style buttons of OTHER roles, which never coexist with us.
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
-                        __instance, KeyCode.F, true, duration, () => { }, false, "FAKE");
+                        __instance, KeyCode.F, true, duration, () => { }, false, UCLocalization.Tr("uc.ui.manipulator.button_fake"));
                     manipulateButton.MaxTimer = Cooldown?.getFloat() ?? 30f;
                     manipulateButton.Timer = 10f;
                 } catch (Exception e) {

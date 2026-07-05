@@ -1004,7 +1004,7 @@ namespace UnknownsCollection {
                         __instance,
                         KeyCode.F,
                         false,
-                        "SABOTAGE"
+                        UCLocalization.Tr("uc.ui.saboteur.button_sabotage")
                     );
                     sabotageButton.MaxTimer = 0f;
                     sabotageButton.Timer = 0f;
@@ -1029,7 +1029,7 @@ namespace UnknownsCollection {
                         __instance,
                         KeyCode.C,
                         false,
-                        "TRAP"
+                        UCLocalization.Tr("uc.ui.saboteur.button_trap")
                     );
                     trapButton.MaxTimer = 0f;
                     trapButton.Timer = 0f;
@@ -1045,7 +1045,7 @@ namespace UnknownsCollection {
                         __instance,
                         KeyCode.H,
                         false,
-                        "LIMP"
+                        UCLocalization.Tr("uc.ui.saboteur.button_limp")
                     );
                     selfLimpButton.MaxTimer = 0f;
                     selfLimpButton.Timer = -1f;
@@ -1069,7 +1069,7 @@ namespace UnknownsCollection {
                         __instance,
                         KeyCode.F,
                         false,
-                        "SEARCH"
+                        UCLocalization.Tr("uc.ui.saboteur.button_search")
                     );
                     searchButton.MaxTimer = 0f;
                     searchButton.Timer = 0f;

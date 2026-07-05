@@ -242,7 +242,7 @@ namespace UnknownsCollection {
                 $"[Poltergeist] {poltergeist.Data?.PlayerName} rose as the Poltergeist " +
                 $"({(IsImpostorTeam() ? "Impostor" : "Crew")} team).");
             if (IsLocalPoltergeist()) {
-                Helpers.showFlash(Color, 2.5f, "You rose as the Poltergeist! Haunt the living for your team.");
+                Helpers.showFlash(Color, 2.5f, UCLocalization.Tr("uc.ui.poltergeist.rise_flash"));
                 UCAssets.PlayManifest(0.7f);
             }
         }
@@ -347,7 +347,9 @@ namespace UnknownsCollection {
             if (HexNightVisionAllowed?.getBool() ?? true) allowedHexModes.Add(HexNightVision);
         }
         private static string HexModeName(int mode) => mode switch {
-            HexSpeed => "SPEED", HexBlind => "BLIND", _ => "SIGHT"
+            HexSpeed => UCLocalization.Tr("uc.ui.poltergeist.hexmode_speed"),
+            HexBlind => UCLocalization.Tr("uc.ui.poltergeist.hexmode_blind"),
+            _ => UCLocalization.Tr("uc.ui.poltergeist.hexmode_sight")
         };
 
         // Reactor-style critical system that is currently active and holds user consoles, or 0.
@@ -558,7 +560,7 @@ namespace UnknownsCollection {
                         () => { },
                         UCAssets.DoorIcon,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft,
-                        __instance, KeyCode.F, false, "DOOR");
+                        __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.poltergeist.button_door"));
                     doorButton.MaxTimer = 1f; doorButton.Timer = 0f;
                     PoltergeistFx.RegisterDeniedFlash(doorButton);
 
@@ -579,7 +581,7 @@ namespace UnknownsCollection {
                         () => { },
                         UCAssets.HexIcon,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
-                        __instance, KeyCode.G, false, "HEX");
+                        __instance, KeyCode.G, false, UCLocalization.Tr("uc.ui.poltergeist.button_hex"));
                     hexButton.MaxTimer = 1f; hexButton.Timer = 0f;
                     PoltergeistFx.RegisterDeniedFlash(hexButton);
 
@@ -596,7 +598,7 @@ namespace UnknownsCollection {
                         () => { },
                         UCAssets.HandIcon,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
-                        __instance, KeyCode.H, false, "HAND");
+                        __instance, KeyCode.H, false, UCLocalization.Tr("uc.ui.poltergeist.button_hand"));
                     handButton.MaxTimer = 1f; handButton.Timer = 0f;
                     PoltergeistFx.RegisterDeniedFlash(handButton);
 
@@ -686,9 +688,11 @@ namespace UnknownsCollection {
                     // Dynamic button labels: current energy on every ghost button.
                     if (IsLocalPoltergeist()) {
                         int e = Mathf.FloorToInt(energy);
-                        if (doorButton != null) doorButton.buttonText = $"DOOR {e}";
-                        if (hexButton != null) hexButton.buttonText = $"HEX:{HexModeName(hexMode)} {e}";
-                        if (handButton != null) handButton.buttonText = handChanneling ? $"HOLDING {e}" : $"HAND {e}";
+                        if (doorButton != null) doorButton.buttonText = UCLocalization.Tr("uc.ui.poltergeist.button_door_energy", e);
+                        if (hexButton != null) hexButton.buttonText = UCLocalization.Tr("uc.ui.poltergeist.button_hex_energy", HexModeName(hexMode), e);
+                        if (handButton != null) handButton.buttonText = handChanneling
+                            ? UCLocalization.Tr("uc.ui.poltergeist.button_hand_holding", e)
+                            : UCLocalization.Tr("uc.ui.poltergeist.button_hand_energy", e);
 
                         // Cycle the hex mode with the J key (shown in the label).
                         if (Input.GetKeyDown(KeyCode.J)) {

@@ -82,13 +82,13 @@ namespace UnknownsCollection {
                 float speed = Mathf.Lerp(2.5f, 10f, urgency); // escalates as the countdown drains
                 float t = Mathf.PingPong(Time.time * speed, 1f);
                 c = Color.Lerp(new Color(1f, 0.85f, 0.85f, 1f), new Color(1f, 0.05f, 0.05f, 1f), t);
-                label = $"{pole} GEFAHR {pole}";
+                label = UCLocalization.Tr("uc.ui.tesla.indicator_danger", pole);
             } else if (grace) {
                 c = GraceGreen;
-                label = $"{pole} SCHUTZ";
+                label = UCLocalization.Tr("uc.ui.tesla.indicator_grace", pole);
             } else {
                 c = isPlus ? Cyan : Orange;
-                label = $"{pole} GELADEN";
+                label = UCLocalization.Tr("uc.ui.tesla.indicator_charged", pole);
             }
             text.color = c;
             text.text = label;
@@ -124,7 +124,7 @@ namespace UnknownsCollection {
             if (selfText == null) return;
             selfText.gameObject.SetActive(true);
             selfText.color = close ? new Color(1f, 0.55f, 0.3f, 1f) : new Color(0.7f, 0.7f, 0.7f, 1f);
-            selfText.text = close ? "Pair closing in..." : "Pair separated";
+            selfText.text = close ? UCLocalization.Tr("uc.ui.tesla.self_status_closing") : UCLocalization.Tr("uc.ui.tesla.self_status_separated");
         }
 
         public static void HideSelfStatus() {

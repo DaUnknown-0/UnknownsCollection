@@ -507,7 +507,7 @@ namespace UnknownsCollection {
                         () => { channeling = false; },
                         UCAssets.CollectorIcon,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
-                        __instance, KeyCode.F, false, "COLLECT");
+                        __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.collector.button_collect"));
                     collectButton.MaxTimer = 1f;
                     collectButton.Timer = 0f;
                 } catch (Exception e) {
@@ -566,7 +566,7 @@ namespace UnknownsCollection {
                                     collectButton.Timer = cd;
                                 }
                             } else if (collectButton != null) {
-                                collectButton.buttonText = $"COLLECT {(int)(progress * 100)}%";
+                                collectButton.buttonText = UCLocalization.Tr("uc.ui.collector.button_collect_progress", (int)(progress * 100));
                                 // Peripheral-vision feedback: tint the icon toward relic-gold as
                                 // progress climbs, so the Collector doesn't have to read the percentage
                                 // text to gauge how close a channel is. TOR's own CustomButton.Update()
@@ -580,7 +580,7 @@ namespace UnknownsCollection {
                                         Palette.EnabledColor, Color, Mathf.Clamp01(progress));
                             }
                         } else if (collectButton != null) {
-                            collectButton.buttonText = $"RELICS {collected}/{NeededCount()}";
+                            collectButton.buttonText = UCLocalization.Tr("uc.ui.collector.button_relics_count", collected, NeededCount());
                         }
                     }
                 } catch (Exception e) {
@@ -667,7 +667,7 @@ namespace UnknownsCollection {
                             __instance.WinText.transform.position.z);
                         bonus.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
                         var text = bonus.GetComponent<TMP_Text>();
-                        text.text = "Collector Wins";
+                        text.text = UCLocalization.Tr("uc.ui.collector.win_banner");
                         text.color = Color;
                     }
                     UCAssets.PlayCollectorWin();

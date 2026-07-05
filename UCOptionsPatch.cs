@@ -35,14 +35,14 @@ namespace UnknownsCollection {
         private static GameObject ucPopUp;
 
         private static readonly UCSelection[] AllOptions = {
-            new("Bug Win Glitch Effects",
+            new(() => UCLocalization.Tr("uc.ui.options.bug_glitch_toggle"),
                 () => {
                     UnknownsCollectionPlugin.BugGlitchEnabled.Value =
                         !UnknownsCollectionPlugin.BugGlitchEnabled.Value;
                     return UnknownsCollectionPlugin.BugGlitchEnabled.Value;
                 },
                 () => UnknownsCollectionPlugin.BugGlitchEnabled.Value),
-            new("Button Ready Pulse",
+            new(() => UCLocalization.Tr("uc.ui.options.button_pulse_toggle"),
                 () => {
                     UnknownsCollectionPlugin.ButtonPulseEnabled.Value =
                         !UnknownsCollectionPlugin.ButtonPulseEnabled.Value;
@@ -196,7 +196,7 @@ namespace UnknownsCollection {
             var nav = Object.Instantiate(prefab, torPopUp.transform);
             nav.name = "UCNavButton";
             nav.gameObject.SetActive(true);
-            nav.Text.text = "Unknown's Collection";
+            nav.Text.text = UCLocalization.Tr("uc.ui.options.nav_title");
             nav.Text.fontSizeMin = nav.Text.fontSizeMax = 1.8f;
             nav.Text.transform.localScale = Vector3.one;
             nav.onState = false;
@@ -280,7 +280,7 @@ namespace UnknownsCollection {
             // characters and floods the popup.
             var title = Object.Instantiate(src.Text, ucPopUp.transform);
             title.name = "UCTitle";
-            title.text = "Unknown's Collection";
+            title.text = UCLocalization.Tr("uc.ui.options.nav_title");
             if (font != null) title.font = font;
             title.enableAutoSizing = false;
             title.enableWordWrapping = false;
@@ -338,11 +338,12 @@ namespace UnknownsCollection {
         }
 
         private class UCSelection {
-            public string Title;
+            private readonly Func<string> titleFn;
+            public string Title => titleFn();
             public Func<bool> OnClick;
             public Func<bool> GetValue;
-            public UCSelection(string title, Func<bool> onClick, Func<bool> getValue) {
-                Title = title;
+            public UCSelection(Func<string> title, Func<bool> onClick, Func<bool> getValue) {
+                titleFn = title;
                 OnClick = onClick;
                 GetValue = getValue;
             }

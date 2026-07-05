@@ -102,7 +102,7 @@ namespace UnknownsCollection {
                 string name = client.Character.Data.PlayerName;
 
                 if (!playerVersions.TryGetValue(client.Id, out PlayerVersion pv)) {
-                    message += $"<color=#FF0000FF>{name} is missing Unknown's Collection (or has a different version)\n</color>";
+                    message += $"<color=#FF0000FF>{UCLocalization.Tr("uc.lobby.missing_mod", name)}</color>";
                     continue;
                 }
                 // The handshake only transmits Major.Minor.Build (3 bytes), so the received version is
@@ -113,11 +113,11 @@ namespace UnknownsCollection {
                 var local3 = new System.Version(localV.Major, localV.Minor, localV.Build);
                 int diff = local3.CompareTo(pv.version);
                 if (diff > 0)
-                    message += $"<color=#FF0000FF>{name} has an older Unknown's Collection (v{pv.version})\n</color>";
+                    message += $"<color=#FF0000FF>{UCLocalization.Tr("uc.lobby.older_mod", name, pv.version)}</color>";
                 else if (diff < 0)
-                    message += $"<color=#FF0000FF>{name} has a newer Unknown's Collection (v{pv.version})\n</color>";
+                    message += $"<color=#FF0000FF>{UCLocalization.Tr("uc.lobby.newer_mod", name, pv.version)}</color>";
                 else if (!pv.GuidMatches())
-                    message += $"<color=#FF0000FF>{name} has a modified Unknown's Collection v{pv.version}\n</color>";
+                    message += $"<color=#FF0000FF>{UCLocalization.Tr("uc.lobby.modified_mod", name, pv.version)}</color>";
             }
             return message;
         }
@@ -198,8 +198,7 @@ namespace UnknownsCollection {
                 string marker = "Unknown's Collection";
                 if (text.text != null && text.text.Contains(marker)) return;
 
-                string msg = "<color=#FFA500FF>An Unknown's Collection role is enabled, but not all players " +
-                             "have the mod - these roles are client-side and the game will NOT start.</color>";
+                string msg = $"<color=#FFA500FF>{UCLocalization.Tr("uc.lobby.role_enabled_warning")}</color>";
                 text.text = string.IsNullOrEmpty(text.text) ? msg : text.text + "\n" + msg;
                 var cam = Camera.main;
                 if (cam != null) {
@@ -228,7 +227,7 @@ namespace UnknownsCollection {
                     var hud = HudManager.Instance;
                     if (hud != null && hud.Notifier != null)
                         hud.Notifier.AddDisconnectMessage(
-                            "Cannot start: every player must have the same Unknown's Collection version.");
+                            UCLocalization.Tr("uc.lobby.start_blocked"));
                 } catch { }
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Tesla] Game start blocked - version mismatch.");
                 return false;

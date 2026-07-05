@@ -307,7 +307,7 @@ namespace UnknownsCollection {
             if (MeetingHud.Instance == null) return;
             foreach (var pva in MeetingHud.Instance.playerStates) {
                 if (pva == null || pva.NameText == null || !silencedIds.Contains(pva.TargetPlayerId)) continue;
-                if (pva.NameText.text.Contains("MUTED")) continue; // already appended this frame (defensive)
+                if (pva.NameText.text.Contains("<color=#FF5050")) continue; // already appended this frame (defensive)
 
                 if (!markerRevealStart.TryGetValue(pva.TargetPlayerId, out float start)) {
                     start = Time.time;
@@ -324,7 +324,8 @@ namespace UnknownsCollection {
 
         // Same marker text as the static Marker constant, but with a caller-supplied alpha byte baked
         // into the color tag (00 = invisible, FF = fully opaque) for the fade-in ramp above.
-        private static string MarkerWithAlpha(byte alpha) => $" <color=#FF5050{alpha:X2}><b>[MUTED]</b></color>";
+        private static string MarkerWithAlpha(byte alpha) =>
+            UCLocalization.Tr("uc.ui.silencer.muted_marker", alpha.ToString("X2"));
 
         // A muted player can never cast a real vote (VoteSelectPatch blocks the click), so without this
         // their PlayerVoteArea.VotedFor would sit at HasNotVoted (255) forever and TOR's "everyone voted"
@@ -424,7 +425,7 @@ namespace UnknownsCollection {
                         () => { },
                         sprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
-                        __instance, KeyCode.F, false, "SILENCE");
+                        __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.silencer.button_silence"));
                     silenceButton.MaxTimer = MarkCooldown != null ? MarkCooldown.getFloat() : 25f;
                     silenceButton.Timer = 10f;
                 } catch (Exception e) {

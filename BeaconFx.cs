@@ -148,6 +148,7 @@ namespace UnknownsCollection {
             EnsureBadge();
             if (badgeText == null) return;
             badgeText.gameObject.SetActive(true);
+            badgeText.text = UCLocalization.Tr("uc.ui.beacon.status_badge"); // re-applied each tick so a language switch mid-round is picked up
             float pulse = 0.7f + 0.3f * Mathf.Sin(Time.time * 3f);
             badgeText.color = new Color(Beacon.Color.r, Beacon.Color.g, Beacon.Color.b, pulse);
         }
@@ -164,7 +165,7 @@ namespace UnknownsCollection {
             badgeText.fontSize = 1.8f;
             badgeText.alignment = TMPro.TextAlignmentOptions.Center;
             badgeText.enableWordWrapping = false;
-            badgeText.text = "* BEACON ACTIVE *";
+            badgeText.text = UCLocalization.Tr("uc.ui.beacon.status_badge");
         }
 
         // Same probe TOR's own SabotageTuning/Siphoner use to read whether Lights sabotage is currently

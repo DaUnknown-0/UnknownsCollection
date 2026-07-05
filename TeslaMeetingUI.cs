@@ -150,7 +150,7 @@ namespace UnknownsCollection {
             var minusName = Helpers.playerById(minusTarget)?.Data?.PlayerName ?? "?";
             try {
                 HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer,
-                    $"Charged: <color=#1FB8FFFF>+ {plusName}</color>, <color=#FF8C00FF>- {minusName}</color>");
+                    UCLocalization.Tr("uc.chat.tesla.charged", plusName, minusName));
             } catch { }
         }
 
@@ -170,7 +170,7 @@ namespace UnknownsCollection {
                 Build(hud);
                 try {
                     HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer,
-                        "A charged player was guessed - your charge returned. Pick a new pair.");
+                        UCLocalization.Tr("uc.chat.tesla.refund"));
                 } catch { }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] meeting UI reopen failed: {e}");

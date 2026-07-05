@@ -170,8 +170,8 @@ namespace UnknownsCollection {
             sweepSpeed = drunk ? 1.7f : 1.0f;                    // drunk: faster
             SetScanActive(true);
             SetWireActive(false);
-            if (title != null) { title.text = "SEARCH"; title.color = new Color(0.7f, 0.9f, 1f); }
-            if (hint != null) hint.text = "Klicke im grünen Feld  (LMB / E / Leer / Enter)";
+            if (title != null) { title.text = UCLocalization.Tr("uc.ui.saboteur.scan_title"); title.color = new Color(0.7f, 0.9f, 1f); }
+            if (hint != null) hint.text = UCLocalization.Tr("uc.ui.saboteur.scan_hint");
         }
 
         private static void UpdateScan() {
@@ -195,7 +195,7 @@ namespace UnknownsCollection {
                     StartResult();
                 } else {
                     UCAssets.PlaySaboteurScanMiss();
-                    if (hint != null) hint.text = "Daneben - weiter scannen";
+                    if (hint != null) hint.text = UCLocalization.Tr("uc.ui.saboteur.scan_hint_miss");
                 }
             }
         }
@@ -206,10 +206,10 @@ namespace UnknownsCollection {
             SetScanActive(false);
             if (shownSabotaged) UCAssets.PlaySaboteurAlarm(); else UCAssets.PlaySaboteurSafe();
             if (title != null) {
-                title.text = shownSabotaged ? "[!] SABOTAGED" : "SAFE";
+                title.text = shownSabotaged ? UCLocalization.Tr("uc.ui.saboteur.scan_result_sabotaged") : UCLocalization.Tr("uc.ui.saboteur.scan_result_safe");
                 title.color = shownSabotaged ? new Color(1f, 0.35f, 0.2f) : new Color(0.4f, 1f, 0.5f);
             }
-            if (hint != null) hint.text = drunk ? "(du bist Drunk - unsicher)" : "";
+            if (hint != null) hint.text = drunk ? UCLocalization.Tr("uc.ui.saboteur.scan_hint_drunk") : "";
         }
 
         private static void UpdateResult() {
@@ -234,8 +234,8 @@ namespace UnknownsCollection {
             cursorSpeed = drunk ? 4.5f : 2.2f;
             SetScanActive(false);
             SetWireActive(true);
-            if (title != null) { title.text = "DEFUSE"; title.color = new Color(1f, 0.8f, 0.3f); }
-            if (hint != null) hint.text = "Schneide in Reihenfolge 1→" + WireCount + "  (LMB / E / Leer / Enter)";
+            if (title != null) { title.text = UCLocalization.Tr("uc.ui.saboteur.wire_title"); title.color = new Color(1f, 0.8f, 0.3f); }
+            if (hint != null) hint.text = UCLocalization.Tr("uc.ui.saboteur.wire_hint", WireCount);
             RefreshWires();
         }
 
@@ -262,7 +262,7 @@ namespace UnknownsCollection {
                     if (nextExpected > WireCount) { // defused!
                         UCAssets.PlaySaboteurDefused();
                         Saboteur.SendClearSabotage();
-                        if (title != null) { title.text = "DEFUSED"; title.color = new Color(0.4f, 1f, 0.5f); }
+                        if (title != null) { title.text = UCLocalization.Tr("uc.ui.saboteur.wire_done"); title.color = new Color(0.4f, 1f, 0.5f); }
                         if (hint != null) hint.text = "";
                         RefreshWires();
                         phase = Phase.Done;

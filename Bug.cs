@@ -252,7 +252,7 @@ namespace UnknownsCollection {
                             __instance.WinText.transform.position.y - 0.5f,
                             __instance.WinText.transform.position.z);
                         bonusText = bonus.GetComponent<TMP_Text>();
-                        bonusText.text = "Bug Wins";
+                        bonusText.text = UCLocalization.Tr("uc.ui.bug.win_banner");
                         bool glitchOn = UnknownsCollectionPlugin.BugGlitchEnabled.Value;
                         // With the glitch effect running, start tiny/invisible so BugGlitchEffect.Update()
                         // can ease it in ("materializing out of the noise"); without it (accessibility

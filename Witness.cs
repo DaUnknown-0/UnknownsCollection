@@ -201,7 +201,8 @@ namespace UnknownsCollection {
             noteVictimId = victimId;
             if (IsLocalWitness()) {
                 var k = Helpers.playerById(killerId);
-                AddLocalChat(witness, $"You witnessed {k?.Data?.PlayerName} kill {Helpers.playerById(victimId)?.Data?.PlayerName}. Their name is marked red.");
+                AddLocalChat(witness, UCLocalization.Tr("uc.chat.witness.witnessed",
+                    k?.Data?.PlayerName, Helpers.playerById(victimId)?.Data?.PlayerName));
                 UCAssets.PlayWitnessSting(); // eerie cue, witness-only like the note
                 redNameApplyStart = Time.time; // start the red-name fade-in (see HudUpdatePatch)
             }
@@ -210,7 +211,8 @@ namespace UnknownsCollection {
         private static void ApplyReveal(byte reporterId, byte killerId, byte victimId) {
             revealed = true;
             var reporter = Helpers.playerById(reporterId) ?? PlayerControl.LocalPlayer;
-            string msg = $"I saw {Helpers.playerById(killerId)?.Data?.PlayerName} killing {Helpers.playerById(victimId)?.Data?.PlayerName}. I need to report this.";
+            string msg = UCLocalization.Tr("uc.chat.witness.revealed",
+                Helpers.playerById(killerId)?.Data?.PlayerName, Helpers.playerById(victimId)?.Data?.PlayerName);
             AddLocalChat(reporter, msg);
             // The reveal is public by design (every client applies this the same way) - a paper/seal
             // stinger so this key beat doesn't get lost in meeting chat spam.
@@ -220,7 +222,8 @@ namespace UnknownsCollection {
         private static void ApplyNote(byte recipientId, byte killerId, byte victimId) {
             var me = PlayerControl.LocalPlayer;
             if (me == null || me.PlayerId != recipientId) return; // only the recipient sees their note
-            string msg = $"(anonymous note) I saw {Helpers.playerById(killerId)?.Data?.PlayerName} killing {Helpers.playerById(victimId)?.Data?.PlayerName}. Please do something.";
+            string msg = UCLocalization.Tr("uc.chat.witness.anon_note",
+                Helpers.playerById(killerId)?.Data?.PlayerName, Helpers.playerById(victimId)?.Data?.PlayerName);
             AddLocalChat(me, msg);
             UCAssets.PlayWitnessNote(); // reached only by the recipient - the early return above gates it
         }

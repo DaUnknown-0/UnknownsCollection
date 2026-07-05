@@ -331,10 +331,14 @@ namespace UnknownsCollection {
             bombKillUsed = false;
         }
 
+        // Localized nametag suffix, shared by the append (HudVisualPatch) and removal (below) sites so
+        // the two stay consistent regardless of the active language (see uc.ui.maniac.nametag_bomb).
+        private static string BombTagText() => UCLocalization.Tr("uc.ui.maniac.nametag_bomb");
+
         private static void RemoveBombTag(PlayerControl carrier) {
             if (carrier == null || carrier.cosmetics?.nameText == null) return;
             var t = carrier.cosmetics.nameText.text;
-            int tagStart = t.IndexOf(" <color=#FF0000><b>[BOMB!]</b></color>", StringComparison.Ordinal);
+            int tagStart = t.IndexOf(BombTagText(), StringComparison.Ordinal);
             if (tagStart >= 0) carrier.cosmetics.nameText.text = t.Substring(0, tagStart);
         }
 
@@ -576,8 +580,9 @@ namespace UnknownsCollection {
                         var me = PlayerControl.LocalPlayer;
                         if (me != null && me.cosmetics?.nameText != null) {
                             var t = me.cosmetics.nameText.text;
-                            if (!t.Contains("BOMB"))
-                                me.cosmetics.nameText.text = t + " <color=#FF0000><b>[BOMB!]</b></color>";
+                            var tag = BombTagText();
+                            if (!t.Contains(tag))
+                                me.cosmetics.nameText.text = t + tag;
                         }
                     }
                 } catch (Exception e) {
@@ -659,7 +664,7 @@ namespace UnknownsCollection {
                         () => { },
                         bombSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
-                        __instance, KeyCode.F, false, "BOMB");
+                        __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.maniac.button_bomb"));
                     bombButton.MaxTimer = BombCooldown != null ? BombCooldown.getFloat() : 25f;
                     bombButton.Timer = 10f;
 
@@ -681,7 +686,7 @@ namespace UnknownsCollection {
                         () => { },
                         passSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
-                        __instance, KeyCode.G, false, "PASS");
+                        __instance, KeyCode.G, false, UCLocalization.Tr("uc.ui.maniac.button_pass"));
                     passButton.MaxTimer = 0f;
                     passButton.Timer = 0f;
                 } catch (Exception e) {

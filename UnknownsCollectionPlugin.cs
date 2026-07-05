@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.1.4";
+    public const string PluginVersion = "1.1.4.1";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
@@ -168,6 +168,12 @@ public class UnknownsCollectionPlugin : BasePlugin
         Manipulator.CreateOptions();
         Manipulator.TryPatch(harmony);
 
+        // Localization: loads the uc.* tables and translates UC's RoleInfos + options by
+        // matching their pristine English text (follows UTS's UTS.Loc.ActiveCode/Epoch via
+        // the poll patches picked up by PatchAll below). Must run AFTER every CreateOptions
+        // above so the first-pass originals are complete.
+        UCLocalization.Initialize();
+
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line + UCOptionsPatch).
         harmony.PatchAll(typeof(UnknownsCollectionPlugin).Assembly);
@@ -242,26 +248,27 @@ public class UnknownsCollectionPlugin : BasePlugin
         // Click-decode animation on the mod name: for a short moment the letters show as random
         // glyphs that resolve left-to-right into "Unknown's Collection" - a text-only effect that
         // fits the name. Purely cosmetic, driven by the per-frame line rebuild below.
-        private const string ModName = "Unknown's Collection";
+        private static string ModName => UCLocalization.Tr("uc.ui.modname");
         private const string ScrambleGlyphs = "#%&?$@*<>!/=+";
         private const float ScrambleDuration = 0.9f;
         private static float scrambleStart = -1f;
 
         private static string NameMarkup()
         {
+            string modName = ModName;
             if (scrambleStart >= 0f && Time.time - scrambleStart >= ScrambleDuration) scrambleStart = -1f;
-            if (scrambleStart < 0f) return $"<color=#1FB8FF>{ModName}</color>";
+            if (scrambleStart < 0f) return $"<color=#1FB8FF>{modName}</color>";
             float p = (Time.time - scrambleStart) / ScrambleDuration;
             // slight overshoot so the last letters resolve before the effect ends
-            int resolved = Mathf.Clamp((int)(p * (ModName.Length + 3)), 0, ModName.Length);
+            int resolved = Mathf.Clamp((int)(p * (modName.Length + 3)), 0, modName.Length);
             var sb = new System.Text.StringBuilder(64);
-            sb.Append("<color=#1FB8FF>").Append(ModName, 0, resolved).Append("</color>");
-            if (resolved < ModName.Length)
+            sb.Append("<color=#1FB8FF>").Append(modName, 0, resolved).Append("</color>");
+            if (resolved < modName.Length)
             {
                 sb.Append("<color=#C9F2FF>");
-                for (int i = resolved; i < ModName.Length; i++)
+                for (int i = resolved; i < modName.Length; i++)
                 {
-                    char c = ModName[i];
+                    char c = modName[i];
                     // keep spaces/apostrophe so the line width barely moves while decoding
                     sb.Append(c == ' ' || c == '\'' ? c : ScrambleGlyphs[UnityEngine.Random.Range(0, ScrambleGlyphs.Length)]);
                 }
@@ -316,7 +323,9 @@ public class UnknownsCollectionPlugin : BasePlugin
             // already added it this frame, so "Modded by DaUnknown" appears at most once.
             if (CreditVisible() && !text.Contains("DaUnknown"))
             {
-                string credit = "\n<size=70%>Modded by <color=#FCCE03FF>DaUnknown</color></size>";
+                string credit = "\n<size=70%>"
+                    + UCLocalization.Tr("uc.ui.credit").Replace("DaUnknown", "<color=#FCCE03FF>DaUnknown</color>")
+                    + "</size>";
                 int anchor = text.IndexOf("Bavari");
                 if (anchor >= 0)
                 {

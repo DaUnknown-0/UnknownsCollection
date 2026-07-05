@@ -257,7 +257,7 @@ namespace UnknownsCollection {
                 () => { },
                 UCAssets.ManifestIcon,
                 TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
-                hud, KeyCode.T, false, "MANIFEST");
+                hud, KeyCode.T, false, UCLocalization.Tr("uc.ui.poltergeist.button_manifest"));
             manifestButton.MaxTimer = 1f; manifestButton.Timer = 0f;
             PoltergeistFx.RegisterDeniedFlash(manifestButton);
         }
@@ -289,7 +289,8 @@ namespace UnknownsCollection {
                 if (manifestButton != null) {
                     var t = CurrentTemplate();
                     manifestButton.buttonText = t != null && t.Data != null
-                        ? $"AS {t.Data.PlayerName} [K]" : "MANIFEST";
+                        ? UCLocalization.Tr("uc.ui.poltergeist.button_manifest_as", t.Data.PlayerName)
+                        : UCLocalization.Tr("uc.ui.poltergeist.button_manifest");
                 }
             } catch { }
         }

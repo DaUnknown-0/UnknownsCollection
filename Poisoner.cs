@@ -321,15 +321,15 @@ namespace UnknownsCollection {
 
         // ---- Meeting start: increment meeting counter, check for poison deaths ----
         // Random "you feel unwell" flavour shown locally to a poisoned reporter during a meeting.
-        private static readonly string[] SickMessages = {
-            "You're not feeling so good... something is wrong with you.",
-            "Ugh... your stomach is turning. You don't feel well at all.",
-            "A cold sweat runs down your back — something is very wrong.",
-            "You feel dizzy and weak. Was it something you touched?",
-            "Your vision blurs for a second. You really don't feel so good.",
-            "Something is coursing through you. You feel sick to your core.",
-            "Your hands are trembling and your throat feels tight...",
-            "A wave of nausea hits you. You should have never reported that body.",
+        private static readonly string[] SickMessageKeys = {
+            "uc.chat.poisoner.sick1",
+            "uc.chat.poisoner.sick2",
+            "uc.chat.poisoner.sick3",
+            "uc.chat.poisoner.sick4",
+            "uc.chat.poisoner.sick5",
+            "uc.chat.poisoner.sick6",
+            "uc.chat.poisoner.sick7",
+            "uc.chat.poisoner.sick8",
         };
 
         private static void ShowSickMessageIfPoisoned() {
@@ -337,7 +337,7 @@ namespace UnknownsCollection {
                 var me = PlayerControl.LocalPlayer;
                 if (me == null || me.Data == null || me.Data.IsDead) return;
                 if (!poisonedReporters.ContainsKey(me.PlayerId)) return;
-                string msg = SickMessages[UnityEngine.Random.Range(0, SickMessages.Length)];
+                string msg = UCLocalization.Tr(SickMessageKeys[UnityEngine.Random.Range(0, SickMessageKeys.Length)]);
                 HudManager.Instance?.Chat?.AddChat(me, msg); // local-only display, only the victim sees it
                 UCAssets.PlayPoisonGurgle();                  // sickly cue, victim-only like the message
             } catch { }
@@ -444,7 +444,7 @@ namespace UnknownsCollection {
                         () => { },
                         sprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowRight,
-                        __instance, KeyCode.G, false, "ANTIDOTE");
+                        __instance, KeyCode.G, false, UCLocalization.Tr("uc.ui.poisoner.button_antidote"));
                     antidoteButton.MaxTimer = 0f;
                     antidoteButton.Timer = 0f;
                 } catch (Exception e) {

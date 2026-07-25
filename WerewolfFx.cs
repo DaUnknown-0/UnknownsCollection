@@ -50,7 +50,10 @@ using TheOtherRoles;
 namespace UnknownsCollection {
     public static class WerewolfFx {
         // ---- wolf skin (UCCharacterSkin, shared mechanic - see UCCharacterSkin.cs) ----
-        private const float SkinPpu = 180f;      // 160 px frames -> ~0.89 units tall (crewmate ~0.7)
+        // 160 px frames. Was 180 ppu (~0.89 units) - the beast read as too small next to a crewmate
+        // (~0.7 units) because the wolf crouches and does not fill its frame vertically. 145 ppu puts
+        // the drawn silhouette at ~1.10 units, so the wolf towers over a crewmate as it should.
+        private const float SkinPpu = 145f;
         private static readonly UCCharacterSkin skin =
             new UCCharacterSkin("Werewolf", "werewolf_skin_idle", 6, "werewolf_skin_walk", 8, SkinPpu);
 

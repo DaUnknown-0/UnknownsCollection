@@ -129,7 +129,10 @@ namespace UnknownsCollection {
                 if (tafelOk) {
                     pending.Add(new CustomHat {
                         Name = WerbetafelName, Author = Author, Package = Package,
-                        Resource = WerbetafelFile, Adaptive = false, Bounce = false, Behind = false
+                        // Behind: the billboard is mounted BEHIND the player, so the crewmate stands in
+                        // front of its own advertisement instead of being covered by it. TOR renders a
+                        // "behind" hat through BackLayer (CreateHatBehaviour sets InFront = !Behind).
+                        Resource = WerbetafelFile, Adaptive = false, Bounce = false, Behind = true
                     });
                 }
 
@@ -294,6 +297,13 @@ namespace UnknownsCollection {
                 // force the billboard back on while the player is climbing, and never fight
                 // SetClimbAnim over the same renderer.
                 if (renderer.sprite == null) return;
+
+                // Never mirror the billboard. Cosmetics follow the player's facing, which turned the
+                // advertisement into unreadable mirror writing whenever the player walked left. A hat
+                // that is pure text has no "left version" - it must always read the same way. (TOR's
+                // own answer to this is an extra flipresource PNG, but a second pre-mirrored copy of
+                // six blink frames would double the asset count for something one flag fixes.)
+                if (renderer.flipX) renderer.flipX = false;
 
                 int index = Mathf.FloorToInt(Time.time * WerbetafelFps) % strip.Length;
                 var frame = strip[index];

@@ -171,8 +171,12 @@ namespace UnknownsCollection {
                     6f, 4f, 15f, 1f, SpawnRate);
                 KillCooldownReduction = CustomOption.Create(1553, Types.Impostor, "Wolf Kill Cooldown Reduction (%)",
                     30f, 0f, 75f, 5f, SpawnRate);
-                SpeedMultiplier = CustomOption.Create(1554, Types.Impostor, "Wolf Speed Multiplier",
-                    1.4f, 1.0f, 2.0f, 0.1f, SpawnRate);
+                // Percent, not a 1.0-2.0 factor: TOR builds slider values with
+                // "for (float s = min; s <= max; s += step)" (CustomOptions.cs:85), and 0.1 has no
+                // exact float representation - the accumulated error surfaced in the menu as
+                // "1,4000001". Whole percent steps are exact, and the label already says "%".
+                SpeedMultiplier = CustomOption.Create(1554, Types.Impostor, "Wolf Speed Multiplier (%)",
+                    140f, 100f, 200f, 5f, SpawnRate);
                 ChargeTime = CustomOption.Create(1555, Types.Impostor, "Alpha Charge Time In Darkness (s)",
                     8f, 3f, 30f, 1f, SpawnRate);
                 FormDuration = CustomOption.Create(1556, Types.Impostor, "Wolf Form Duration (s)",
@@ -255,7 +259,9 @@ namespace UnknownsCollection {
 
         private static float ChargeTimeValue() => ChargeTime != null ? ChargeTime.getFloat() : 8f;
         private static float FormDurationValue() => FormDuration != null ? FormDuration.getFloat() : 12f;
-        private static float SpeedMultValue() => SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.4f;
+        // Option 1554 stores whole percent (140 = 1.4x) - see the comment at its definition.
+        private static float SpeedMultValue() =>
+            SpeedMultiplier != null ? SpeedMultiplier.getFloat() / 100f : 1.4f;
         private static float KillReductionValue() =>
             Mathf.Clamp01((KillCooldownReduction != null ? KillCooldownReduction.getFloat() : 30f) / 100f);
         private static float FlashlightFactor() =>

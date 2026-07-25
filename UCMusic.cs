@@ -72,10 +72,30 @@ namespace UnknownsCollection {
         // ---- Public API ----------------------------------------------------------------
 
         // secondsRemaining: expected remaining play time of the cue (null = unknown/open loop).
+        // Per-player mute switches (UC Options menu). Checked HERE rather than in each caller so a
+        // muted cue can never slip through - and so a cue that is muted mid-play stops on the next
+        // tick instead of running to its end.
+        private static bool CueAudible(string cueId) {
+            try {
+                return cueId switch {
+                    "werewolf_form" => UnknownsCollectionPlugin.MusicWerewolf?.Value ?? true,
+                    "pelican_hunt"  => UnknownsCollectionPlugin.MusicPelican?.Value ?? true,
+                    "reactor"       => UnknownsCollectionPlugin.MusicReactor?.Value ?? true,
+                    _ => true
+                };
+            } catch { return true; }
+        }
+
         public static void Request(string cueId, string clipName, int priority,
                                    float volume = 0.6f, float? secondsRemaining = null, bool loop = true) {
             try {
                 if (string.IsNullOrEmpty(cueId) || string.IsNullOrEmpty(clipName)) return;
+                if (!CueAudible(cueId)) {
+                    // Muted: drop the cue entirely. Release() is safe on an unknown id and also stops
+                    // playback if the switch was flipped while this cue was already running.
+                    if (cues.ContainsKey(cueId)) Release(cueId);
+                    return;
+                }
                 if (!cues.TryGetValue(cueId, out var cue)) {
                     cue = new Cue { id = cueId, resumePos = 0f };
                     cues[cueId] = cue;

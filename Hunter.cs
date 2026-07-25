@@ -155,8 +155,10 @@ namespace UnknownsCollection {
                     true, parent);
                 OnlyOriginalSheriff = CustomOption.Create(1503, Types.Impostor, "Hunter Only From The Original Sheriff",
                     true, parent);
-                FlashlightMultiplier = CustomOption.Create(1504, Types.Impostor, "Hunter Flashlight Multiplier",
-                    1.6f, 1.0f, 2.5f, 0.1f, parent);
+                // Percent instead of a 1.0-2.5 factor - see the note on Werewolf's 1554: TOR
+                // accumulates slider values in float, so a 0.1 step showed up as "1,5000001".
+                FlashlightMultiplier = CustomOption.Create(1504, Types.Impostor, "Hunter Flashlight Multiplier (%)",
+                    160f, 100f, 250f, 10f, parent);
                 CanKillNeutralKillers = CustomOption.Create(1505, Types.Impostor, "Hunter Can Kill Neutral Killers",
                     true, parent);
                 DeputyPromotes = CustomOption.Create(1506, Types.Impostor, "Deputy Promotes To Sheriff When The Hunter Rises",
@@ -214,8 +216,9 @@ namespace UnknownsCollection {
             && hunter.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
         // Called from Werewolf.LightPatch (W1) for the Hunter's own darkness carve-out.
+        // Option 1504 stores whole percent (160 = 1.6x) - see the comment at its definition.
         public static float FlashlightMultiplierValue() =>
-            FlashlightMultiplier != null ? FlashlightMultiplier.getFloat() : 1.6f;
+            FlashlightMultiplier != null ? FlashlightMultiplier.getFloat() / 100f : 1.6f;
 
         private static int GuessMode() => Guessing != null ? Guessing.getSelection() : GuessFullIfGuesser;
 

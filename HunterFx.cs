@@ -23,7 +23,10 @@ using TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class HunterFx {
-        private const float SkinPpu = 180f; // same canvas/scale convention as the wolf skin (160 px source)
+        // 160 px source, same canvas convention as the wolf skin. Was 180 ppu, which read as smaller
+        // than the crewmate it replaces (the drawn figure does not fill its frame). 150 ppu puts him
+        // at ~1.07 units - recognisably "your sheriff", just a head taller.
+        private const float SkinPpu = 150f;
 
         private static readonly UCCharacterSkin skin =
             new UCCharacterSkin("Hunter", "hunter_skin_idle", 6, "hunter_skin_walk", 8, SkinPpu);

@@ -82,6 +82,9 @@ public class UnknownsCollectionPlugin : BasePlugin
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
     public static ConfigEntry<bool> ButtonPulseEnabled { get; set; }
+    public static ConfigEntry<bool> MusicWerewolf { get; set; }
+    public static ConfigEntry<bool> MusicPelican { get; set; }
+    public static ConfigEntry<bool> MusicReactor { get; set; }
     public static ConfigEntry<bool> HelpMenuGerman { get; set; }
     public static ConfigEntry<bool> KillAnimationsUC { get; set; }
     public static ConfigEntry<bool> KillAnimationsTOR { get; set; }
@@ -164,6 +167,16 @@ public class UnknownsCollectionPlugin : BasePlugin
             "Custom kill cutscenes for TOR roles with special kills (Sheriff, Vampire, Warlock, Witch, Ninja, Bomber, Guesser, Thief, Jackal/Sidekick, Bounty Hunter). Off = vanilla kill overlay.");
         HelpMenuGerman = Config.Bind("HelpMenu", "German", true,
             "Language of the in-game '?' role help menu (true = Deutsch, false = English). Also toggleable from the menu itself.");
+        // Music beds (UCMusic channel). Purely local taste, like the kill cutscenes above - a player
+        // who mutes them still sees every gameplay effect, so these are NOT host-synced. The reactor
+        // score additionally has a host option (1483) that decides whether it exists in the round at
+        // all; this switch only decides whether THIS client hears it.
+        MusicWerewolf = Config.Bind("Music", "Werewolf Form Music", true,
+            "Play the wolf-form music while the werewolf is transformed.");
+        MusicPelican = Config.Bind("Music", "Pelican Hunt Music", true,
+            "Play the hunt music during the pelican's final chase.");
+        MusicReactor = Config.Bind("Music", "Reactor Music", true,
+            "Play the reactor/seismic sabotage score (only ever heard if the host enabled it in the game options).");
 
         // The Bug role (Neutral). Survive until the end and win with the winning team.
         Bug.CreateOptions();

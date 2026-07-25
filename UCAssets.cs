@@ -50,6 +50,40 @@ namespace UnknownsCollection {
         public static Sprite SaboteurSearchIcon => GetSprite("UnknownsCollection.Resources.saboteur_search.png", 100f);
         public static Sprite ScoutIcon => GetSprite("UnknownsCollection.Resources.scout_transparent.png", 115f);
         public static Sprite SiphonerIcon => GetSprite("UnknownsCollection.Resources.siphoner_drain.png", 115f);
+        // Werewolf (red, Paket W). Button icons at the standard 115 ppu; werewolf_form is only the
+        // short transformation flare (256 ppu -> ~1 unit), the bloodring is a world marker around a
+        // wolf victim's corpse (200 ppu -> ~1.28 units across) and overlay_wolfhead is the kill-overlay
+        // prop reserved for W4.
+        public static Sprite WerewolfTransformIcon => GetSprite("UnknownsCollection.Resources.werewolf_transform.png", 115f);
+        public static Sprite WerewolfRevertIcon => GetSprite("UnknownsCollection.Resources.werewolf_revert.png", 115f);
+        public static Sprite WerewolfFormSprite => GetSprite("UnknownsCollection.Resources.werewolf_form.png", 256f);
+        public static Sprite WerewolfBloodRing => GetSprite("UnknownsCollection.Resources.werewolf_bloodring.png", 200f);
+        public static Sprite OverlayWolfHead => GetSprite("UnknownsCollection.Resources.overlay_wolfhead.png", 100f);
+        // Victory scene (Paket W4, WEREWOLF_PLAN.md 4.8b): the full moon plus the STILL of the
+        // werewolf_victory flipbook. Both live on the end screen, which is scaled like the rest of
+        // the UI, so they use the same ppu as the animation frames (WerewolfFx.VictoryPpu = 100) -
+        // a still and a frame stay interchangeable that way.
+        public static Sprite WerewolfMoon => GetSprite("UnknownsCollection.Resources.werewolf_moon.png", 100f);
+        public static Sprite WerewolfVictorySprite => GetSprite("UnknownsCollection.Resources.werewolf_victory.png", 100f);
+
+        // Hunter (Paket W2, the Sheriff's endgame). hunter_shoot is the animated kill-button icon at the
+        // standard 115 ppu; hunter_skin/werewolf_death are the STILLS of the two flipbooks that live
+        // under Resources/anim (same ppu as their frames, so a still and a frame are interchangeable);
+        // overlay_silverbolt is the kill-overlay prop reserved for W4 (Kind.SilverBolt).
+        public static Sprite HunterShootIcon => GetSprite("UnknownsCollection.Resources.hunter_shoot.png", 115f);
+        public static Sprite HunterSkinSprite => GetSprite("UnknownsCollection.Resources.hunter_skin.png", 180f);
+        public static Sprite WerewolfDeathSprite => GetSprite("UnknownsCollection.Resources.werewolf_death.png", 200f);
+        public static Sprite OverlaySilverBolt => GetSprite("UnknownsCollection.Resources.overlay_silverbolt.png", 100f);
+
+        // Pelican (Paket W3, teal/orange). pelican_swallow is the animated kill-button icon at the
+        // standard 115 ppu; pelican_belly is a HUD sprite (parented under HudManager, NOT a world
+        // object) sized like the other HUD icons; overlay_pelican is the kill-overlay prop reserved
+        // for W4 - registered here (100 ppu, same as every other overlay part) so W4 only has to add
+        // the Kind, not the loader.
+        public static Sprite PelicanSwallowIcon => GetSprite("UnknownsCollection.Resources.pelican_swallow.png", 115f);
+        public static Sprite PelicanBellySprite => GetSprite("UnknownsCollection.Resources.pelican_belly.png", 115f);
+        public static Sprite OverlayPelican => GetSprite("UnknownsCollection.Resources.overlay_pelican.png", 100f);
+
         // Collector (gold) + Manipulator (red)
         public static Sprite CollectorIcon => GetSprite("UnknownsCollection.Resources.collector_collect.png", 115f);
         public static Sprite ManipulatorIcon => GetSprite("UnknownsCollection.Resources.manipulator_fake.png", 115f);
@@ -96,14 +130,32 @@ namespace UnknownsCollection {
             return frames;
         }
 
-        public static Sprite GetSprite(string path, float pixelsPerUnit) {
-            string key = path + "_" + pixelsPerUnit;
+        // Character-skin frame strip (Werewolf wolf form, later the Hunter): N frames named
+        // "<baseName>_fNN.png" under Resources/anim, loaded with a BOTTOM-CENTRE pivot so the sprite
+        // stands on the same ground line as the crewmate it replaces (a centred pivot would sink the
+        // figure into the floor by half its height). Returns null if any frame is missing so callers
+        // can fall back to the untouched vanilla cosmetics instead of a half-built skin.
+        public static Sprite[] GetSkinFrames(string baseName, int count, float pixelsPerUnit) {
+            var frames = new Sprite[count];
+            for (int i = 0; i < count; i++) {
+                frames[i] = GetSprite($"UnknownsCollection.Resources.anim.{baseName}_f{i:00}.png",
+                                      pixelsPerUnit, new Vector2(0.5f, 0f));
+                if (frames[i] == null) return null;
+            }
+            return frames;
+        }
+
+        public static Sprite GetSprite(string path, float pixelsPerUnit) =>
+            GetSprite(path, pixelsPerUnit, new Vector2(0.5f, 0.5f));
+
+        public static Sprite GetSprite(string path, float pixelsPerUnit, Vector2 pivot) {
+            string key = path + "_" + pixelsPerUnit + "_" + pivot.x + "_" + pivot.y;
             if (sprites.TryGetValue(key, out var cached) && cached != null) return cached;
             try {
                 var tex = LoadTexture(path);
                 if (tex == null) return null;
                 var sprite = Sprite.Create(tex, new Rect(0, 0, tex.width, tex.height),
-                    new Vector2(0.5f, 0.5f), pixelsPerUnit);
+                    pivot, pixelsPerUnit);
                 sprite.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
                 sprites[key] = sprite;
                 return sprite;
@@ -246,6 +298,66 @@ namespace UnknownsCollection {
         public static void PlayManipulatorEnd(float volume = VolStd) => Play("manipulator_end", volume);
         public static void PlayBeaconShare(float volume = VolSoft) => Play("beacon_share", volume);
 
+        // ---- Sounds: Werewolf ----
+        // Transform/revert/kill are world-anchored beats around the beast itself (default 4->22 curve).
+        // The HOWL is the deliberate exception: it is the role's public risk signal, so it uses a very
+        // wide falloff (full volume up to 6 units, still faintly audible at 40) - practically map-wide
+        // but clearly directional/distance-graded, exactly as WEREWOLF_PLAN.md §5.2 specifies.
+        public static void PlayWerewolfTransformAt(Vector2 at, float volume = VolStd) => PlayAt("werewolf_transform", at, volume);
+        public static void PlayWerewolfRevertAt(Vector2 at, float volume = VolStd) => PlayAt("werewolf_revert", at, volume);
+        public static void PlayWerewolfHowlAt(Vector2 at, float volume = VolLoud) => PlayAt("werewolf_howl", at, volume, 6f, 40f);
+        // Non-positional howl (WEREWOLF_PLAN.md 5.2). Used by the victory scene on the END SCREEN,
+        // where there is no ship, no local player position and therefore nothing to attenuate against.
+        public static void PlayWerewolfHowl(float volume = VolLoud) => Play("werewolf_howl", volume);
+        public static void PlayWerewolfGrowl(float volume = VolSoft) => Play("werewolf_growl", volume);
+        public static void PlayWerewolfKillAt(Vector2 at, float volume = VolStd) => PlayAt("werewolf_kill", at, volume);
+        public static void PlayWerewolfSilverAt(Vector2 at, float volume = VolStd) => PlayAt("werewolf_silver", at, volume);
+        // Heartbeat: the alpha-charge tension cue, local to the werewolf only (it would otherwise leak
+        // "a werewolf is charging" to bystanders). Loops until StopWerewolfHeartbeat().
+        public static AudioSource PlayWerewolfHeartbeatLoop(float volume = VolSoft) {
+            try {
+                var source = Play("werewolf_heartbeat", volume);
+                if (source != null) source.loop = true;
+                return source;
+            } catch { return null; }
+        }
+        public static void StopWerewolfHeartbeat() {
+            try {
+                var clip = GetClip("werewolf_heartbeat");
+                if (clip != null) SoundManager.Instance?.StopSound(clip);
+            } catch { }
+        }
+
+        // ---- Sounds: Pelican ----
+        // The swallow itself is world-anchored (the gulp belongs to the spot the victim vanished from);
+        // digestion/release are announced at the belly's own position. The CALL is the role's public
+        // tell during the hunt - same very wide falloff the werewolf howl uses (full up to 6 units,
+        // faintly audible out to 40) so "something is hunting you" travels, but stays directional.
+        // The three-part hunt score (intro / six loop variants / graceful-end outro) is NOT played
+        // through here: it runs on the UCMusic channel (cue "pelican_hunt", priority 50) so it can
+        // never layer on top of the werewolf form music or a reactor.
+        public static void PlayPelicanSwallowAt(Vector2 at, float volume = VolStd) => PlayAt("pelican_swallow", at, volume);
+        public static void PlayPelicanDigestAt(Vector2 at, float volume = VolStd) => PlayAt("pelican_digest", at, volume);
+        public static void PlayPelicanReleaseAt(Vector2 at, float volume = VolLoud) => PlayAt("pelican_release", at, volume);
+        public static void PlayPelicanCallAt(Vector2 at, float volume = VolLoud) => PlayAt("pelican_call", at, volume, 6f, 40f);
+        public static void PlayPelicanHunt(float volume = VolStd) => Play("pelican_hunt", volume);
+        // Victory fanfare on the end screen (Collector precedent: PlayCollectorWin). The same clip is
+        // ALSO used as the in-round outro through UCMusic - never at the same time, because
+        // UCMusic.StopAll runs in AmongUsClient.OnGameEnd, i.e. before the end screen exists.
+        public static void PlayPelicanHuntEnd(float volume = 0.85f) => Play("pelican_hunt_end", volume);
+
+        // ---- Sounds: Reactor score (Paket R) ----
+        // reactor_intro (3.2 s) / reactor_music + music2..music6 (six 16 s loops) / reactor_boom
+        // (9.5 s) / reactor_fixed (4 s). Deliberately WITHOUT a Play* wrapper: these nine clips are
+        // MUSIC and may only ever be started through UCMusic (cue "reactor", priority 100), which
+        // guarantees that at most one music bed is audible. A Play() shortcut here would be the one
+        // way to layer the reactor on top of the werewolf/pelican score - exactly what the channel
+        // exists to prevent. ReactorMusic.cs resolves them by NAME through GetClipByName below, so
+        // no registration beyond the csproj EmbeddedResource entries is needed.
+        // Volume warm-up note: a 16 s stereo 48 kHz clip decodes into a ~6 MB float buffer, so
+        // ReactorMusic touches the clips it will need one per frame right after the sabotage starts
+        // (see its WarmUp), where the vanilla alarm masks the decode - never at the +2.0 s downbeat.
+
         // ---- Sounds: Bug ----
         // Glitch was previously a standalone loader (BugSound.cs) with no Play wrapper at all;
         // consolidated here (its LogicalName "UnknownsCollection.Resources.Glitch.raw" already matches
@@ -302,24 +414,37 @@ namespace UnknownsCollection {
 
         private static AudioClip GetClip(string name) {
             if (clips.TryGetValue(name, out var cached) && cached != null) return cached;
-            var clip = LoadRawClip($"UnknownsCollection.Resources.{name}.raw", name);
+            var clip = LoadRawClip($"UnknownsCollection.Resources.{name}.ogg", name);
             clips[name] = clip;
             return clip;
         }
 
-        // Raw (headerless) 2-channel signed 32-bit PCM (LE), 48 kHz - the format all UC sound assets use,
-        // including tesla_warning and Glitch now that they're loaded through this same central cache.
+        // Music-channel access (UCMusic manages its own AudioSources but must share this cache so
+        // SoundManager.StopSound - which is CLIP-based - always refers to the one instance per name).
+        internal static AudioClip GetClipByName(string name) => GetClip(name);
+
+        // Ogg Vorbis (was: headerless 2-channel signed 32-bit PCM LE @ 48 kHz), decoded fully into the
+        // same float[] via NVorbis (pure C#, ILRepack-merged into this assembly). Unity then loops over
+        // the BUFFER, not the codec, so loop seams are bit-identical to the old raw path - the decoder
+        // returns exactly the original sample count (stored in the Vorbis granule position; verified
+        // 54/54 in tmp\OGG_MESSBERICHT.md. ffmpeg's own decoder truncates 128 frames on decode - never
+        // use it to "verify" these assets, only NVorbis).
         private static AudioClip LoadRawClip(string path, string clipName) {
             try {
                 Assembly assembly = Assembly.GetExecutingAssembly();
                 using Stream stream = assembly.GetManifestResourceStream(path);
                 if (stream == null) return null;
-                var bytes = new byte[stream.Length];
-                _ = stream.Read(bytes, 0, (int)stream.Length);
-                float[] samples = new float[bytes.Length / 4];
-                for (int i = 0; i < samples.Length; i++)
-                    samples[i] = (float)BitConverter.ToInt32(bytes, i * 4) / int.MaxValue;
-                AudioClip clip = AudioClip.Create(clipName, samples.Length / 2, 2, 48000, false);
+                using var vorbis = new NVorbis.VorbisReader(stream, false);
+                int channels = vorbis.Channels;          // all UC assets: 2
+                int sampleRate = vorbis.SampleRate;      // all UC assets: 48000
+                var samples = new float[vorbis.TotalSamples * channels];
+                int total = 0;
+                while (total < samples.Length) {
+                    int read = vorbis.ReadSamples(samples, total, samples.Length - total);
+                    if (read <= 0) break;
+                    total += read;
+                }
+                AudioClip clip = AudioClip.Create(clipName, samples.Length / channels, channels, sampleRate, false);
                 clip.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
                 clip.SetData(samples, 0);
                 return clip;

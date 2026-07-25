@@ -58,7 +58,7 @@ namespace UnknownsCollection {
         private static TheOtherRoles.Objects.CustomButton antidoteButton;
         private static PlayerControl antidoteTarget;
 
-        // ---- Custom RPC (193) subtypes ----
+        // ---- Custom RPC subtypes: module byte 193 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 193;
         private const byte SubSetPoisoner = 0;
         private const byte SubMarkBody = 1;      // victimId
@@ -94,7 +94,12 @@ namespace UnknownsCollection {
 
         // Poison deaths are applied locally on each client via RPCProcedure.uncheckedMurderPlayer
         // (distributed by our own SubPoisonDeath RPC), so no reflection/RPC-byte resolution is needed.
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         // ---- Helpers ----
         private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
@@ -109,8 +114,7 @@ namespace UnknownsCollection {
 
         // ---- RPC ----
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -165,6 +169,9 @@ namespace UnknownsCollection {
             poisoner = Helpers.playerById(id);
             active = poisoner != null;
             if (active) UCPromotion.Claim(id);
+            // Antidote charges are a PER-GAME budget for the Medic. Set them exactly once, here - they
+            // used to refill every meeting (the line sat in MeetingStartPatch), which made the option a no-op.
+            antidoteUsesLeft = AntidoteChargesValue();
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] The Poisoner is {poisoner.Data?.PlayerName}.");
         }
 
@@ -221,24 +228,21 @@ namespace UnknownsCollection {
         public static void MarkFromDraft(byte playerId) => ApplySetPoisoner(playerId);
 
         // ---- RPC handler ----
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetPoisoner: ApplySetPoisoner(reader.ReadByte()); break;
-                        case SubMarkBody: ApplyMarkBody(reader.ReadByte()); break;
-                        case SubPoisonReporter: ApplyPoisonReporter(reader.ReadByte()); break;
-                        case SubAntidote: ApplyAntidote(reader.ReadByte()); break;
-                        case SubPoisonDeath: ApplyPoisonDeath(reader.ReadByte()); break;
-                    }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] HandleRpc failed: {e}");
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetPoisoner: ApplySetPoisoner(reader.ReadByte()); break;
+                    case SubMarkBody: ApplyMarkBody(reader.ReadByte()); break;
+                    case SubPoisonReporter: ApplyPoisonReporter(reader.ReadByte()); break;
+                    case SubAntidote: ApplyAntidote(reader.ReadByte()); break;
+                    case SubPoisonDeath: ApplyPoisonDeath(reader.ReadByte()); break;
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] HandleRpc failed: {e}");
             }
         }
 
@@ -352,8 +356,8 @@ namespace UnknownsCollection {
                     // Reset round tracking
                     bodiesPoisonedThisRound.Clear();
 
-                    // Refill antidote charges
-                    antidoteUsesLeft = AntidoteChargesValue();
+                    // (Antidote charges are set once per game in ApplySetPoisoner - refilling them here made
+                    // the charges option meaningless, the Medic got a fresh stock every single meeting.)
 
                     // Count down every poisoned reporter by one meeting; schedule deaths at zero. Runs on
                     // every client so the countdown stays in sync; only the host acts on the list (in

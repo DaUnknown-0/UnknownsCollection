@@ -56,16 +56,26 @@ namespace UnknownsCollection {
                 E("Maniac", Faction.Impostor, () => Maniac.Color, () => Maniac.SpawnRate, "uc.help.maniac"),
                 E("Shade", Faction.Impostor, () => Palette.ImpostorRed, () => Shade.SpawnRate, "uc.help.shade"),
                 E("Manipulator", Faction.Impostor, () => Palette.ImpostorRed, () => Manipulator.SpawnRate, "uc.help.manipulator"),
+                E("Werewolf", Faction.Impostor, () => Werewolf.Color, () => Werewolf.SpawnRate, "uc.help.werewolf"),
 
                 E("Siphoner", Faction.Crew, () => Siphoner.Color, () => Siphoner.SpawnRate, "uc.help.siphoner"),
                 E("Witness", Faction.Crew, () => Witness.Color, () => Witness.SpawnRate, "uc.help.witness"),
                 E("Scout", Faction.Crew, () => Scout.Color, () => Scout.SpawnRate, "uc.help.scout"),
                 E("Beacon", Faction.Crew, () => Beacon.Color, () => Beacon.SpawnRate, "uc.help.beacon"),
+                // The Hunter has no spawn rate of his own (he is the Sheriff's endgame inside a
+                // Werewolf round), so his visibility gate is borrowed: the WEREWOLF rate decides
+                // whether he can exist at all, and returning null while option 1502 is off makes the
+                // list filter drop the row entirely. Same anti-leak rule as every other entry - it is
+                // option state only, never "did he actually rise this round".
+                E("Hunter", Faction.Crew, () => Hunter.Color,
+                  () => (Hunter.Enabled != null && Hunter.Enabled.getBool()) ? Werewolf.SpawnRate : null,
+                  "uc.help.hunter"),
 
                 E("Bug", Faction.Neutral, () => Bug.Color, () => Bug.SpawnRate, "uc.help.bug"),
                 E("Follower", Faction.Neutral, () => Follower.Color, () => Follower.SpawnRate, "uc.help.follower"),
                 E("Copycat", Faction.Neutral, () => Copycat.Color, () => Copycat.SpawnRate, "uc.help.copycat"),
                 E("Collector", Faction.Neutral, () => Collector.Color, () => Collector.SpawnRate, "uc.help.collector"),
+                E("Pelican", Faction.Neutral, () => Pelican.Color, () => Pelican.SpawnRate, "uc.help.pelican"),
 
                 E("Poltergeist", Faction.Ghost, () => Poltergeist.Color, () => Poltergeist.SpawnRate, "uc.help.poltergeist"),
             };

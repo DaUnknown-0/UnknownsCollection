@@ -135,6 +135,10 @@ namespace UnknownsCollection {
                 (UCAssets.SiphonerIcon,             "siphoner_drain",       115f),
                 (UCAssets.CollectorIcon,            "collector_collect",    115f),
                 (UCAssets.ManipulatorIcon,          "manipulator_fake",     115f),
+                (UCAssets.WerewolfTransformIcon,    "werewolf_transform",   115f),
+                (UCAssets.WerewolfRevertIcon,       "werewolf_revert",      115f),
+                (UCAssets.HunterShootIcon,          "hunter_shoot",         115f),
+                (UCAssets.PelicanSwallowIcon,       "pelican_swallow",      115f),
             };
 
             var map = new Dictionary<int, AnimSet>();

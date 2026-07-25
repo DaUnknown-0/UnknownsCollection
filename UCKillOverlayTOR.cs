@@ -103,6 +103,14 @@ namespace UnknownsCollection {
                         if (self) Arm(Kind.ThiefFail, targetId, sourceId);
                         return;
                     }
+                    // Paket W4: the Hunter usually still HOLDS the Sheriff slot (Hunter.cs never
+                    // writes Sheriff.sheriff), so without this guard his silver bolt would be armed
+                    // as a SheriffShot - and an armed entry beats the identity match in SelectRaw.
+                    // Bailing out here leaves his kills to SelectWolfPack (Kind.SilverBolt), which
+                    // also correctly plays NOTHING when the shot only wounded the beast. His MISFIRE
+                    // (source == target) is deliberately left to the Sheriff branch below - the
+                    // exploding-gun sequence fits a Hunter who shot an innocent just as well.
+                    if (Hunter.active && !self && IsPlayer(Hunter.hunter, sourceId)) return;
                     // Sheriff (incl. a promoted Deputy - TOR repoints Sheriff.sheriff): hit or misfire.
                     if (IsPlayer(Sheriff.sheriff, sourceId)) {
                         Arm(self ? Kind.SheriffMisfire : Kind.SheriffShot, targetId, sourceId);

@@ -78,7 +78,7 @@ namespace UnknownsCollection {
         private const int CollectorWinReason = 19;   // Bug uses 18; TOR custom reasons end at 16
         private static byte winnerCollectorId = byte.MaxValue; // survives resetVariables (see Bug)
 
-        // ---- Custom RPC (209) subtypes ----
+        // ---- Custom RPC subtypes: module byte 209 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = UnknownsCollectionPlugin.CollectorRpcId;
         private const byte SubSetCollector = 0;  // playerId
         private const byte SubSpawnRelics = 1;   // count, then count * (x float, y float)
@@ -129,7 +129,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         private static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
@@ -152,8 +157,7 @@ namespace UnknownsCollection {
         // ---- RPC plumbing ----
 
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -246,36 +250,33 @@ namespace UnknownsCollection {
 
         public static void MarkFromDraft(byte playerId) => ApplySetCollector(playerId);
 
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetCollector: ApplySetCollector(reader.ReadByte()); break;
-                        case SubSpawnRelics: {
-                            int count = reader.ReadByte();
-                            var positions = new List<Vector2>(count);
-                            for (int i = 0; i < count; i++)
-                                positions.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
-                            CollectorRelics.SpawnAll(positions);
-                            break;
-                        }
-                        case SubCollect: ApplyCollect(reader.ReadByte()); break;
-                        case SubSpawnExtra: {
-                            int relicId = reader.ReadByte();
-                            float ex = reader.ReadSingle();
-                            float ey = reader.ReadSingle();
-                            ApplySpawnExtra(relicId, new Vector2(ex, ey));
-                            break;
-                        }
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetCollector: ApplySetCollector(reader.ReadByte()); break;
+                    case SubSpawnRelics: {
+                        int count = reader.ReadByte();
+                        var positions = new List<Vector2>(count);
+                        for (int i = 0; i < count; i++)
+                            positions.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
+                        CollectorRelics.SpawnAll(positions);
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Collector] HandleRpc failed: {e}");
+                    case SubCollect: ApplyCollect(reader.ReadByte()); break;
+                    case SubSpawnExtra: {
+                        int relicId = reader.ReadByte();
+                        float ex = reader.ReadSingle();
+                        float ey = reader.ReadSingle();
+                        ApplySpawnExtra(relicId, new Vector2(ex, ey));
+                        break;
+                    }
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Collector] HandleRpc failed: {e}");
             }
         }
 

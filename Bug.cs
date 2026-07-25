@@ -52,15 +52,44 @@ namespace UnknownsCollection {
 
         // The Bug win is handled entirely by attribute-based patches (RpcEndGameHijackPatch +
         // OnGameEndPatch), picked up by PatchAll — no reflection needed here.
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
+        // Legacy Bug-win reason: kept as a fallback (old hosts / unexpected paths). New hosts encode the
+        // ORIGINAL game-over reason into the value instead (BugHijackBase + reason, see the hijack patch),
+        // so clients can first show the stolen team win before the Bug takes the screen over. Encoded in
+        // the reason itself because Hazel-Reliable RPCs have no ordering guarantee - a separate
+        // "original win" RPC could arrive after the game end, or never.
         private const int BugWinReason = 18;
+        private const int BugHijackBase = 20; // occupied values: 20-26 (vanilla team wins 0-6) and 31 (TeamJackal 11)
+
+        // "Stolen win" end-screen dramaturgy: the screen shows the ORIGINAL team win for TakeoverDelay
+        // seconds, then the Bug hijacks it (glitch burst, win-text morph, podium swap). Fixed constants
+        // by user decision (2026-07-25), not config.
+        private const float TakeoverDelay = 3.0f;
+        private const float MorphDuration = 1.2f;
+
+        private static bool IsBugReason(int r) =>
+            r == BugWinReason || (r >= BugHijackBase && r <= BugHijackBase + TeamJackalWinReason);
+        private static int OriginalReason(int r) =>
+            (r >= BugHijackBase && r <= BugHijackBase + TeamJackalWinReason) ? r - BugHijackBase : -1;
 
         // The Bug's PlayerId, snapshotted at game-end BEFORE TOR's resetVariables wipes bugPlayerId.
         // Deliberately NOT part of resetVariables: TOR's own end-of-game reset would clear it before our
         // Priority.Last postfix could read it. Re-snapshotted every game-end, so a stale value is
-        // harmless (the postfix also gates on gameOverReason == BugWinReason).
+        // harmless (the postfix also gates on IsBugReason(gameOverReason)).
         private static byte winnerBugId = byte.MaxValue;
+
+        // Game-end snapshots for the two-phase end screen, taken in OnGameEndPatch.Prefix while the role
+        // statics and PlayerControls are still alive (the end scene has neither). Same lifetime rules as
+        // winnerBugId: re-stamped every game end, never cleared in resetVariables.
+        private static int originalReason = -1;                          // -1 = legacy 18 / not a bug win
+        private static List<CachedPlayerData> originalWinners;           // display list of the stolen win
+        private static CachedPlayerData bugWinnerData;                   // outfit/name for the podium swap
 
         // TeamJackalWin from TOR's CustomGameOverReason enum (EndGamePatch.cs). The Jackal is a "team"
         // win the Bug should also hijack; the other custom reasons (Lovers 10, Mini 12, Jester 13,
@@ -81,8 +110,10 @@ namespace UnknownsCollection {
                     if (!BugIsAliveAndActive()) return;
                     int r = (int)endReason;
                     if (r >= 10 && r != TeamJackalWinReason) return; // only Crew/Impostor (<10) or Jackal (11)
-                    endReason = (GameOverReason)BugWinReason;
-                    UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Bug survived to the end — hijacking win.");
+                    // Encode the stolen reason instead of the flat legacy 18, so every client can
+                    // reconstruct (and first display) the original team win. 18 stays as receive-fallback.
+                    endReason = (GameOverReason)(BugHijackBase + r);
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] Bug survived to the end — hijacking win (stolen reason {r}).");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] RpcEndGame hijack failed: {e}");
                 }
@@ -120,8 +151,7 @@ namespace UnknownsCollection {
             bug != null && PlayerControl.LocalPlayer != null && bug.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -145,18 +175,15 @@ namespace UnknownsCollection {
 
         public static void MarkFromDraft(byte playerId) => ApplySetBug(playerId);
 
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    if (subtype == SubSetBug) ApplySetBug(reader.ReadByte());
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Bug] HandleRpc failed: {e}");
-                }
-                return false;
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                if (subtype == SubSetBug) ApplySetBug(reader.ReadByte());
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Bug] HandleRpc failed: {e}");
             }
         }
 
@@ -213,22 +240,106 @@ namespace UnknownsCollection {
             // Runs before TOR's OnGameEnd postfix calls resetVariables(): snapshot the Bug's id so the
             // postfix below can still award the win after bugPlayerId has been reset. Fires on every
             // client (OnGameEnd runs everywhere), so all clients agree on the winner.
+            // Priority.Last also puts this prefix AFTER TOR's (gameOverReason is already stamped) and
+            // after Copycat's (WinnerCopycatId is already decided).
             public static void Prefix() {
                 if (active && bugPlayerId != byte.MaxValue) winnerBugId = bugPlayerId;
+                try {
+                    int reason = (int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason;
+                    originalReason = OriginalReason(reason);
+                    originalWinners = null;
+                    bugWinnerData = null;
+                    if (!IsBugReason(reason) || winnerBugId == byte.MaxValue) return;
+
+                    // Snapshot everything the end scene will need - PlayerControls and role statics are
+                    // both gone once the end-game scene has loaded.
+                    PlayerControl bugPlayer = Helpers.playerById(winnerBugId);
+                    if (bugPlayer != null && bugPlayer.Data != null)
+                        bugWinnerData = new CachedPlayerData(bugPlayer.Data);
+                    if (originalReason >= 0)
+                        originalWinners = BuildOriginalWinners(originalReason);
+                } catch (Exception e) {
+                    originalWinners = null;
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Bug] game-end snapshot failed: {e}");
+                }
+            }
+
+            // Purely cosmetic reconstruction of "who would have won" for the phase-A display - no win
+            // logic is re-derived, the winner of the game stays the Bug either way.
+            private static List<CachedPlayerData> BuildOriginalWinners(int reason) {
+                var list = new List<CachedPlayerData>();
+                if (reason == TeamJackalWinReason) {
+                    // Mirror of TOR's teamJackalWin branch: jackal + sidekick + former jackals,
+                    // IsImpostor forced off so vanilla renders them as a non-impostor podium.
+                    void AddJackal(PlayerControl p) {
+                        if (p == null || p.Data == null) return;
+                        var d = new CachedPlayerData(p.Data);
+                        d.IsImpostor = false;
+                        list.Add(d);
+                    }
+                    AddJackal(Jackal.jackal);
+                    AddJackal(Sidekick.sidekick);
+                    if (Jackal.formerJackals != null)
+                        foreach (PlayerControl p in Jackal.formerJackals) AddJackal(p);
+                } else {
+                    // Vanilla's own classifier decides crew vs impostor (covers the disconnect reasons
+                    // 5/6 without hardcoding their semantics here).
+                    bool humansWon = GameManager.Instance != null &&
+                                     GameManager.Instance.DidHumansWin((GameOverReason)reason);
+                    foreach (PlayerControl p in PlayerControl.AllPlayerControls) {
+                        if (p == null || p.Data == null || p.Data.Role == null) continue;
+                        if (humansWon) {
+                            if (p.Data.Role.IsImpostor) continue;
+                            // Exclude neutrals (TOR and UC alike) via their RoleInfo flag - the same
+                            // players TOR strips from a real crew-win podium.
+                            bool neutral = false;
+                            var infos = RoleInfo.getRoleInfoForPlayer(p);
+                            if (infos != null)
+                                foreach (var ri in infos)
+                                    if (ri != null && ri.isNeutral) { neutral = true; break; }
+                            if (neutral) continue;
+                            list.Add(new CachedPlayerData(p.Data));
+                        } else if (p.Data.Role.IsImpostor) {
+                            list.Add(new CachedPlayerData(p.Data));
+                        }
+                    }
+                }
+                // A Copycat that earned her shared win would have stood on that podium too.
+                if (Copycat.WinnerCopycatId != byte.MaxValue) {
+                    PlayerControl cp = Helpers.playerById(Copycat.WinnerCopycatId);
+                    if (cp != null && cp.Data != null && !list.Any(w => w.PlayerName == cp.Data.PlayerName))
+                        list.Add(new CachedPlayerData(cp.Data));
+                }
+                return list;
             }
 
             // Runs AFTER TOR's postfix (Priority.Last), so our winner list has the final say. Keys on
             // the host-broadcast BugWinReason, which every client sees via TOR's OnGameEndPatch.Prefix.
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
-                    if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != BugWinReason) return;
+                    if (!IsBugReason((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason)) return;
                     if (winnerBugId == byte.MaxValue) return;
 
-                    PlayerControl bugPlayer = Helpers.playerById(winnerBugId);
-                    if (bugPlayer == null || bugPlayer.Data == null) return;
+                    bool twoPhase = originalReason >= 0 && originalWinners != null &&
+                                    originalWinners.Count > 0 && bugWinnerData != null;
+                    if (!twoPhase) {
+                        // Legacy 18 (or snapshot failed): previous behaviour, the Bug alone on the podium.
+                        originalReason = -1;
+                        PlayerControl bugPlayer = Helpers.playerById(winnerBugId);
+                        if (bugWinnerData == null && bugPlayer != null && bugPlayer.Data != null)
+                            bugWinnerData = new CachedPlayerData(bugPlayer.Data);
+                        if (bugWinnerData == null) return; // leave vanilla winners untouched (old behaviour)
+                    }
 
                     EndGameResult.CachedWinners.Clear();
-                    EndGameResult.CachedWinners.Add(new CachedPlayerData(bugPlayer.Data));
+                    if (twoPhase) {
+                        // Two-phase screen: vanilla builds the podium from CachedWinners, so filling it
+                        // with the ORIGINAL winners makes phase A automatically authentic. The Bug only
+                        // lives in bugWinnerData until the takeover swaps the podium.
+                        foreach (var w in originalWinners) EndGameResult.CachedWinners.Add(w);
+                    } else {
+                        EndGameResult.CachedWinners.Add(bugWinnerData);
+                    }
                     // 12 is intentionally outside TOR's WinCondition enum (0-10): no vanilla end-screen
                     // branch matches it, and the Bug draws its own green "Bug Wins" banner in EndGameFxPatch.
                     SetWinCondition(12);
@@ -244,41 +355,176 @@ namespace UnknownsCollection {
         static class EndGameFxPatch {
             public static void Postfix(EndGameManager __instance) {
                 try {
-                    if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != BugWinReason) return;
+                    if (!IsBugReason((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason)) return;
 
-                    if (__instance.WinText != null) {
-                        GameObject bonus = UnityEngine.Object.Instantiate(__instance.WinText.gameObject);
-                        bonus.transform.position = new Vector3(__instance.WinText.transform.position.x,
-                            __instance.WinText.transform.position.y - 0.5f,
-                            __instance.WinText.transform.position.z);
-                        bonusText = bonus.GetComponent<TMP_Text>();
-                        bonusText.text = UCLocalization.Tr("uc.ui.bug.win_banner");
-                        bool glitchOn = UnknownsCollectionPlugin.BugGlitchEnabled.Value;
-                        // With the glitch effect running, start tiny/invisible so BugGlitchEffect.Update()
-                        // can ease it in ("materializing out of the noise"); without it (accessibility
-                        // toggle off), keep the previous instant full-size behaviour unchanged.
-                        bonus.transform.localScale = glitchOn ? new Vector3(0.05f, 0.05f, 1f) : new Vector3(0.7f, 0.7f, 1f);
-                        bonusText.color = glitchOn ? new Color(Color.r, Color.g, Color.b, 0f) : Color;
-                        baseBonusPos = bonus.transform.localPosition;
+                    bool twoPhase = originalReason >= 0 && bugWinnerData != null;
+                    if (!twoPhase) {
+                        // Legacy 18: previous single-phase behaviour, Bug identity from second 0.
+                        CreateBugBanner(__instance);
+                        if (__instance.BackgroundBar != null && UnknownsCollectionPlugin.BugGlitchEnabled.Value)
+                            __instance.BackgroundBar.material.SetColor("_Color", Color);
+                        if (UnknownsCollectionPlugin.BugGlitchEnabled.Value) {
+                            var fx = __instance.gameObject.AddComponent<BugGlitchEffect>();
+                            fx.mgr = __instance;
+                            UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Glitch effect attached to end screen.");
+                        }
+                        return;
                     }
 
-                    if (__instance.BackgroundBar != null && UnknownsCollectionPlugin.BugGlitchEnabled.Value)
-                        __instance.BackgroundBar.material.SetColor("_Color", Color);
-
-                    if (UnknownsCollectionPlugin.BugGlitchEnabled.Value) {
-                        var fx = __instance.gameObject.AddComponent<BugGlitchEffect>();
-                        fx.mgr = __instance;
-                        UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Glitch effect attached to end screen.");
-                    }
+                    // ---- Phase A: the perfect stolen team win. ----
+                    // Vanilla already shows Victory/Defeat + podium built from our ORIGINAL winner list,
+                    // and TOR rebuilt the podium beans with names/roles - all untouched. The only missing
+                    // piece of a genuine TOR team win is TOR's bonus line, which stays empty for our
+                    // out-of-enum WinCondition(12) - so fake exactly that line (TOR's literal strings,
+                    // deliberately not localized: TOR's originals aren't either).
+                    CreateFakeTeamLine(__instance);
+                    var timer = __instance.gameObject.AddComponent<BugTakeoverTimer>();
+                    timer.mgr = __instance;
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[Bug] Phase A (stolen reason {originalReason}) shown, takeover in {TakeoverDelay}s.");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] EndGameFx failed: {e}");
                 }
             }
         }
 
+        // ---- Two-phase end-screen helpers ----
+
+        private static GameObject fakeLineGo;    // phase-A fake TOR bonus line, destroyed at takeover
+        private static Vector3 podiumBeanScale = new Vector3(0.9f, 0.9f, 1f);
+
+        // The green "Bug Wins" banner (previously created inline in EndGameFxPatch, unchanged look).
+        private static void CreateBugBanner(EndGameManager mgr) {
+            if (mgr == null || mgr.WinText == null) return;
+            GameObject bonus = UnityEngine.Object.Instantiate(mgr.WinText.gameObject);
+            bonus.transform.position = new Vector3(mgr.WinText.transform.position.x,
+                mgr.WinText.transform.position.y - 0.5f,
+                mgr.WinText.transform.position.z);
+            bonusText = bonus.GetComponent<TMP_Text>();
+            bonusText.text = UCLocalization.Tr("uc.ui.bug.win_banner");
+            bool glitchOn = UnknownsCollectionPlugin.BugGlitchEnabled.Value;
+            // With the glitch effect running, start tiny/invisible so BugGlitchEffect.Update()
+            // can ease it in ("materializing out of the noise"); without it (accessibility
+            // toggle off), keep the instant full-size behaviour unchanged.
+            bonus.transform.localScale = glitchOn ? new Vector3(0.05f, 0.05f, 1f) : new Vector3(0.7f, 0.7f, 1f);
+            bonusText.color = glitchOn ? new Color(Color.r, Color.g, Color.b, 0f) : Color;
+            baseBonusPos = bonus.transform.localPosition;
+        }
+
+        // Phase-A fake of TOR's bonus line - the exact strings/colors EndGameManagerSetUpPatch would
+        // have shown for the stolen reason.
+        private static void CreateFakeTeamLine(EndGameManager mgr) {
+            if (mgr == null || mgr.WinText == null) return;
+            string txt;
+            Color col;
+            switch ((GameOverReason)originalReason) {
+                case GameOverReason.ImpostorByKill:     txt = "Impostors Win - By Kill";              col = Color.red;   break;
+                case GameOverReason.ImpostorBySabotage: txt = "Impostors Win - By Sabotage";          col = Color.red;   break;
+                case GameOverReason.ImpostorByVote:     txt = "Impostors Win - By Vote, Guess or DC"; col = Color.red;   break;
+                case GameOverReason.ImpostorDisconnect: txt = "Last Crewmate Disconnected";           col = Color.red;   break;
+                case GameOverReason.HumansByTask:       txt = "Crew Wins - Taskwin";                  col = Color.white; break;
+                case GameOverReason.HumansByVote:
+                case GameOverReason.HumansDisconnect:   txt = "Crew Wins - No Evil Killers Left";     col = Color.white; break;
+                default:
+                    if (originalReason == TeamJackalWinReason) { txt = "Team Jackal Wins"; col = Jackal.color; }
+                    else { txt = ""; col = Color.white; }
+                    break;
+            }
+            if (txt.Length == 0) return;
+            GameObject fake = UnityEngine.Object.Instantiate(mgr.WinText.gameObject);
+            fake.transform.position = new Vector3(mgr.WinText.transform.position.x,
+                mgr.WinText.transform.position.y - 0.5f, mgr.WinText.transform.position.z);
+            fake.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
+            var t = fake.GetComponent<TMP_Text>();
+            t.text = txt;
+            t.color = col;
+            fakeLineGo = fake;
+        }
+
+        // The true outcome the win text morphs into at takeover: only the Bug keeps "Victory".
+        private static string TrueOutcomeText() {
+            bool isYou = bugWinnerData != null && bugWinnerData.IsYou;
+            try {
+                return DestroyableSingleton<TranslationController>.Instance.GetString(
+                    isYou ? StringNames.Victory : StringNames.Defeat);
+            } catch {
+                return isYou ? "Victory" : "Defeat";
+            }
+        }
+
+        // Replace the original winners' podium with a single Bug bean (TOR's own podium idiom, i=0 slot).
+        // Returns the bean at scale 0 - the caller pops or snaps it to podiumBeanScale.
+        private static PoolablePlayer SwapPodiumToBug(EndGameManager mgr) {
+            foreach (PoolablePlayer pb in mgr.transform.GetComponentsInChildren<PoolablePlayer>())
+                UnityEngine.Object.Destroy(pb.gameObject);
+            if (bugWinnerData == null || mgr.PlayerPrefab == null) return null;
+
+            int num = Mathf.CeilToInt(7.5f);
+            PoolablePlayer bean = UnityEngine.Object.Instantiate<PoolablePlayer>(mgr.PlayerPrefab, mgr.transform);
+            bean.transform.localPosition = new Vector3(0f, FloatRange.SpreadToEdges(-1.125f, 0f, 0, num), -8f) * 0.9f;
+            bean.transform.localScale = Vector3.zero;
+            bean.SetFlipX(true);
+            bean.UpdateFromPlayerOutfit(bugWinnerData.Outfit, PlayerMaterial.MaskType.None, bugWinnerData.IsDead, true);
+            if (bean.cosmetics != null && bean.cosmetics.nameText != null) {
+                bean.cosmetics.nameText.color = Color.white;
+                bean.cosmetics.nameText.transform.localScale =
+                    new Vector3(1f / podiumBeanScale.x, 1f / podiumBeanScale.y, 1f);
+                bean.cosmetics.nameText.transform.localPosition = new Vector3(
+                    bean.cosmetics.nameText.transform.localPosition.x,
+                    bean.cosmetics.nameText.transform.localPosition.y, -15f);
+                bean.cosmetics.nameText.text = bugWinnerData.PlayerName + $"\n{Helpers.cs(Color, BugInfo().name)}";
+            }
+            return bean;
+        }
+
+        private static void DoTakeover(EndGameManager mgr) {
+            if (mgr == null) return;
+            if (fakeLineGo != null) { UnityEngine.Object.Destroy(fakeLineGo); fakeLineGo = null; }
+
+            PoolablePlayer bean = SwapPodiumToBug(mgr);
+            CreateBugBanner(mgr);
+            if (mgr.BackgroundBar != null)
+                mgr.BackgroundBar.material.SetColor("_Color", Color);
+
+            string trueText = TrueOutcomeText();
+            if (UnknownsCollectionPlugin.BugGlitchEnabled.Value) {
+                var fx = mgr.gameObject.AddComponent<BugGlitchEffect>();
+                fx.mgr = mgr;
+                fx.morphTarget = trueText;   // scramble-morph fake Victory/Defeat -> true outcome
+                fx.podiumBean = bean;        // scale-pop hidden inside the first glitch burst
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Takeover: glitch effect attached.");
+            } else {
+                // Accessibility toggle off: hard cut, same two-phase dramaturgy without the effect.
+                if (bean != null) bean.transform.localScale = podiumBeanScale;
+                if (mgr.WinText != null) {
+                    mgr.WinText.text = trueText;
+                    mgr.WinText.color = (bugWinnerData != null && bugWinnerData.IsYou) ? Color : Palette.ImpostorRed;
+                }
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Takeover: hard cut (glitch disabled).");
+            }
+        }
+
+        private class BugTakeoverTimer : MonoBehaviour {
+            static BugTakeoverTimer() => ClassInjector.RegisterTypeInIl2Cpp<BugTakeoverTimer>();
+            public EndGameManager mgr;
+            private float created = -1f;
+
+            private void Start() => created = Time.time;
+
+            private void Update() {
+                if (created < 0f || Time.time - created < TakeoverDelay) return;
+                try { DoTakeover(mgr); }
+                catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Bug] takeover failed: {e}"); }
+                Destroy(this);
+            }
+        }
+
         private class BugGlitchEffect : MonoBehaviour {
             static BugGlitchEffect() => ClassInjector.RegisterTypeInIl2Cpp<BugGlitchEffect>();
             public EndGameManager mgr;
+            public string morphTarget;       // set by DoTakeover: morph baseWinStr -> this, then behave as before
+            public PoolablePlayer podiumBean; // set by DoTakeover: scale-pop 0 -> podiumBeanScale
+            private int[] revealRank;         // stable, once-shuffled reveal order (letters lock in, no flicker)
             private float nextPulse;
             private string baseWinStr;
             private Vector3 baseWinPos;
@@ -294,6 +540,19 @@ namespace UnknownsCollection {
                 if (mgr != null && mgr.WinText != null) {
                     baseWinStr = mgr.WinText.text;
                     baseWinPos = mgr.WinText.transform.localPosition;
+                }
+                if (morphTarget != null) {
+                    // Fisher-Yates over the TARGET's indices, rolled exactly once: each position gets a
+                    // stable reveal rank, so characters snap in one by one instead of flickering.
+                    int n = morphTarget.Length;
+                    var order = new int[n];
+                    for (int i = 0; i < n; i++) order[i] = i;
+                    for (int i = n - 1; i > 0; i--) {
+                        int j = UnityEngine.Random.Range(0, i + 1);
+                        (order[i], order[j]) = (order[j], order[i]);
+                    }
+                    revealRank = new int[n];
+                    for (int pos = 0; pos < n; pos++) revealRank[order[pos]] = pos;
                 }
                 CreateGlitchOverlay();
                 // "Power-on" stinger for the corrupted-system moment - the same clip that also plays
@@ -412,13 +671,51 @@ namespace UnknownsCollection {
                             Color.HSVToRGB(hue, 0.7f, 1f));
                     }
 
+                    // Takeover extras (both no-ops in the legacy single-phase path):
+                    // podium bean pops 0 -> full over 0.25s, hidden inside the opening glitch burst.
+                    if (podiumBean != null) {
+                        float pp = Mathf.Clamp01(elapsed / 0.25f);
+                        float ease = 1f - (1f - pp) * (1f - pp);
+                        podiumBean.transform.localScale = podiumBeanScale * ease;
+                        if (pp >= 1f) podiumBean = null;
+                    }
+
+                    // Scramble-morph: over MorphDuration a growing share of characters locks onto the
+                    // true outcome text (stable reveal order), the rest keeps glitching. Afterwards the
+                    // target IS the base string and the pulse logic below owns the text again.
+                    if (morphTarget != null && mgr.WinText != null) {
+                        mgr.WinText.richText = true;
+                        float mp = elapsed / MorphDuration;
+                        if (mp >= 1f) {
+                            baseWinStr = morphTarget;
+                            morphTarget = null;
+                            mgr.WinText.text = baseWinStr;
+                        } else {
+                            int reveal = Mathf.FloorToInt(mp * morphTarget.Length);
+                            string morphed = "";
+                            for (int i = 0; i < morphTarget.Length; i++) {
+                                if (revealRank != null && revealRank[i] < reveal) {
+                                    morphed += morphTarget[i];
+                                } else {
+                                    char c = (char)UnityEngine.Random.Range(33, 127);
+                                    Color rc = new Color(UnityEngine.Random.value, UnityEngine.Random.value, UnityEngine.Random.value);
+                                    morphed += $"<color=#{ColorToHex(rc)}>{c}</color>";
+                                }
+                            }
+                            mgr.WinText.text = morphed;
+                            mgr.WinText.transform.localPosition = baseWinPos;
+                        }
+                    }
+
                     if (t > nextPulse) {
                         nextPulse = t + UnityEngine.Random.Range(0.2f, 0.5f) / decay;
                         int r = UnityEngine.Random.Range(0, 6);
                         if (UnityEngine.Random.value > decay) r = Mathf.Max(r, 4); // calm phase: bias toward the tinted-only bin
                         if (r < 2) TriggerBlockGlitch();
 
-                        if (mgr.WinText != null) {
+                        // While the takeover morph runs it owns the win text; pulses keep driving the
+                        // block glitches above, but must not overwrite the morph string.
+                        if (mgr.WinText != null && morphTarget == null) {
                             mgr.WinText.richText = true;
                             int len = baseWinStr?.Length ?? 10;
                             if (r < 3) {

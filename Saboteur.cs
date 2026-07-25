@@ -103,7 +103,7 @@ namespace UnknownsCollection {
         private static bool pendingKillPenalty;
         private static byte pendingKillPenaltyVictimId;
 
-        // ---- Custom RPC (192) subtypes ----
+        // ---- Custom RPC subtypes: module byte 192 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 192; // == UnknownsCollectionPlugin.SaboteurRpcId
         private const byte SubSetSaboteur = 0;        // saboteurId
         private const byte SubClear = 1;              // (none) - full ability reset (meeting/round)
@@ -186,6 +186,7 @@ namespace UnknownsCollection {
         // (Everything else is attribute-based and picked up by PatchAll.)
         // ====================================================================
         public static void TryPatch(Harmony harmony) {
+            UCRpc.Register(RpcId, HandleModuleRpc);
             try {
                 var torAsm = typeof(CustomOption).Assembly;
                 try {
@@ -235,8 +236,7 @@ namespace UnknownsCollection {
         // Custom RPC senders (each also applies locally; the sender never receives its own RPC)
         // ====================================================================
         internal static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -290,52 +290,47 @@ namespace UnknownsCollection {
         public static void MarkFromDraft(byte playerId) => ApplySetSaboteur(playerId);
 
         // ====================================================================
-        // RPC receiver
+        // RPC receiver (registered on the shared UC channel in TryPatch; the module byte is already
+        // consumed by UCRpc's dispatcher, so this starts at the subtype byte exactly as before).
         // ====================================================================
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetSaboteur: ApplySetSaboteur(reader.ReadByte()); break;
-                        case SubClear: ApplyClear(); break;
-                        case SubSetSabotagedConsole: {
-                            float x = reader.ReadSingle();
-                            float y = reader.ReadSingle();
-                            ApplySetSabotagedConsole(x, y);
-                            break;
-                        }
-                        case SubClearSabotage: ApplyClearSabotage(); break;
-                        case SubRequestKill: {
-                            byte victimId = reader.ReadByte();
-                            float x = reader.ReadSingle();
-                            float y = reader.ReadSingle();
-                            HostHandleRequestKill(victimId, x, y); // no-op unless we are the host
-                            break;
-                        }
-                        case SubKillFx: ApplyKillFx(reader.ReadByte()); break;
-                        case SubPlaceTrap: {
-                            int id = reader.ReadInt32();
-                            float x = reader.ReadSingle();
-                            float y = reader.ReadSingle();
-                            SaboteurTrap.Place(id, x, y);
-                            break;
-                        }
-                        case SubTriggerTrap: {
-                            byte playerId = reader.ReadByte();
-                            int id = reader.ReadInt32();
-                            SaboteurTrap.Trigger(playerId, id);
-                            break;
-                        }
-                        case SubSelfLimp: SaboteurTrap.SetSelfLimping(reader.ReadByte() != 0); break;
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetSaboteur: ApplySetSaboteur(reader.ReadByte()); break;
+                    case SubClear: ApplyClear(); break;
+                    case SubSetSabotagedConsole: {
+                        float x = reader.ReadSingle();
+                        float y = reader.ReadSingle();
+                        ApplySetSabotagedConsole(x, y);
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] HandleRpc failed: {e}");
+                    case SubClearSabotage: ApplyClearSabotage(); break;
+                    case SubRequestKill: {
+                        byte victimId = reader.ReadByte();
+                        float x = reader.ReadSingle();
+                        float y = reader.ReadSingle();
+                        HostHandleRequestKill(victimId, x, y); // no-op unless we are the host
+                        break;
+                    }
+                    case SubKillFx: ApplyKillFx(reader.ReadByte()); break;
+                    case SubPlaceTrap: {
+                        int id = reader.ReadInt32();
+                        float x = reader.ReadSingle();
+                        float y = reader.ReadSingle();
+                        SaboteurTrap.Place(id, x, y);
+                        break;
+                    }
+                    case SubTriggerTrap: {
+                        byte playerId = reader.ReadByte();
+                        int id = reader.ReadInt32();
+                        SaboteurTrap.Trigger(playerId, id);
+                        break;
+                    }
+                    case SubSelfLimp: SaboteurTrap.SetSelfLimping(reader.ReadByte() != 0); break;
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] HandleRpc failed: {e}");
             }
         }
 

@@ -13,7 +13,11 @@ using UnityEngine;
 namespace UnknownsCollection {
 
     // Mod-presence handshake, modelled on TOR's own VersionHandshake (and Useful TOR Stuff's).
-    // Every client with this mod broadcasts its version + assembly GUID at lobby time (RPC 191).
+    // Every client with this mod broadcasts its version + assembly GUID at lobby time (module byte
+    // 191 on the shared UC channel UCRpc.CallId = 230; the payload behind the module byte is
+    // unchanged). A client on an OLD UC build does not know channel 230 and therefore never shows
+    // up in playerVersions - which is exactly the desired outcome: EveryoneHasMod() stays false and
+    // no UC role spawns, the same protection a genuine version mismatch already gave us.
     // The Tesla is fundamentally client-side (meeting UI for the Tesla, charge indicator + danger
     // warning for the victims), so it is GATED on "everyone has the mod" - exactly like the
     // Revenger/Snitch features. EveryoneHasMod() is read by Tesla.cs when picking the role.
@@ -33,7 +37,7 @@ namespace UnknownsCollection {
             try { return BuildMismatchMessage() == ""; } catch { return false; }
         }
 
-        // True if any of the 14 mod-gated Unknown's Collection roles is enabled. Used to scope the
+        // True if any of the mod-gated Unknown's Collection roles is enabled. Used to scope the
         // "everyone has the mod" gate (lobby warning + start block) to lobbies that actually need it -
         // a pure vanilla/TOR round must not be blocked just because a client is missing this mod.
         public static bool AnyUCRoleEnabled() {
@@ -53,15 +57,31 @@ namespace UnknownsCollection {
                    (Beacon.SpawnRate != null && Beacon.SpawnRate.getSelection() > 0) ||
                    (Poltergeist.SpawnRate != null && Poltergeist.SpawnRate.getSelection() > 0) ||
                    (Collector.SpawnRate != null && Collector.SpawnRate.getSelection() > 0) ||
-                   (Manipulator.SpawnRate != null && Manipulator.SpawnRate.getSelection() > 0);
+                   (Manipulator.SpawnRate != null && Manipulator.SpawnRate.getSelection() > 0) ||
+                   (Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0) ||
+                   // No Hunter entry on purpose: he has no spawn rate of his own, he is an event
+                   // inside a Werewolf round and therefore already covered by the Werewolf check.
+                   (Pelican.SpawnRate != null && Pelican.SpawnRate.getSelection() > 0);
+        }
+
+        // Receiver registration for the shared UC channel. Called once from
+        // UnknownsCollectionPlugin.Load() - this module has no TryPatch (all its patches are
+        // attribute-based and picked up by PatchAll).
+        public static void RegisterRpc() {
+            UCRpc.Register(UnknownsCollectionPlugin.VersionHandshakeRpcId, HandleModuleRpc);
+        }
+
+        private static void HandleModuleRpc(MessageReader reader) {
+            // No subtype byte here (there never was one) - the payload starts straight at the
+            // version bytes, exactly as it did when 191 was its own callId.
+            try { ReceiveRpc(reader); } catch { }
         }
 
         public static void ShareVersion() {
             if (AmongUsClient.Instance == null || PlayerControl.LocalPlayer == null) return;
             var v = UnknownsCollectionPlugin.Version;
 
-            MessageWriter writer = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, UnknownsCollectionPlugin.VersionHandshakeRpcId, SendOption.Reliable, -1);
+            MessageWriter writer = UCRpc.Begin(UnknownsCollectionPlugin.VersionHandshakeRpcId);
             writer.Write((byte)v.Major);
             writer.Write((byte)v.Minor);
             writer.Write((byte)v.Build);
@@ -130,7 +150,8 @@ namespace UnknownsCollection {
         //   TORMods.Handshake.{guid}.status   → Dictionary<int,string>: clientId → "code<0x1F>version"
         //                                       code ∈ ok | old | new | mod ; missing clients omitted
         // UsefulTORStuff OWNS and renders the combined per-player "Mod-Check" overview; this mod only
-        // PUBLISHES its snapshot so it shows up as a column there. Wire format (RPC 191) unchanged.
+        // PUBLISHES its snapshot so it shows up as a column there. Wire format behind module byte
+        // 191 unchanged (only the transport callId moved to UCRpc.CallId).
         private const string HandshakeRegistryKey = "TORMods.Handshake.Registry";
         private const string HandshakeKeyPrefix = "TORMods.Handshake.";
         private const char StatusSep = '';
@@ -234,17 +255,5 @@ namespace UnknownsCollection {
             }
         }
 
-        // Receive RPC 191 (Prefix, high priority -> before TOR's switch handler).
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandshakeHandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId == UnknownsCollectionPlugin.VersionHandshakeRpcId) {
-                    try { ReceiveRpc(reader); } catch { }
-                    return false;
-                }
-                return true;
-            }
-        }
     }
 }

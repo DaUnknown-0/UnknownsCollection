@@ -58,7 +58,7 @@ namespace UnknownsCollection {
         // Scout's own client already had this smoothing via currentAlpha, observers didn't.
         private static float observedAlpha = 1f;
 
-        // ---- Custom RPC (203) subtypes ----
+        // ---- Custom RPC subtypes: module byte 203 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 203;
         private const byte SubSetScout = 0;
         private const byte SubActivate = 1;
@@ -93,7 +93,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         private static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
@@ -108,8 +113,7 @@ namespace UnknownsCollection {
         }
 
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -156,6 +160,10 @@ namespace UnknownsCollection {
             abilityEndTime = 0;
             currentAlpha = 1f;
             observedAlpha = 1f;
+            // Also clear the synced TARGET alpha: it survives a game that ends mid-ability (ApplyDeactivate
+            // never fires) and the observer branch below writes it onto the next round's Scout every frame,
+            // rendering the NEW Scout transparent from second 0 - a full role reveal.
+            syncedScoutAlpha = 1f;
             wasAbilityActive = false;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Scout] The Scout is {scout.Data?.PlayerName}.");
         }
@@ -212,23 +220,20 @@ namespace UnknownsCollection {
 
         public static void MarkFromDraft(byte playerId) => ApplySetScout(playerId);
 
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetScout: ApplySetScout(reader.ReadByte()); break;
-                        case SubActivate: ApplyActivate(); break;
-                        case SubDeactivate: ApplyDeactivate(); break;
-                        case SubTransparency: ApplyTransparency(reader.ReadSingle()); break;
-                    }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Scout] HandleRpc failed: {e}");
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetScout: ApplySetScout(reader.ReadByte()); break;
+                    case SubActivate: ApplyActivate(); break;
+                    case SubDeactivate: ApplyDeactivate(); break;
+                    case SubTransparency: ApplyTransparency(reader.ReadSingle()); break;
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Scout] HandleRpc failed: {e}");
             }
         }
 
@@ -241,6 +246,7 @@ namespace UnknownsCollection {
                 abilityEndTime = 0;
                 currentAlpha = 1f;
                 observedAlpha = 1f;
+                syncedScoutAlpha = 1f; // synced target must not leak into the next round (see ApplySetScout)
                 wasAbilityActive = false;
                 originalSpeed = 0;
                 // scoutButton deliberately kept (resetVariables runs after HudManager.Start).
@@ -289,9 +295,7 @@ namespace UnknownsCollection {
                                 // Actually, since ability is visual+speed (client side), let the client trigger it
                                 // and broadcast to others for transparency sync
                                 ApplyActivate();
-                                var w = AmongUsClient.Instance.StartRpcImmediately(
-                                    PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
-                                w.Write(SubActivate);
+                                var w = BeginRpc(SubActivate); // shared UC channel (was an inline copy of BeginRpc)
                                 AmongUsClient.Instance.FinishRpcImmediately(w);
                             }
                         },

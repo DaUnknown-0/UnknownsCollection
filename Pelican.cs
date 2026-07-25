@@ -1,0 +1,996 @@
+// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+// Licensed under GPL-3.0-or-later. See LICENSE for details.
+// Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
+
+/*
+ * The Pelican (Neutral, solo) - Paket W, Stufe 3.
+ *
+ * A plain TOR Crewmate is silently promoted to "The Pelican" at game start (host-authoritative pick,
+ * broadcast on the shared UC channel, module byte 212). He is UC's first neutral KILLER and the first
+ * role in this mod with a win condition of its own that the crew cannot simply out-live:
+ *
+ *   SWALLOW  His kill button does not leave a body. The victim dies for real (TOR's whole kill chain
+ *            runs: shields, armor, Mini, Time Master, ...), but the corpse is hidden the moment it
+ *            spawns - it is NOT destroyed, because it still has to be able to come back.
+ *   BELLY    Everyone he carries is listed in a self-only HUD readout (pelican_belly). Nobody else
+ *            sees it; the rest of the ship only sees people who are simply GONE.
+ *   DIGEST   The first meeting is the point of no return: the hidden corpses are destroyed and the
+ *            swallowed are finally, unambiguously dead. (They already were - Among Us has no living
+ *            "inside the belly" state and no in-game voice, so the GGD original's living stomach
+ *            chat is adapted to "hidden-dead until digested or released"; see WEREWOLF_PLAN.md §10.)
+ *   RELEASE  If the Pelican dies first, every hidden corpse reappears ON HIS BODY. That is the built-in
+ *            counterplay: killing the Pelican hands the crew every piece of evidence at once.
+ *   HUNT     The moment exactly two players are alive and one of them is the Pelican, the hunt starts:
+ *            a public countdown (option 1547), and for EVERYONE no meetings, no reports, no vents and
+ *            no special abilities (the vanilla Impostor kill deliberately stays). Eats the last
+ *            survivor -> the Pelican wins alone. Countdown runs out -> the survivor wins with HIS OWN
+ *            team / win condition and the Pelican loses.
+ *
+ * WHY THE PATCHES LOOK LIKE THEY DO
+ * ---------------------------------
+ *  - THE END-GAME GUARD is the heart of this file. The Pelican is a neutral tag over a Crewmate, so
+ *    TOR's PlayerStatistics counts him as crew: the instant the last Impostor dies,
+ *    CheckAndEndGameForCrewmateWin (EndGamePatch.cs:562-577) would hand the crew the win while a
+ *    living killer is still on the ship. A GameManager.RpcEndGame PREFIX therefore suppresses exactly
+ *    the two "no killers left" crew reasons while the Pelican lives - and, once the board is down to
+ *    the two hunt participants, every team win, because otherwise an Impostor survivor would end the
+ *    round (CheckAndEndGameForImpostorWin fires at 1-vs-1) before the hunt could even start. Task
+ *    wins, sabotage wins and the neutral solo wins are never touched: those are legitimate losses.
+ *    Priority.First puts this prefix AHEAD of Bug's and Collector's own RpcEndGame prefixes, so it
+ *    always inspects the RAW reason instead of one they already rewrote.
+ *  - THE COUNTDOWN EXPIRY simply STOPS suppressing instead of broadcasting a hand-built win. TOR's
+ *    CheckEndCriteria runs every frame on the host anyway, so the very next tick ends the round with
+ *    whatever reason the survivor's own situation produces - crew, Impostor, Jackal team, Lovers,
+ *    Jester. That is literally "the survivor wins with his own win condition", with zero duplicated
+ *    win logic.
+ *  - BODIES are hidden with gameObject.SetActive(false), the Shade's proven mechanic (Shade.cs:153-167)
+ *    rather than Destroy: a destroyed DeadBody cannot be brought back on the Pelican's corpse.
+ *  - THE SWALLOW LIST needs no RPC. Every client executes PlayerControl.MurderPlayer for every kill
+ *    (TOR routes all of them through RPCProcedure.uncheckedMurderPlayer, RPC.cs:480), and "was the
+ *    killer the Pelican" is synced state - so each client maintains its own identical list. The same
+ *    is true for the release and for "the Pelican is the only one left": no message can be lost or
+ *    arrive twice, which is also why a body can never be released twice (the list is cleared in the
+ *    same call that reveals it).
+ *  - THE HUNT RESTRICTIONS reuse the shapes W1 established: a Vent.CanUse POSTFIX (TOR replaces that
+ *    method with a prefix returning false, so only a postfix has the last word), a
+ *    SabotageButton.Refresh POSTFIX (TOR's own Janitor block, UsablesPatch.cs:205-215), an
+ *    EmergencyMinigame.Update POSTFIX (TOR's Swapper/Jester block, UsablesPatch.cs:225-255) and a
+ *    PlayerControl.CmdReportDeadBody PREFIX - the single funnel BOTH the report button and the
+ *    emergency button go through, so blocking it there cannot be routed around. TOR patches that
+ *    method too; returning false only skips the ORIGINAL, never TOR's prefix.
+ *    Custom ability buttons are frozen by holding their Timer at 0.5 s every frame: CustomButton
+ *    gates BOTH the click and the hotkey on Timer < 0 (Objects/CustomButton.cs:88, :261), so one
+ *    write blocks mouse and keyboard at once, and the cooldown resumes by itself afterwards.
+ *  - MUSIC runs on the UCMusic channel (cue "pelican_hunt", priority 50), never on SoundManager
+ *    directly, so it can never layer over the werewolf form music or a reactor. The loop VARIANT is
+ *    rolled once by the host and shipped inside the role-assignment RPC (the Werewolf does the same
+ *    with its seven variants), so the whole lobby hears the same score.
+ *
+ * Options: 1544-1549. Win reason: 32 (see the constant below). See ID-Registry.md.
+ * RPC: module byte 212 on UCRpc.CallId 230.
+ * NOT in this stage (Paket W4): UCRoleDraft entry, UCGuesser entry, UCHelpMenu page,
+ * TeslaVersionHandshake.AnyUCRoleEnabled, the UCKillOverlay beak cutscene (its sprite is already
+ * registered as UCAssets.OverlayPelican).
+ */
+
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using HarmonyLib;
+using Hazel;
+using TMPro;
+using UnityEngine;
+using TheOtherRoles;
+using TheOtherRoles.Patches;
+using TheOtherRoles.Utilities;
+using static TheOtherRoles.TheOtherRoles;
+using Types = TheOtherRoles.CustomOption.CustomOptionType;
+
+namespace UnknownsCollection {
+    public static class Pelican {
+        // ---- Theme ----
+        public static readonly Color Color = new Color(0.16f, 0.78f, 0.74f); // pelican teal
+
+        // ---- Options (1544-1549) ----
+        public static CustomOption SpawnRate;          // 1544 (header, rates)
+        public static CustomOption SpawnMinPlayers;    // 1545
+        public static CustomOption SwallowCooldown;    // 1546
+        public static CustomOption HuntCountdown;      // 1547 (s, default 60)
+        public static CustomOption HasTasks;           // 1548
+        public static CustomOption HuntBlocksSabotage; // 1549
+
+        // ---- Runtime state (all of it derived from synced data, therefore equal on every client) ----
+        public static PlayerControl pelican;
+        public static bool active;
+        private static byte pelicanPlayerId = byte.MaxValue;
+        // Which of the six hunt loop variants this round uses - rolled by the host inside the
+        // assignment RPC, exactly like the Werewolf's form music.
+        private static int musicVariant;
+
+        // victimId -> the hidden DeadBody (kept, never destroyed, until digestion or release).
+        private static readonly Dictionary<byte, DeadBody> swallowedBodies = new();
+        // victimId in swallow order - drives the belly readout and survives a body that never spawned.
+        private static readonly List<byte> swallowed = new();
+        // Victims whose DeadBody was not found in the murder postfix yet (retried for a few frames).
+        private static readonly List<byte> pendingHide = new();
+        private static float pendingHideUntil;
+
+        // ---- Hunt phase ----
+        public static bool huntActive;      // the countdown is running (every client)
+        private static bool huntEnded;      // the hunt is over WITHOUT a Pelican win -> guard is off
+        private static float huntEndTime;   // local Time.time deadline (host-resynced every 5 s)
+        private static float huntStartTime; // used only to decide when the intro has finished
+        private static float nextHuntSync;  // host: next resync broadcast
+        private static float nextCall;      // next public pelican_call croak
+
+        // ---- Win ----
+        private static bool winOutro;       // the Pelican is alone; the outro is playing
+        private static float winEndAt;      // host: when the deferred RpcEndGame fires
+        private static float nextWinTry;    // host: retry throttle (Collector precedent)
+        private static bool sawMultipleAlive; // arms the sole-survivor check (see PollWin)
+        private static float nextGuardLog;
+
+        // Own GameOverReason. TOR's own customs end at 16, the Bug uses 18 plus the hijack block
+        // 20-26 and 31, the Collector uses 19 - so the first value that is guaranteed free above ALL
+        // of them is 32. TOR maps every reason >= 10 to ImpostorByKill for vanilla
+        // (EndGamePatch.cs:71) and keeps the real one in OnGameEndPatch.gameOverReason, which is what
+        // the winner list and the banner below read.
+        private const int PelicanWinReason = 32;
+        private const int TeamJackalWinReason = 11; // TOR's CustomGameOverReason.TeamJackalWin
+        private static byte winnerPelicanId = byte.MaxValue; // survives resetVariables (Bug/Collector rule)
+
+        // ---- Constants ----
+        private const int MusicVariants = 6;          // pelican_hunt_music + music2..music6
+        private const string MusicCue = "pelican_hunt";
+        private const int MusicPriority = 50;         // WEREWOLF_PLAN.md §11.2 (reactor 100 outranks us)
+        private const float MusicVolume = 0.6f;
+        private const float IntroFallbackSecs = 9.23f;
+        private const float OutroFallbackSecs = 6.0f;
+        private const float HuntSyncInterval = 5f;
+        private const float CallInterval = 8f;
+        private const float FrozenButtonTimer = 0.5f; // held cooldown of every blocked ability button
+
+        // ---- Custom RPC subtypes: module byte 212 in the shared UC channel (UCRpc.CallId = 230) ----
+        private const byte RpcId = UnknownsCollectionPlugin.PelicanRpcId;
+        private const byte SubSetPelican = 0; // playerId, musicVariant
+        private const byte SubStartHunt = 1;  // seconds(float)
+        private const byte SubHuntSync = 2;   // secondsRemaining(float)
+        private const byte SubEndHunt = 3;    // (no payload - the hunt only ever ends one way here)
+
+        // ---- Role identity ----
+        private static RoleInfo pelicanInfo;
+        public static RoleInfo PelicanInfo() => pelicanInfo ??= new RoleInfo(
+            "Pelican", Color, "Swallow them all and be the last one standing",
+            "Swallow them all and be the last one standing", RoleId.Crewmate)
+        { isNeutral = true };
+
+        private static TheOtherRoles.Objects.CustomButton swallowButton;
+        private static PlayerControl currentTarget;
+
+        // ====================================================================
+        // Options
+        // ====================================================================
+        public static void CreateOptions() {
+            try {
+                SpawnRate = CustomOption.Create(1544, Types.Neutral, "Pelican",
+                    CustomOptionHolder.rates, null, true);
+                SpawnMinPlayers = CustomOption.Create(1545, Types.Neutral, "Pelican Minimum Players To Spawn",
+                    6f, 4f, 15f, 1f, SpawnRate);
+                SwallowCooldown = CustomOption.Create(1546, Types.Neutral, "Pelican Swallow Cooldown",
+                    27.5f, 10f, 60f, 2.5f, SpawnRate);
+                HuntCountdown = CustomOption.Create(1547, Types.Neutral, "Pelican Hunt Countdown (s)",
+                    60f, 15f, 180f, 5f, SpawnRate);
+                HasTasks = CustomOption.Create(1548, Types.Neutral, "Pelican Has Tasks",
+                    false, SpawnRate);
+                // Deliberately verbose and role-specific: UCLocalization matches option NAMES (and
+                // selection texts) by their English string across every uc.* key, so a generic label
+                // would silently re-translate unrelated options elsewhere in the mod (the same reason
+                // options 1507 and 1557 spell their choices out).
+                HuntBlocksSabotage = CustomOption.Create(1549, Types.Neutral, "Hunt Phase Also Blocks Sabotage",
+                    true, SpawnRate);
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Pelican] Options created.");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] CreateOptions failed: {e}");
+            }
+        }
+
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no reflection work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
+
+        // ====================================================================
+        // Helpers
+        // ====================================================================
+        private static bool IsAlive(PlayerControl p) =>
+            p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
+
+        private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
+
+        private static int LobbyPlayerCount() =>
+            PlayerControl.AllPlayerControls.ToArray().Count(p => p != null && p.Data != null && !p.Data.Disconnected);
+
+        private static int AliveCount() {
+            int n = 0;
+            foreach (var p in PlayerControl.AllPlayerControls) if (IsAlive(p)) n++;
+            return n;
+        }
+
+        public static bool IsLocalPelican() =>
+            active && pelican != null && PlayerControl.LocalPlayer != null
+            && pelican.PlayerId == PlayerControl.LocalPlayer.PlayerId;
+
+        private static bool AmHost() => AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost;
+
+        private static float HuntSeconds() => HuntCountdown != null ? HuntCountdown.getFloat() : 60f;
+        private static float CooldownValue() => SwallowCooldown != null ? SwallowCooldown.getFloat() : 27.5f;
+
+        // The hunt restrictions apply to EVERY player, not just the two participants: a ghost cannot
+        // vent anyway, but a third-party ability (a Poltergeist haunt, an Engineer fix) would still
+        // interfere with a duel that is supposed to be exactly two people and a clock.
+        public static bool HuntRestrictionsActive() => active && huntActive && !huntEnded;
+
+        private static string LoopClipName() =>
+            musicVariant <= 0 ? "pelican_hunt_music" : $"pelican_hunt_music{musicVariant + 1}";
+
+        private static float ClipLength(string name, float fallback) {
+            try {
+                var c = UCAssets.GetClipByName(name);
+                return c != null && c.length > 0.1f ? c.length : fallback;
+            } catch { return fallback; }
+        }
+
+        // ====================================================================
+        // RPC
+        // ====================================================================
+        private static MessageWriter BeginRpc(byte subtype) {
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
+            w.Write(subtype);
+            return w;
+        }
+
+        public static void SendSetPelican(byte id, byte variant) {
+            try {
+                var w = BeginRpc(SubSetPelican);
+                w.Write(id);
+                w.Write(variant);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplySetPelican(id, variant);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] SendSetPelican failed: {e}"); }
+        }
+
+        private static void SendStartHunt(float secs) {
+            try {
+                var w = BeginRpc(SubStartHunt);
+                w.Write(secs);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyStartHunt(secs);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] SendStartHunt failed: {e}"); }
+        }
+
+        private static void SendHuntSync(float remaining) {
+            try {
+                var w = BeginRpc(SubHuntSync);
+                w.Write(remaining);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyHuntSync(remaining);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] SendHuntSync failed: {e}"); }
+        }
+
+        private static void SendEndHunt() {
+            try {
+                var w = BeginRpc(SubEndHunt);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyEndHunt();
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] SendEndHunt failed: {e}"); }
+        }
+
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetPelican: {
+                        byte id = reader.ReadByte();
+                        byte variant = reader.ReadByte();
+                        ApplySetPelican(id, variant);
+                        break;
+                    }
+                    case SubStartHunt: ApplyStartHunt(reader.ReadSingle()); break;
+                    case SubHuntSync: ApplyHuntSync(reader.ReadSingle()); break;
+                    case SubEndHunt: ApplyEndHunt(); break;
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] HandleRpc failed: {e}");
+            }
+        }
+
+        // ====================================================================
+        // Appliers (every client)
+        // ====================================================================
+        private static void ApplySetPelican(byte id, byte variant) {
+            pelican = Helpers.playerById(id);
+            active = pelican != null;
+            pelicanPlayerId = active ? id : byte.MaxValue;
+            if (active) UCPromotion.Claim(id);
+            musicVariant = Mathf.Clamp(variant, 0, MusicVariants - 1);
+            ClearRoundState();
+            if (active)
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Pelican] The Pelican is {pelican.Data?.PlayerName} (hunt music variant {musicVariant + 1}).");
+        }
+
+        // The draft has no music byte to carry, so the variant is derived from the drafted player -
+        // still identical on every client, which is all the shared-identity rule needs. (The draft
+        // ENTRY itself is Paket W4; this hook exists so W4 only has to register the sentinel.)
+        public static void MarkFromDraft(byte playerId) =>
+            ApplySetPelican(playerId, (byte)(playerId % MusicVariants));
+
+        private static void ApplyStartHunt(float secs) {
+            if (!active || huntActive || huntEnded) return;
+            huntActive = true;
+            huntStartTime = Time.time;
+            huntEndTime = Time.time + secs;
+            nextCall = Time.time + 4f;
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] The hunt begins ({secs:F0}s).");
+            try { Helpers.showFlash(Color, 2.0f, UCLocalization.Tr("uc.ui.pelican.hunt_flash")); } catch { }
+        }
+
+        // Host resync of the display. The host alone decides WHEN the hunt is over; this only keeps
+        // the number on everyone's screen from drifting apart over a long countdown.
+        private static void ApplyHuntSync(float remaining) {
+            if (!active || !huntActive) return;
+            huntEndTime = Time.time + Mathf.Max(0f, remaining);
+        }
+
+        // The hunt ended WITHOUT the Pelican eating the last survivor (countdown expired, or the
+        // Pelican died/left). huntEnded switches the end-game guard off for good, so TOR's own
+        // CheckEndCriteria ends the round on its next tick with the survivor's own win reason.
+        private static void ApplyEndHunt() {
+            if (!huntActive && huntEnded) return;
+            huntActive = false;
+            huntEnded = true;
+            try { UCMusic.Release(MusicCue); } catch { }
+            PelicanHud.HideHunt();
+            UnknownsCollectionPlugin.Logger?.LogInfo("[Pelican] The hunt is over - the Pelican failed.");
+        }
+
+        // ====================================================================
+        // Round reset
+        // ====================================================================
+        private static void ClearRoundState() {
+            swallowedBodies.Clear();
+            swallowed.Clear();
+            pendingHide.Clear();
+            pendingHideUntil = 0f;
+            huntActive = false;
+            huntEnded = false;
+            huntEndTime = 0f;
+            huntStartTime = 0f;
+            nextHuntSync = 0f;
+            nextCall = 0f;
+            winOutro = false;
+            winEndAt = 0f;
+            nextWinTry = 0f;
+            sawMultipleAlive = false;
+            nextGuardLog = 0f;
+            currentTarget = null;
+        }
+
+        private static void ClearState() {
+            try { UCMusic.Release(MusicCue); } catch { }
+            try { PelicanHud.HideAll(); } catch { }
+            pelican = null;
+            active = false;
+            pelicanPlayerId = byte.MaxValue;
+            musicVariant = 0;
+            ClearRoundState();
+            // swallowButton is deliberately NOT nulled: resetVariables runs at ROUND START, AFTER
+            // HudManager.Start built the button (the documented UC pitfall).
+            // winnerPelicanId deliberately survives - it is read after the reset, at game end.
+        }
+
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
+        static class ResetPatch {
+            public static void Postfix() { ClearState(); }
+        }
+
+        // Same belt-and-suspenders rule the rest of the mod adopted after the "resetVariables lobby
+        // leak": the PlayerId lists above must never travel into a FOREIGN lobby.
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() { ClearState(); }
+        }
+
+        // ====================================================================
+        // Game start: host-authoritative pick
+        // ====================================================================
+        [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
+        [HarmonyPriority(Priority.Low)]
+        static class IntroEndPatch {
+            public static void Postfix() {
+                try {
+                    if (!AmHost()) return;
+                    if (UCRoleDraft.DraftWillRun()) return;
+                    if (SpawnRate == null || SpawnRate.getSelection() <= 0) return;
+                    if (!TeslaVersionHandshake.EveryoneHasMod()) return;
+                    if (LobbyPlayerCount() < (SpawnMinPlayers?.getFloat() ?? 6f)) return;
+
+                    int chance = SpawnRate.getSelection() * 10;
+                    if (rnd.Next(1, 101) > chance) return;
+
+                    var candidates = PlayerControl.AllPlayerControls.ToArray().Where(UCPromotion.IsPlainCrewmate).ToList();
+                    if (candidates.Count == 0) return;
+                    // The loop variant is rolled ONCE per round, here, and travels with the role
+                    // assignment - so the whole lobby hears the same hunt score.
+                    SendSetPelican(candidates[rnd.Next(candidates.Count)].PlayerId, (byte)rnd.Next(MusicVariants));
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] IntroEnd pick failed: {e}");
+                }
+            }
+        }
+
+        // ====================================================================
+        // Swallow button
+        // ====================================================================
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
+        [HarmonyPriority(Priority.Low)]
+        static class HudStartPatch {
+            public static void Postfix(HudManager __instance) {
+                try {
+                    var sprite = UCAssets.PelicanSwallowIcon
+                        ?? (__instance.KillButton != null && __instance.KillButton.graphic != null
+                            ? __instance.KillButton.graphic.sprite : null);
+                    swallowButton = new TheOtherRoles.Objects.CustomButton(
+                        OnSwallowClick,
+                        () => active && IsLocalPelican()
+                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
+                        () => currentTarget != null && PlayerControl.LocalPlayer.CanMove,
+                        () => { if (swallowButton != null) swallowButton.Timer = swallowButton.MaxTimer; },
+                        sprite,
+                        // The slot every non-Impostor killer in TOR uses (Jackal/Sidekick,
+                        // Buttons.cs:1057): the Pelican is always promoted onto a PLAIN Crewmate, so
+                        // no TOR ability button can ever share the row with it.
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowRight,
+                        __instance, KeyCode.Q, false, UCLocalization.Tr("uc.ui.pelican.button_swallow"));
+                    swallowButton.MaxTimer = CooldownValue();
+                    swallowButton.Timer = CooldownValue();
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] Button creation failed: {e}");
+                }
+            }
+        }
+
+        // Exactly the shape TOR's own Jackal button uses (Buttons.cs:1046-1060), so every TOR
+        // shield / armor / rewind interaction behaves identically for the Pelican. The body hiding
+        // is NOT done here: it hangs off PlayerControl.MurderPlayer so it also covers a swallow
+        // that some other code path triggers.
+        private static void OnSwallowClick() {
+            try {
+                if (!active || !IsLocalPelican() || currentTarget == null) return;
+                if (Helpers.checkMurderAttemptAndKill(pelican, currentTarget) == MurderAttemptResult.SuppressKill) return;
+                if (swallowButton != null) swallowButton.Timer = swallowButton.MaxTimer;
+                currentTarget = null;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] swallow click failed: {e}");
+            }
+        }
+
+        // ====================================================================
+        // Per-frame driver
+        // ====================================================================
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        static class HudUpdatePatch {
+            public static void Postfix() {
+                try {
+                    if (!active || pelican == null) { PelicanHud.HideAll(); return; }
+
+                    RetryPendingHides();
+                    TickHunt();
+                    PollSoleSurvivor();
+                    TickMusic();
+                    TickHud();
+                    if (AmHost()) { HostTickHunt(); HostTickWin(); }
+                    if (IsLocalPelican()) TickOwner();
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] HudUpdate failed: {e}");
+                }
+            }
+        }
+
+        // A DeadBody is normally already instantiated when our MurderPlayer postfix runs (that is what
+        // the Shade relies on), but the object is created by the game, not by us - so a victim that
+        // was not found immediately is retried for half a second instead of staying visible forever.
+        private static void RetryPendingHides() {
+            if (pendingHide.Count == 0) return;
+            if (Time.time > pendingHideUntil) { pendingHide.Clear(); return; }
+            for (int i = pendingHide.Count - 1; i >= 0; i--)
+                if (HideBodyOf(pendingHide[i])) pendingHide.RemoveAt(i);
+        }
+
+        private static void TickHunt() {
+            // Safety net on EVERY client: a Pelican who died or left ends the hunt locally even if the
+            // host's SubEndHunt never arrives (the host does the same thing authoritatively below).
+            if (huntActive && !IsAlive(pelican)) {
+                huntActive = false;
+                huntEnded = true;
+                try { UCMusic.Release(MusicCue); } catch { }
+                PelicanHud.HideHunt();
+            }
+            // Public croak while the hunt is running: the survivor gets a directional, distance-graded
+            // tell of where the Pelican is. This is the counterplay to the hunt's total lockdown.
+            if (huntActive && !InMeeting() && Time.time >= nextCall) {
+                nextCall = Time.time + CallInterval;
+                try { UCAssets.PlayPelicanCallAt(pelican.GetTruePosition()); } catch { }
+            }
+        }
+
+        // UCMusic wants a Request EVERY frame while the cue should be audible, plus a Release at the
+        // end (done in ApplyEndHunt / ClearState). The clip changes WITHIN the cue - intro once, then
+        // the loop variant, then the outro - which is exactly the intra-cue switch UCMusic.Request
+        // supports (it hard-cuts and restarts the position when the clip name changes).
+        private static void TickMusic() {
+            if (InMeeting()) return;
+            if (winOutro) {
+                UCMusic.Request(MusicCue, "pelican_hunt_end", MusicPriority, MusicVolume,
+                                ClipLength("pelican_hunt_end", OutroFallbackSecs), false);
+                return;
+            }
+            if (!huntActive) return;
+            float remain = Mathf.Max(0f, huntEndTime - Time.time);
+            bool intro = Time.time < huntStartTime + ClipLength("pelican_hunt_intro", IntroFallbackSecs);
+            UCMusic.Request(MusicCue, intro ? "pelican_hunt_intro" : LoopClipName(),
+                            MusicPriority, MusicVolume, remain, !intro);
+        }
+
+        private static void TickHud() {
+            if (huntActive && !InMeeting()) PelicanHud.ShowHunt(huntEndTime - Time.time);
+            else PelicanHud.HideHunt();
+
+            // Self-only readout, re-gated every frame (never "created once for the Pelican and then
+            // left alone"): a stale belly overlay would tell a spectating client who is dead.
+            if (IsLocalPelican() && !InMeeting() && IsAlive(pelican)) {
+                var names = new List<string>(swallowed.Count);
+                foreach (var id in swallowed) {
+                    var p = Helpers.playerById(id);
+                    names.Add(p?.Data?.PlayerName ?? id.ToString());
+                }
+                PelicanHud.ShowBelly(names);
+            } else {
+                PelicanHud.HideBelly();
+            }
+        }
+
+        private static void HostTickHunt() {
+            if (!active || huntEnded) return;
+
+            if (!huntActive) {
+                // Trigger: exactly two players alive and one of them is the Pelican (user decision).
+                if (IsAlive(pelican) && AliveCount() == 2 && !InMeeting()
+                    && AmongUsClient.Instance.IsGameStarted) {
+                    SendStartHunt(HuntSeconds());
+                }
+                return;
+            }
+
+            if (!IsAlive(pelican)) { SendEndHunt(); return; }
+            if (Time.time >= huntEndTime) {
+                // The clock ran out. No hand-built "the survivor wins" broadcast: dropping the
+                // end-game guard is enough, TOR's CheckEndCriteria ends the round on its next tick
+                // with the survivor's OWN win reason (crew, Impostor, Jackal team, Lovers, ...).
+                SendEndHunt();
+                return;
+            }
+            if (Time.time >= nextHuntSync) {
+                nextHuntSync = Time.time + HuntSyncInterval;
+                SendHuntSync(huntEndTime - Time.time);
+            }
+        }
+
+        // Sole-survivor detection. Deliberately NOT host-only and deliberately NOT an RPC: "how many
+        // players are alive" is synced state, so every client reaches the same verdict in the same
+        // frame and can start the outro locally - a host-only flag would have left every remote client
+        // silent through the whole finale. sawMultipleAlive arms it, so a half-initialised round (or a
+        // bypass/solo test where the player list is still filling) can never declare an instant win.
+        private static void PollSoleSurvivor() {
+            if (!active || winOutro) return;
+            if (AliveCount() >= 2) { sawMultipleAlive = true; return; }
+            if (!sawMultipleAlive || !IsAlive(pelican)) return;
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.IsGameStarted) return;
+            winOutro = true;
+            huntActive = false;                       // the countdown is moot, the outro takes over
+            PelicanHud.HideHunt();
+            winEndAt = Time.time + ClipLength("pelican_hunt_end", OutroFallbackSecs);
+            UnknownsCollectionPlugin.Logger?.LogInfo("[Pelican] Last survivor swallowed - playing the outro.");
+        }
+
+        private static void HostTickWin() {
+            if (!active) return;
+            // Deferred end: the graceful-end outro was authored for exactly this moment (it opens on a
+            // downbeat hit that masks the loop cut and closes on the final croak), so the round is held
+            // open until it has played. RETRIED every 2 s like the Collector's instant win, so a
+            // swallowed RpcEndGame cannot lose the win.
+            if (winOutro && Time.time >= winEndAt && Time.time >= nextWinTry) {
+                nextWinTry = Time.time + 2f;
+                try {
+                    GameManager.Instance.RpcEndGame((GameOverReason)PelicanWinReason, false);
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] RpcEndGame failed: {e}");
+                }
+            }
+        }
+
+        private static void TickOwner() {
+            if (swallowButton != null) swallowButton.MaxTimer = CooldownValue();
+            if (!IsAlive(pelican) || InMeeting()) { currentTarget = null; return; }
+            currentTarget = PlayerControlFixedUpdatePatch.setTarget();
+            if (currentTarget != null)
+                PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, Color);
+        }
+
+        // ====================================================================
+        // Swallow / release / digest
+        // ====================================================================
+
+        // Finds the victim's DeadBody and hides it. SetActive(false), NOT Destroy - the body has to be
+        // able to come back on the Pelican's corpse (Shade.cs:159-166 is the same mechanic).
+        private static bool HideBodyOf(byte victimId) {
+            try {
+                foreach (var db in UnityEngine.Object.FindObjectsOfType<DeadBody>()) {
+                    if (db == null || db.ParentId != victimId) continue;
+                    db.gameObject.SetActive(false);
+                    swallowedBodies[victimId] = db;
+                    return true;
+                }
+            } catch { }
+            return false;
+        }
+
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
+        [HarmonyPriority(Priority.Low)] // after TOR's own murder bookkeeping
+        static class MurderPatch {
+            public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
+                try {
+                    if (!active || pelican == null || target == null || __instance == null) return;
+
+                    // The Pelican falls -> everything he carries reappears on his body.
+                    if (target.PlayerId == pelican.PlayerId) { ReleaseAll(target.GetTruePosition()); return; }
+
+                    if (__instance.PlayerId != pelican.PlayerId) return;
+
+                    // Runs on every client from identical inputs, so the swallow list needs no RPC.
+                    if (!swallowed.Contains(target.PlayerId)) swallowed.Add(target.PlayerId);
+                    if (!HideBodyOf(target.PlayerId)) {
+                        pendingHide.Add(target.PlayerId);
+                        pendingHideUntil = Time.time + 0.5f;
+                    }
+
+                    // The gulp is heard ONLY by the Pelican and by his victim. A world-anchored cue for
+                    // everyone nearby would hand the crew exactly the evidence this role is built to
+                    // deny them (contrast: the Werewolf's kill sound, which is meant to be a tell).
+                    bool mine = IsLocalPelican()
+                                || (PlayerControl.LocalPlayer != null
+                                    && PlayerControl.LocalPlayer.PlayerId == target.PlayerId);
+                    if (mine) UCAssets.PlayPelicanSwallowAt(target.GetTruePosition());
+
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[Pelican] Swallowed {target.Data?.PlayerName} ({swallowed.Count} in the belly).");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] MurderPatch failed: {e}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.Exiled))]
+        static class ExiledPatch {
+            public static void Postfix(PlayerControl __instance) {
+                try {
+                    if (!active || pelican == null || __instance == null) return;
+                    if (__instance.PlayerId != pelican.PlayerId) return;
+                    // In practice the belly is always empty here (MeetingHud.Start digests before any
+                    // vote can be cast), but an exile is still a death of the Pelican and must not be
+                    // the one path where bodies silently stay hidden.
+                    ReleaseAll(__instance.GetTruePosition());
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] ExiledPatch failed: {e}");
+                }
+            }
+        }
+
+        // Bodies reappear around the given position (a small ring so several corpses do not stack into
+        // one unreadable pile). Cannot run twice: the lists are cleared in the same call, and every
+        // client keeps its own copy, so there is no second, remote trigger either.
+        private static void ReleaseAll(Vector2 at) {
+            if (swallowed.Count == 0 && swallowedBodies.Count == 0) return;
+            int i = 0;
+            int n = Mathf.Max(1, swallowedBodies.Count);
+            foreach (var kvp in swallowedBodies) {
+                var db = kvp.Value;
+                if (db == null) { i++; continue; }
+                try {
+                    float a = (Mathf.PI * 2f) * i / n;
+                    float r = n == 1 ? 0.0f : 0.45f;
+                    var go = db.gameObject;
+                    go.transform.position = new Vector3(at.x + Mathf.Cos(a) * r, at.y + Mathf.Sin(a) * r,
+                                                        go.transform.position.z);
+                    go.SetActive(true);
+                } catch { }
+                i++;
+            }
+            int released = swallowedBodies.Count;
+            swallowedBodies.Clear();
+            swallowed.Clear();
+            pendingHide.Clear();
+            PelicanHud.HideBelly();
+            if (released > 0) {
+                try { UCAssets.PlayPelicanReleaseAt(at); } catch { }
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] Released {released} body/bodies on the Pelican's corpse.");
+            }
+        }
+
+        // Meeting = digestion. The hidden bodies are destroyed for good (the Shade does the same with
+        // its own hidden bodies), so nothing can be reported after the meeting and a later death of
+        // the Pelican releases nothing.
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
+        static class MeetingStartPatch {
+            public static void Postfix() {
+                try {
+                    if (!active) return;
+                    if (swallowed.Count > 0 && IsLocalPelican()) {
+                        // Local-only cue: a public digestion sound would announce "somebody was
+                        // swallowed" to the whole meeting.
+                        try { UCAssets.PlayPelicanDigestAt(PlayerControl.LocalPlayer.GetTruePosition()); } catch { }
+                    }
+                    foreach (var kvp in swallowedBodies)
+                        if (kvp.Value != null) UnityEngine.Object.Destroy(kvp.Value.gameObject);
+                    if (swallowed.Count > 0)
+                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] Digested {swallowed.Count} victim(s).");
+                    swallowedBodies.Clear();
+                    swallowed.Clear();
+                    pendingHide.Clear();
+                    PelicanHud.HideAll();
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] MeetingStart failed: {e}");
+                }
+            }
+        }
+
+        // ====================================================================
+        // Hunt restrictions (for EVERYONE)
+        // ====================================================================
+
+        // Postfix, not a competing prefix: TOR replaces Vent.CanUse wholesale with a prefix that
+        // returns false, so only a postfix gets the final word on canUse/couldUse. TOR's Vent.Use
+        // prefix asks CanUse first, so the block also reaches the actual vent attempt.
+        [HarmonyPatch(typeof(Vent), nameof(Vent.CanUse))]
+        static class VentBlockPatch {
+            public static void Postfix(ref float __result,
+                                       [HarmonyArgument(1)] ref bool canUse,
+                                       [HarmonyArgument(2)] ref bool couldUse) {
+                try {
+                    if (!HuntRestrictionsActive()) return;
+                    canUse = couldUse = false;
+                    __result = float.MaxValue;
+                } catch { }
+            }
+        }
+
+        // No meetings during the hunt. CmdReportDeadBody is the one funnel BOTH the report button and
+        // the emergency button pass through, so this single prefix covers them; returning false only
+        // skips the ORIGINAL, never TOR's own prefix on the same method (PlayerControlPatch.cs:1129).
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.CmdReportDeadBody))]
+        static class ReportBlockPatch {
+            public static bool Prefix() {
+                try { if (HuntRestrictionsActive()) return false; } catch { }
+                return true;
+            }
+        }
+
+        // Cosmetic companion to the block above: the report button should not even feel clickable.
+        [HarmonyPatch(typeof(ReportButton), nameof(ReportButton.DoClick))]
+        static class ReportButtonPatch {
+            public static bool Prefix() {
+                try { if (HuntRestrictionsActive()) return false; } catch { }
+                return true;
+            }
+        }
+
+        // Emergency button: same shape TOR uses for the Swapper/Jester/Lawyer (UsablesPatch.cs:225-255).
+        // Ours runs after TOR's postfix (TOR's plugin loads first), so it has the last word.
+        [HarmonyPatch(typeof(EmergencyMinigame), nameof(EmergencyMinigame.Update))]
+        static class EmergencyBlockPatch {
+            public static void Postfix(EmergencyMinigame __instance) {
+                try {
+                    if (!HuntRestrictionsActive() || __instance == null) return;
+                    __instance.StatusText.text = UCLocalization.Tr("uc.ui.pelican.hunt_no_meeting");
+                    __instance.NumberText.text = string.Empty;
+                    __instance.ClosedLid.gameObject.SetActive(true);
+                    __instance.OpenLid.gameObject.SetActive(false);
+                    __instance.ButtonActive = false;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Pelican] emergency block failed: {e.Message}");
+                }
+            }
+        }
+
+        // Sabotage (option 1549). TOR's own Janitor block uses exactly this Refresh postfix
+        // (UsablesPatch.cs:205-215), so the button is re-disabled right after the game re-enables it.
+        [HarmonyPatch(typeof(SabotageButton), nameof(SabotageButton.Refresh))]
+        static class SabotageBlockPatch {
+            public static void Postfix() {
+                try {
+                    if (!HuntRestrictionsActive()) return;
+                    if (HuntBlocksSabotage != null && !HuntBlocksSabotage.getBool()) return;
+                    FastDestroyableSingleton<HudManager>.Instance.SabotageButton.SetDisabled();
+                } catch { }
+            }
+        }
+
+        // Every OTHER custom ability button is frozen by holding its cooldown just above zero.
+        // CustomButton gates the click AND the hotkey on Timer < 0 (Objects/CustomButton.cs:88, :261),
+        // so one write per frame blocks mouse and keyboard together, the button visibly greys out, and
+        // the real cooldown simply resumes when the hunt ends. The vanilla Impostor kill button is not
+        // a CustomButton and is deliberately left alone - it is the one ability the hunt keeps.
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        [HarmonyPriority(Priority.Last)] // after TOR's own CustomButton.HudUpdate ran its timers down
+        static class AbilityFreezePatch {
+            public static void Postfix() {
+                try {
+                    if (!HuntRestrictionsActive()) return;
+                    var list = TheOtherRoles.Objects.CustomButton.buttons;
+                    if (list == null) return;
+                    for (int i = 0; i < list.Count; i++) {
+                        var b = list[i];
+                        if (b == null || ReferenceEquals(b, swallowButton)) continue;
+                        if (b.Timer < FrozenButtonTimer) b.Timer = FrozenButtonTimer;
+                    }
+                } catch { }
+            }
+        }
+
+        // ====================================================================
+        // End game: the guard, the win, the screen
+        // ====================================================================
+
+        // See the file header. Priority.First so this prefix inspects the RAW reason, before Bug's or
+        // Collector's own RpcEndGame prefixes can rewrite it.
+        [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
+        [HarmonyPriority(Priority.First)]
+        static class EndGameGuardPatch {
+            public static bool Prefix(ref GameOverReason endReason) {
+                try {
+                    if (!AmHost()) return true;
+                    if (!active || !IsAlive(pelican) || huntEnded) return true;
+                    int r = (int)endReason;
+                    if (r == PelicanWinReason) return true;   // our own win always goes through
+
+                    // Down to the two hunt participants: NOTHING but the hunt may decide this round.
+                    // (Checked on the board, not on huntActive, so the Impostor win that fires the very
+                    // frame the third player dies cannot beat the hunt-start broadcast to the punch.)
+                    bool huntBoard = AliveCount() <= 2;
+                    bool block = huntBoard ? IsTeamWin(endReason) : IsCrewNoKillerWin(endReason);
+                    if (!block) return true;
+
+                    if (Time.time >= nextGuardLog) {
+                        nextGuardLog = Time.time + 5f;
+                        UnknownsCollectionPlugin.Logger?.LogInfo(
+                            $"[Pelican] Suppressed end reason {r} - a living Pelican is still on the ship.");
+                    }
+                    return false;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] end-game guard failed: {e}");
+                    return true;
+                }
+            }
+
+            // "The crew wins because no killer is left" - which is exactly the claim a living Pelican
+            // disproves. A TASK win (HumansByTask) is deliberately NOT in here: the crew earned that
+            // one and the Pelican simply loses.
+            private static bool IsCrewNoKillerWin(GameOverReason r) =>
+                r == GameOverReason.HumansByVote || r == GameOverReason.HumansDisconnect;
+
+            private static bool IsTeamWin(GameOverReason r) {
+                switch (r) {
+                    case GameOverReason.HumansByVote:
+                    case GameOverReason.HumansByTask:
+                    case GameOverReason.HumansDisconnect:
+                    case GameOverReason.ImpostorByVote:
+                    case GameOverReason.ImpostorByKill:
+                    case GameOverReason.ImpostorBySabotage:
+                    case GameOverReason.ImpostorDisconnect:
+                        return true;
+                    default:
+                        return (int)r == TeamJackalWinReason;
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
+        [HarmonyPriority(Priority.Last)]
+        static class OnGameEndPatch {
+            // Snapshot BEFORE TOR's own reset can wipe the role statics (Bug/Collector precedent).
+            public static void Prefix() {
+                if (active && pelicanPlayerId != byte.MaxValue) winnerPelicanId = pelicanPlayerId;
+            }
+
+            public static void Postfix() {
+                try {
+                    if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != PelicanWinReason) return;
+                    if (winnerPelicanId == byte.MaxValue) return;
+                    PlayerControl winner = Helpers.playerById(winnerPelicanId);
+                    if (winner == null || winner.Data == null) return;
+
+                    EndGameResult.CachedWinners.Clear();
+                    EndGameResult.CachedWinners.Add(new CachedPlayerData(winner.Data));
+                    UnknownsCollectionPlugin.Logger?.LogInfo("[Pelican] The Pelican wins alone!");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] OnGameEnd failed: {e}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
+        [HarmonyPriority(Priority.Last)]
+        static class EndGameFxPatch {
+            public static void Postfix(EndGameManager __instance) {
+                try {
+                    if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != PelicanWinReason) return;
+                    if (__instance.WinText != null) {
+                        GameObject bonus = UnityEngine.Object.Instantiate(__instance.WinText.gameObject);
+                        bonus.transform.position = new Vector3(__instance.WinText.transform.position.x,
+                            __instance.WinText.transform.position.y - 0.5f,
+                            __instance.WinText.transform.position.z);
+                        bonus.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
+                        var text = bonus.GetComponent<TMP_Text>();
+                        text.text = UCLocalization.Tr("uc.ui.pelican.win_banner");
+                        text.color = Color;
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] end-screen FX failed: {e}");
+                }
+            }
+        }
+
+        // ====================================================================
+        // Task accounting: a neutral's tasks never count toward the crew total
+        // ====================================================================
+        [HarmonyPatch(typeof(GameData), nameof(GameData.RecomputeTaskCounts))]
+        static class TaskPatch {
+            public static void Postfix(GameData __instance) {
+                try {
+                    if (!active || pelican == null || pelican.Data == null) return;
+                    if (HasTasks?.getBool() ?? false) return;
+                    var (done, total) = TasksHandler.taskInfo(pelican.Data);
+                    __instance.TotalTasks -= total;
+                    __instance.CompletedTasks -= done;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] TaskPatch failed: {e}");
+                }
+            }
+        }
+
+        // ====================================================================
+        // Role identity
+        // ====================================================================
+        [HarmonyPatch(typeof(RoleInfo), nameof(RoleInfo.getRoleInfoForPlayer))]
+        static class RoleInfoPatch {
+            public static void Postfix(PlayerControl p, ref List<RoleInfo> __result) {
+                try {
+                    if (!active || pelican == null || p == null || p != pelican || __result == null) return;
+                    bool replaced = false;
+                    for (int i = 0; i < __result.Count; i++) {
+                        if (__result[i] != null && __result[i].roleId == RoleId.Crewmate) {
+                            __result[i] = PelicanInfo();
+                            replaced = true;
+                        }
+                    }
+                    if (!replaced) __result.Insert(0, PelicanInfo());
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] RoleInfo postfix failed: {e}");
+                }
+            }
+        }
+    }
+}

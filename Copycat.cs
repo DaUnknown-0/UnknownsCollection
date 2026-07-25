@@ -109,6 +109,9 @@ namespace UnknownsCollection {
         // Win snapshot: captured at game-end BEFORE TOR's resetVariables wipes copycat/usedAbilities.
         // Deliberately NOT reset in resetVariables (TOR's end-of-game reset would clear it first).
         private static byte winnerCopycatId = byte.MaxValue;
+        // Read by Bug.BuildOriginalWinners (Bug's Priority.Last game-end prefix runs after ours): the
+        // faked "what the end screen would have shown" winner list must include an earned Copycat co-win.
+        internal static byte WinnerCopycatId => winnerCopycatId;
 
         // ---- TOR CustomRPC byte values (enum is internal) - verified against TheOtherRoles RPC.cs ----
         private const byte TorMorphlingRpc = 130;  // CustomRPC.MorphlingMorph
@@ -117,7 +120,7 @@ namespace UnknownsCollection {
         private const byte TorMurderRpc = 108;     // CustomRPC.UncheckedMurderPlayer (any kill; also our Shoot)
         private const byte TorVentRpc = 107;       // CustomRPC.UseUncheckedVent (anyone venting)
 
-        // ---- Custom RPC (206) subtypes ----
+        // ---- Custom RPC subtypes: module byte 206 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 206; // == UnknownsCollectionPlugin.CopycatRpcId
         private const byte SubSetCopycat = 0;
         private const byte SubUseAbility = 1; // abilityId, targetId (byte.MaxValue when unused)
@@ -159,7 +162,12 @@ namespace UnknownsCollection {
         }
 
         // The win is handled by attribute patches (OnGameEndPatch) - no reflection / win-check hijack.
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         private static bool CopycatIsAlive() =>
             active && copycat != null && copycat.Data != null && !copycat.Data.IsDead && !copycat.Data.Disconnected;
@@ -191,8 +199,7 @@ namespace UnknownsCollection {
         // Custom RPC senders (each applies locally too)
         // ====================================================================
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -337,8 +344,10 @@ namespace UnknownsCollection {
             if (Helpers.MushroomSabotageActive()) return; // fungle sabotage controls looks
             if (Camouflager.camouflageTimer > 0f) return;  // real Camouflager still active - it owns the reset
             Helpers.showFlash(new Color(0.65f, 0.65f, 0.70f, 0.30f), 0.20f); // same global flicker, un-camo edge
+            // player.Data guard: TOR's setDefaultLook dereferences Data unchecked - a player mid-disconnect
+            // would NRE here and (via MeetingStartPatch) abort the whole MeetingHud.Start postfix chain.
             foreach (PlayerControl player in PlayerControl.AllPlayerControls)
-                if (player != null) player.setDefaultLook();
+                if (player != null && player.Data != null) player.setDefaultLook();
             // The Copycat itself may still be morphed — re-apply that look on top of the reset.
             RestoreLook();
         }
@@ -444,37 +453,45 @@ namespace UnknownsCollection {
         // ====================================================================
         // RPC receiver + ability learning
         // ====================================================================
+        // Our own traffic, registered on the shared UC channel in TryPatch. UCRpc's dispatcher already
+        // consumed the module byte, so this starts at the subtype byte exactly as before.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetCopycat: ApplySetCopycat(reader.ReadByte()); break;
+                    case SubUseAbility: {
+                        var ability = (Ability)reader.ReadByte();
+                        byte targetId = reader.ReadByte();
+                        ApplyUseAbility(ability, targetId);
+                        break;
+                    }
+                    case SubLearn: LearnAbility((Ability)reader.ReadByte()); break;
+                    case SubShootMiss: ApplyShootMiss(); break;
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] HandleRpc failed: {e}");
+            }
+        }
+
+        // The ONE HandleRpc patch left outside UCRpc.cs - and deliberately so: this is not a receiver
+        // for our own channel (that moved to HandleModuleRpc above), it SNIFFS TOR's ability RPCs so
+        // the Copycat can learn from them. It only inspects callId - never reads the reader - and
+        // always returns true, so TOR's own handler still sees an untouched stream.
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
         [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
+        static class TorAbilitySnifferPatch {
             public static bool Prefix(byte callId, MessageReader reader) {
                 try {
-                    if (callId == RpcId) {
-                        byte subtype = reader.ReadByte();
-                        switch (subtype) {
-                            case SubSetCopycat: ApplySetCopycat(reader.ReadByte()); break;
-                            case SubUseAbility: {
-                                var ability = (Ability)reader.ReadByte();
-                                byte targetId = reader.ReadByte();
-                                ApplyUseAbility(ability, targetId);
-                                break;
-                            }
-                            case SubLearn: LearnAbility((Ability)reader.ReadByte()); break;
-                            case SubShootMiss: ApplyShootMiss(); break;
-                        }
-                        return false; // consume our own RPC
-                    }
-
-                    // Learn from tracked TOR ability RPCs. We only inspect callId here - never read the
-                    // reader - so the original TOR handler still gets an untouched stream.
+                    if (callId == UCRpc.CallId) return true; // our own channel is never a TOR ability
                     if (active && copycat != null) {
                         var ability = RpcToAbility(callId);
                         if (ability != null) LearnAbility(ability.Value);
                     }
                 } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] HandleRpc failed: {e}");
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff failed: {e}");
                 }
-                return true; // let TOR handle non-Copycat RPCs
+                return true; // never consumes anything
             }
         }
 
@@ -673,10 +690,16 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
         static class MeetingStartPatch {
             public static void Postfix() {
-                if (!active) return;
-                shielded = false;
-                if (camouflaged) EndCamouflage();
-                if (isMorphed) EndMorph();
+                try {
+                    if (!active) return;
+                    shielded = false;
+                    if (camouflaged) EndCamouflage();
+                    if (isMorphed) EndMorph();
+                } catch (Exception e) {
+                    // Without this (the only uncaught postfix in the mod) an exception here would abort
+                    // every later MeetingHud.Start postfix, including TOR's own meeting setup.
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] MeetingStart failed: {e}");
+                }
             }
         }
 

@@ -44,8 +44,20 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const string PluginVersion = "1.1.4.6";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
-    // Custom RPC ids. TOR's CustomRPC enum runs 100-183; other DaUnknown mods use 104/105/139/167,
-    // 200-202, 246-253. Keep these globally unique.
+    // MODULE BYTES, not callIds (since the RPC consolidation).
+    //
+    // All of Unknown's Collection now speaks over ONE custom callId - UCRpc.CallId = 230 - and the
+    // byte below is written directly after it to say WHICH module a message belongs to (see UCRpc.cs
+    // for the rationale). The values are the historical per-module callIds and were kept unchanged
+    // so logs, comments and ID-Registry.md still line up; they no longer occupy anything in TOR's
+    // callId space, they only have to be unique WITHIN this mod.
+    //
+    // The block currently in use is 190-211.
+    //
+    // Consequence: only ONE byte (230) has to stay free globally instead of 18. TOR's CustomRPC enum
+    // currently runs 100-183 and keeps growing; the watchdog in Load() below shouts if it ever gets
+    // close to our channel. Other DaUnknown mods: 104/105/139/167 (TOR refs), 200-202/250-251
+    // (ChanceMod), 240 + 244-254 (Useful TOR Stuff).
     public const byte TeslaRpcId = 190;
     public const byte VersionHandshakeRpcId = 191;
     public const byte SaboteurRpcId = 192;
@@ -64,6 +76,8 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte PoltergeistRpcId = 208;
     public const byte CollectorRpcId = 209;
     public const byte ManipulatorRpcId = 210;
+    public const byte WerewolfRpcId = 211;
+    public const byte PelicanRpcId = 212;
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -89,6 +103,16 @@ public class UnknownsCollectionPlugin : BasePlugin
             .FirstOrDefault(a => a.GetName().Name == "TheOtherRoles");
 
         var harmony = new Harmony(PluginGuid);
+
+        // Collision watchdog for our single custom callId (see UCRpc.cs). TOR's CustomRPC enum grows
+        // with every release; if it ever reaches our channel (or Useful TOR Stuff's), the two mods
+        // would silently mis-parse each other's payloads. Reflection-only, log-only, once per start.
+        WarnOnRpcIdCollisions();
+
+        // Mod-presence handshake receiver on the shared UC channel. It has no TryPatch (all its
+        // patches are attribute-based), so the registration happens here - and BEFORE the roles, so
+        // a very early lobby broadcast can never find the channel unregistered.
+        TeslaVersionHandshake.RegisterRpc();
 
         // The Tesla role. CreateOptions must run after TOR's CustomOptionHolder.Load() (guaranteed
         // by the hard dependency). Most patches are attribute-based and picked up by PatchAll below;
@@ -176,6 +200,32 @@ public class UnknownsCollectionPlugin : BasePlugin
         Manipulator.CreateOptions();
         Manipulator.TryPatch(harmony);
 
+        // The Werewolf role (Impostor). As the last living Impostor he can charge up in the dark and
+        // turn into a beast: unfixable darkness, flashlight vision for everyone else, and silver as
+        // his only weakness.
+        Werewolf.CreateOptions();
+        Werewolf.TryPatch(harmony);
+
+        // The Hunter (Paket W2) - not a spawnable role but the Sheriff's ENDGAME: once every
+        // non-Werewolf Impostor is dead and the beast is still alive, the Sheriff is promoted into a
+        // silver-armed hunter. Its options hang off the Werewolf spawn rate, so CreateOptions must run
+        // AFTER Werewolf.CreateOptions() above.
+        Hunter.CreateOptions();
+        Hunter.TryPatch(harmony);
+
+        // The Pelican (Paket W3) - a SOLO NEUTRAL with his own win condition: he swallows his victims
+        // instead of killing them (no corpse until a meeting digests them or his own death frees them)
+        // and wins as the last survivor. Once only he and one other player are left, the hunt starts:
+        // a public countdown, no meetings, no reports, no vents, no abilities - eat or lose.
+        Pelican.CreateOptions();
+        Pelican.TryPatch(harmony);
+
+        // Reactor music (Paket R) - not a role: a score for the reactor/seismic sabotage that is
+        // written against the REAL ICriticalSabotage countdown, so the blast in its finale lands on
+        // the explosion. Off by default; runs on the UCMusic channel at the mod's highest priority.
+        ReactorMusic.CreateOptions();
+        ReactorMusic.TryPatch(harmony);
+
         // Localization: loads the uc.* tables and translates UC's RoleInfos + options by
         // matching their pristine English text (follows UTS's UTS.Loc.ActiveCode/Epoch via
         // the poll patches picked up by PatchAll below). Must run AFTER every CreateOptions
@@ -209,6 +259,42 @@ public class UnknownsCollectionPlugin : BasePlugin
         SaboteurTrap.Init();
 
         Logger.LogInfo($"{PluginName} v{PluginVersion} loaded.");
+    }
+
+    // Reads TOR's internal CustomRPC enum via reflection and warns if TOR ever grew into the byte
+    // range our (and the sibling mods') channels live in. Purely diagnostic: nothing is changed, the
+    // log line just tells us to move a channel BEFORE players hit the mis-parse in a live round.
+    private void WarnOnRpcIdCollisions()
+    {
+        try {
+            var rpcEnum = TORAssembly?.GetType("TheOtherRoles.CustomRPC");
+            if (rpcEnum == null || !rpcEnum.IsEnum) {
+                Logger.LogWarning("[UCRpc] TOR's CustomRPC enum not found - RPC collision watchdog skipped.");
+                return;
+            }
+
+            int highest = -1;
+            var collisions = new List<string>();
+            foreach (var name in Enum.GetNames(rpcEnum)) {
+                int value = Convert.ToInt32(Enum.Parse(rpcEnum, name));
+                if (value > highest) highest = value;
+                // >= 200: TOR has entered the block the DaUnknown mods reserved for themselves.
+                // == 230 / == 240: a direct hit on the Unknown's Collection / Useful TOR Stuff channel.
+                if (value >= 200 || value == UCRpc.CallId || value == 240)
+                    collisions.Add($"{name}={value}");
+            }
+
+            if (collisions.Count > 0)
+                Logger.LogWarning(
+                    "[UCRpc] TOR's CustomRPC now uses ids in the range reserved by the DaUnknown mods: "
+                    + string.Join(", ", collisions)
+                    + $". Our channel is {UCRpc.CallId} (Useful TOR Stuff uses 240) - move the affected "
+                    + "channel before the next release or RPC payloads will be mis-parsed.");
+
+            Logger.LogInfo($"[UCRpc] channel {UCRpc.CallId}; highest TOR CustomRPC id is {highest}.");
+        } catch (Exception ex) {
+            Logger.LogWarning($"[UCRpc] RPC collision watchdog failed: {ex.Message}");
+        }
     }
 
     private void RegisterInModManager(ConfigEntry<bool> enabled)

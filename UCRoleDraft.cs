@@ -10,7 +10,7 @@
  * RoleIds - they are tags layered over a plain Impostor / Crewmate, normally chosen by a random
  * promotion at IntroCutscene.OnDestroy. To make them DRAFTABLE without touching TOR source we:
  *
- *   1. add lightweight "draft entries" (own RoleInfo, sentinel RoleId 200-206) to RoleInfo.allRoleInfos
+ *   1. add lightweight "draft entries" (own RoleInfo, sentinel RoleId 200-217) to RoleInfo.allRoleInfos
  *      for the duration of the intro, only while each role's full spawn gate is met. The RoleInfo COLOR
  *      decides the draft faction (RoleInfo.isImpostor == color == Palette.ImpostorRed), so impostor
  *      entries use ImpostorRed and crew entries use their own (non-red) colour -> they are offered to
@@ -34,7 +34,7 @@ using static TheOtherRoles.TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class UCRoleDraft {
-        // Sentinel RoleId bytes - TOR's RoleId enum only runs 0..56, so 200-206 are free and stable.
+        // Sentinel RoleId bytes - TOR's RoleId enum only runs 0..58, so 200+ are free and stable.
         public const byte TeslaDraftId = 200;
         public const byte SaboteurDraftId = 201;
         public const byte PoisonerDraftId = 202;
@@ -51,6 +51,18 @@ namespace UnknownsCollection {
         public const byte BeaconDraftId = 213;
         public const byte CollectorDraftId = 214;
         public const byte ManipulatorDraftId = 215;
+        // Paket W4: the 200-215 window the header talks about is FULL (16 roles, 200-215 all taken),
+        // so the block simply continues upwards. Still perfectly safe: TOR's RoleId enum ends at
+        // Shifter = 58 (RPC.cs:23-83), and the byte is only ever compared against our own constants -
+        // 216/217 are as free and as stable as 200 was.
+        public const byte WerewolfDraftId = 216;
+        public const byte PelicanDraftId = 217;
+        // NO Hunter entry, deliberately: the Hunter is not a rolled role at all. He is an EVENT inside
+        // a Werewolf round - the living original Sheriff is promoted the moment the beast is the last
+        // Impostor standing (Hunter.cs, host-authoritative trigger). He has no spawn rate to inject
+        // into the draft's maths, no MarkFromDraft hook, and drafting him would mean handing somebody
+        // "Hunter" who is not the Sheriff - which the whole role is built on. He is only listed in the
+        // help menu and the guess grid (both gated on the Werewolf rate + Hunter Enabled).
 
         // ---- Draft entry table (all UC roles) ----
         private class Entry {
@@ -98,6 +110,13 @@ namespace UnknownsCollection {
                      false, () => Collector.SpawnRate,   () => Collector.SpawnMinPlayers,   Collector.MarkFromDraft),
                 Make(ManipulatorDraftId, "Manipulator", Palette.ImpostorRed, "Make the ship's security devices lie",
                      true,  () => Manipulator.SpawnRate, () => Manipulator.SpawnMinPlayers, Manipulator.MarkFromDraft),
+                Make(WerewolfDraftId,    "Werewolf",    Palette.ImpostorRed, "As the last Impostor, become the beast in the dark",
+                     true,  () => Werewolf.SpawnRate,   () => Werewolf.SpawnMinPlayers,   Werewolf.MarkFromDraft),
+                // Neutral, but drafted from the CREW pool: the draft's faction filter is purely the
+                // colour (ImpostorRed == impostor entry), and the Pelican is always promoted onto a
+                // plain Crewmate - exactly like the Bug/Follower/Copycat/Collector entries above.
+                Make(PelicanDraftId,     "Pelican",     Pelican.Color,       "Swallow them all and be the last one standing",
+                     false, () => Pelican.SpawnRate,    () => Pelican.SpawnMinPlayers,    Pelican.MarkFromDraft),
             };
             return entries;
         }

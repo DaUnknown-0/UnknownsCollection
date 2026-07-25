@@ -34,7 +34,8 @@ using AmongUs.GameOptions;
 
 namespace UnknownsCollection {
     public static class PoltergeistManifest {
-        // RPC subtypes within the Poltergeist RPC (208); dispatched from Poltergeist.HandleRpcPatch.
+        // RPC subtypes within the Poltergeist module (byte 208 on UCRpc.CallId = 230); dispatched
+        // from Poltergeist.HandleModuleRpc's default branch.
         private const byte SubManifestStart = 5;   // templateId, duration(float)
         private const byte SubManifestEnd = 6;     // reason: 0 timeout, 1 killed, 2 silent (meeting)
 
@@ -61,8 +62,9 @@ namespace UnknownsCollection {
         // ---- RPC ----
 
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, UnknownsCollectionPlugin.PoltergeistRpcId, SendOption.Reliable, -1);
+            // Same channel + module byte as Poltergeist.cs - the manifest is just a subtype range
+            // (5/6) inside the Poltergeist module, dispatched from Poltergeist.HandleModuleRpc.
+            MessageWriter w = UCRpc.Begin(UnknownsCollectionPlugin.PoltergeistRpcId);
             w.Write(subtype);
             return w;
         }

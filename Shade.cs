@@ -63,7 +63,7 @@ namespace UnknownsCollection {
             UCFx.RegisterReset(ClearBodyMarkers);
         }
 
-        // ---- Custom RPC (205) subtypes ----
+        // ---- Custom RPC subtypes: module byte 205 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 205;
         private const byte SubSetShade = 0;
         private const byte SubHideBody = 1;   // victimId, posX, posY
@@ -92,7 +92,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         private static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
@@ -102,8 +107,7 @@ namespace UnknownsCollection {
             shade != null && PlayerControl.LocalPlayer != null && shade.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -205,38 +209,35 @@ namespace UnknownsCollection {
 
         public static void MarkFromDraft(byte playerId) => ApplySetShade(playerId);
 
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetShade:
-                            ApplySetShade(reader.ReadByte());
-                            break;
-                        case SubHideBody: {
-                            byte vid = reader.ReadByte();
-                            float x = reader.ReadSingle();
-                            float y = reader.ReadSingle();
-                            ApplyHideBody(vid, new Vector2(x, y));
-                            break;
-                        }
-                        case SubRevealBody:
-                            ApplyRevealBody(reader.ReadByte());
-                            break;
-                        case SubAutoReport: {
-                            byte vid = reader.ReadByte();
-                            byte rid = reader.ReadByte();
-                            ApplyAutoReport(vid, rid);
-                            break;
-                        }
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetShade:
+                        ApplySetShade(reader.ReadByte());
+                        break;
+                    case SubHideBody: {
+                        byte vid = reader.ReadByte();
+                        float x = reader.ReadSingle();
+                        float y = reader.ReadSingle();
+                        ApplyHideBody(vid, new Vector2(x, y));
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Shade] HandleRpc failed: {e}");
+                    case SubRevealBody:
+                        ApplyRevealBody(reader.ReadByte());
+                        break;
+                    case SubAutoReport: {
+                        byte vid = reader.ReadByte();
+                        byte rid = reader.ReadByte();
+                        ApplyAutoReport(vid, rid);
+                        break;
+                    }
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Shade] HandleRpc failed: {e}");
             }
         }
 

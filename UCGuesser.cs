@@ -73,6 +73,26 @@ namespace UnknownsCollection {
         private static bool CollectorGuessable() =>
             Collector.SpawnRate != null && Collector.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
+        // The Hunter has no spawn rate of his own - he is an event inside a Werewolf round, so the gate
+        // is "a Werewolf could exist AND a Sheriff could exist AND the Hunter event is switched on".
+        // Rate-based like every other entry here, so his presence in the grid never leaks whether the
+        // promotion already happened. (TOR filters its own Deputy entry by the sheriff rate the same
+        // way, MeetingPatch.cs:429 - a Hunter without a Sheriff is just as impossible.)
+        private static bool HunterGuessable() =>
+            Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0
+            && Hunter.Enabled != null && Hunter.Enabled.getBool()
+            && CustomOptionHolder.sheriffSpawnRate != null && CustomOptionHolder.sheriffSpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+        // Paket W4. The Werewolf is a plain Impostor until his one endgame move, so he is guessable
+        // exactly like every other impostor tag (WEREWOLF_PLAN.md 4.7 item 3: "meeting silver works").
+        private static bool WerewolfGuessable() =>
+            Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+        // The Pelican is a neutral over a plain Crewmate, so his entry goes into the CREW half of the
+        // grid - same placement the Bug/Follower/Copycat/Collector neutrals use.
+        private static bool PelicanGuessable() =>
+            Pelican.SpawnRate != null && Pelican.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
         private static bool ManipulatorGuessable() =>
             Manipulator.SpawnRate != null && Manipulator.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
@@ -87,6 +107,7 @@ namespace UnknownsCollection {
             SetEntry(Maniac.ManiacInfo(),     add && ManiacGuessable(),      RoleInfo.impostor);
             SetEntry(Shade.ShadeInfo(),       add && ShadeGuessable(),        RoleInfo.impostor);
             SetEntry(Manipulator.ManipulatorInfo(), add && ManipulatorGuessable(), RoleInfo.impostor);
+            SetEntry(Werewolf.WerewolfInfo(), add && WerewolfGuessable(),   RoleInfo.impostor);
             // Crew / Neutral roles — insert after the base Crewmate entry
             SetEntry(Siphoner.SiphonerInfo(), add && SiphonerGuessable(),   RoleInfo.crewmate);
             SetEntry(Witness.WitnessInfo(),   add && WitnessGuessable(),    RoleInfo.crewmate);
@@ -96,6 +117,8 @@ namespace UnknownsCollection {
             SetEntry(Scout.ScoutInfo(),       add && ScoutGuessable(),      RoleInfo.crewmate);
             SetEntry(Beacon.BeaconInfo(),     add && BeaconGuessable(),     RoleInfo.crewmate);
             SetEntry(Collector.CollectorInfo(), add && CollectorGuessable(), RoleInfo.crewmate);
+            SetEntry(Hunter.HunterInfo(),     add && HunterGuessable(),     RoleInfo.crewmate);
+            SetEntry(Pelican.PelicanInfo(),   add && PelicanGuessable(),    RoleInfo.crewmate);
         }
 
         private static void SetEntry(RoleInfo ri, bool want, RoleInfo after) {

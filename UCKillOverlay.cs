@@ -20,6 +20,9 @@
  *                    the Saboteur's normal knife kills keep the vanilla overlay (design decision)
  *   - ManiacBomb:   ArmWindow(ManiacBomb)                 (Maniac.ApplyExplode; victims only known host-side)
  *   - Shade:        no arming - matched by killer identity, every Shade murder vanishes the body
+ *   - WerewolfMaul / SilverBolt / Pelican (Paket W4): no arming either - matched by killer
+ *                    identity in SelectWolfPack(), see the comment there for why arming would
+ *                    actually be WRONG for the Hunter's bolt (a wound is not a kill)
  * The Poisoner never reaches ShowKillAnimation at all (poison deaths use Exiled(), no body): its
  * handler calls PlayFor() directly, and the queue below delays playback until the meeting/exile
  * UI is gone.
@@ -37,10 +40,13 @@ using UnityEngine;
 
 namespace UnknownsCollection {
     public static partial class UCKillOverlay {
-        // Tesla..ManiacBomb = UC roles (gated by KillAnimationsUC); everything after = TOR roles
-        // (gated by KillAnimationsTOR, detection + choreographies in UCKillOverlayTOR.cs).
+        // Tesla..Pelican = UC roles (gated by KillAnimationsUC); everything from SheriffShot on =
+        // TOR roles (gated by KillAnimationsTOR, detection + choreographies in UCKillOverlayTOR.cs).
         public enum Kind : byte {
             None, Tesla, SaboteurTask, Poisoner, Shade, ManiacBomb,
+            // Paket W4: the three Paket-W roles. They MUST stay below SheriffShot - KindEnabled()
+            // splits the enum at that value into the UC and the TOR toggle.
+            WerewolfMaul, SilverBolt, Pelican,
             SheriffShot, SheriffMisfire, VampireKill, WarlockKill, WitchKill,
             NinjaDash, BomberBomb, GuesserShot, ThiefSteal, ThiefFail, JackalClaw, BountyHit,
             // anonymous death variants (killer identity stays hidden - no killer figure on stage)
@@ -128,8 +134,40 @@ namespace UnknownsCollection {
             if (killer != null && victim != null && Shade.active && Shade.shade != null
                 && killer.PlayerId == Shade.shade.PlayerId && killer.PlayerId != victim.PlayerId)
                 return Kind.Shade;
+            // Paket W4: Werewolf / Hunter / Pelican, matched by KILLER IDENTITY like the Shade above -
+            // no arming needed and, more importantly, no arming WANTED:
+            //  - the wolf's maul must only play while he is actually transformed (wolfForm is synced,
+            //    so every client agrees), and
+            //  - the Hunter's silver bolt must only play when the shot really killed. An armed entry
+            //    would already be sitting there after a shot that Werewolf.SilverBulletPatch downgrades
+            //    to a mere WOUND (no murder, no ShowKillAnimation at all); reading identity at overlay
+            //    time makes that case impossible by construction.
+            // The masked-kill rule of this system is honoured implicitly: a showAnimation==0 kill
+            // arrives here as (victim, victim), and all three checks require killer != victim, so a
+            // masked death falls back to vanilla exactly like the un-armed TOR ones.
+            Kind wk = SelectWolfPack(killer, victim);
+            if (wk != Kind.None) return wk;
             // TOR meeting kills (Guesser) - identity check lives in UCKillOverlayTOR.cs.
             return SelectTorMeeting(killer, victim);
+        }
+
+        private static Kind SelectWolfPack(NetworkedPlayerInfo killer, NetworkedPlayerInfo victim) {
+            try {
+                if (killer == null || victim == null || killer.PlayerId == victim.PlayerId) return Kind.None;
+                // FIELD kills only. In a meeting the only way any of the three can "kill" is a GUESS
+                // (a Pelican/Werewolf in the guesser game mode, or the Hunter's granted one-shot) -
+                // and a guess is a guess: it leaves no belly, no maul and no bolt, so those keep
+                // TOR's own GuesserShot cutscene (SelectTorMeeting, one step further down).
+                if (MeetingHud.Instance != null) return Kind.None;
+                byte k = killer.PlayerId;
+                if (Werewolf.active && Werewolf.wolfForm && Werewolf.werewolf != null
+                    && k == Werewolf.werewolf.PlayerId) return Kind.WerewolfMaul;
+                if (Hunter.active && Hunter.hunter != null && k == Hunter.hunter.PlayerId)
+                    return Kind.SilverBolt;
+                if (Pelican.active && Pelican.pelican != null && k == Pelican.pelican.PlayerId)
+                    return Kind.Pelican;
+            } catch { }
+            return Kind.None;
         }
 
         // ==================== queue (survives meetings; poison deaths arrive at MeetingHud.Close) ====================
@@ -367,11 +405,51 @@ namespace UnknownsCollection {
                     particles = MakeParticles(8, UCFx.Smoke, new Color(0.45f, 0.45f, 0.5f), 35, false);
                     break;
 
+                // ---- Paket W4 ----
+                case Kind.WerewolfMaul:
+                    duration = 1.7f;
+                    // No killer CREWMATE figure: the beast is not a crewmate silhouette at all, so
+                    // the wolf head prop IS the killer on this stage.
+                    victimFig = MakeFig(p.victimColor, true, 4.2f, -0.35f, 10);
+                    propA = Make("wolfhead", UCAssets.OverlayWolfHead, -4.6f, 0.1f, 20, WolfFur, 1.35f);
+                    propB = Make("claw", UCAssets.OverlayClaw, 0f, 0f, 24, new Color(1f, 1f, 1f, 0f), 1.1f);
+                    propC = Make("ring", UCAssets.WerewolfBloodRing, 2.2f, -1.35f, 6,
+                                 new Color(1f, 1f, 1f, 0f), 1.6f);
+                    particles = MakeParticles(7, UCFx.Dot, new Color(0.62f, 0.08f, 0.1f), 30, false);
+                    break;
+
+                case Kind.SilverBolt:
+                    duration = 1.7f;
+                    killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
+                    victimFig = MakeFig(p.victimColor, true, 4.2f, -0.35f, 10);
+                    propA = Make("bolt", UCAssets.OverlaySilverBolt, -4.2f, 0.05f, 22, SilverCol, 0.75f, true);
+                    propB = Make("impact", UCAssets.OverlayBurst, 2.4f, 0.05f, 24,
+                                 new Color(1f, 1f, 1f, 0f), 0.35f, true);
+                    particles = MakeParticles(7, UCFx.Spark, SilverCol, 30, true);
+                    break;
+
+                case Kind.Pelican:
+                    duration = 1.6f;
+                    // The killer stays off stage: a swallowed victim never learns who ate them (the
+                    // whole role is body denial), so only the beak comes in - Saboteur/Poisoner rule.
+                    victimFig = MakeFig(p.victimColor, false, 0.4f, -0.35f, 10);
+                    propA = Make("beak", UCAssets.OverlayPelican, -5.2f, 0.15f, 20, PelicanTeal, 1.5f);
+                    propB = Make("gulp", UCAssets.OverlayBurst, 0.4f, -0.1f, 8,
+                                 new Color(1f, 1f, 1f, 0f), 0.5f);
+                    particles = MakeParticles(6, UCFx.Dot, PelicanTeal, 30, true);
+                    break;
+
                 default:
                     BuildTor(p);   // TOR-role sequences live in UCKillOverlayTOR.cs
                     break;
             }
         }
+
+        // Shared palette of the Paket-W sequences (the sprites are drawn light grey on purpose so
+        // they can be tinted here, like every other overlay prop).
+        private static readonly Color WolfFur = new Color(0.30f, 0.26f, 0.30f);
+        private static readonly Color SilverCol = new Color(0.86f, 0.90f, 0.98f);
+        private static readonly Color PelicanTeal = new Color(0.32f, 0.86f, 0.82f);
 
         // ==================== easing helpers ====================
 
@@ -411,6 +489,9 @@ namespace UnknownsCollection {
                 case Kind.Poisoner: UpdatePoisoner(t, exit); break;
                 case Kind.Shade: UpdateShade(t, exit); break;
                 case Kind.ManiacBomb: UpdateManiac(t, exit); break;
+                case Kind.WerewolfMaul: UpdateWerewolfMaul(t, exit); break;
+                case Kind.SilverBolt: UpdateSilverBolt(t, exit); break;
+                case Kind.Pelican: UpdatePelican(t, exit); break;
                 default: UpdateTorSeq(t, exit); break;   // UCKillOverlayTOR.cs
             }
         }
@@ -642,6 +723,162 @@ namespace UnknownsCollection {
                     sr.transform.localScale = Vector3.one * (0.9f + 1.6f * ph);
                     SetAlpha(sr, (1f - ph) * 0.75f * exit);
                 }
+            }
+        }
+
+        // ==================== Paket W4 choreographies ====================
+
+        // The beast in the dark: the stage is darker than any other sequence (this kill only ever
+        // happens inside the wolf darkness), the maw lunges in from off-screen, and the victim is
+        // left under the public blood ring that is the wolf's forensic price.
+        private static void UpdateWerewolfMaul(float t, float exit) {
+            SetAlpha(dim, Mathf.Min(0.94f, dim.color.a + 0.12f * Smooth(Seg(t, 0f, 0.12f))));
+
+            float ein = EaseOut(Seg(t, 0f, 0.18f));
+            bool bitten = t >= 0.52f;
+
+            if (!bitten) {
+                victimFig.SetPos(Mathf.Lerp(4.2f, 2.2f, ein), -0.35f);
+                victimFig.SetAlpha(ein * exit);
+            }
+
+            // The maw charges in, growing as it closes the distance.
+            float lunge = Smooth(Seg(t, 0.14f, 0.52f));
+            float recede = Smooth(Seg(t, 0.66f, 1f));
+            float headX = Mathf.Lerp(-4.6f, 1.05f, lunge) - 3.2f * recede;
+            propA.transform.localPosition = new Vector3(headX, 0.1f + 0.06f * Mathf.Sin(t * 17f), 0f);
+            float headS = Mathf.Lerp(0.85f, 1.45f, lunge);
+            propA.transform.localScale = new Vector3(headS, headS * (bitten ? 0.86f : 1f), 1f);
+            SetAlpha(propA, Mathf.Min(1f, ein * 1.4f) * exit);
+
+            if (t >= 0.5f) Sound(1, () => UCAssets.PlayWerewolfKillAt(PlayerControl.LocalPlayer.GetTruePosition()));
+
+            // The strike: claw slash over the victim plus one hard flash.
+            float slash = Seg(t, 0.5f, 0.64f);
+            propB.transform.localPosition = new Vector3(1.9f, -0.1f, 0f);
+            propB.transform.localRotation = Quaternion.Euler(0, 0, Mathf.Lerp(-38f, 22f, EaseOut(slash)));
+            propB.transform.localScale = Vector3.one * Mathf.Lerp(0.75f, 1.5f, EaseOut(slash));
+            SetAlpha(propB, slash > 0f && slash < 1f ? 0.95f * (1f - slash) : 0f);
+            SetAlpha(flash, bitten ? Mathf.Max(0f, 0.62f - 3.2f * (t - 0.52f)) : 0f);
+
+            if (bitten) {
+                float fall = Smooth(Seg(t, 0.54f, 0.82f));
+                victimFig.SetTint(Color.Lerp(victimFig.color, new Color(0.45f, 0.1f, 0.12f), 0.55f), exit);
+                victimFig.SetPos(2.2f + 0.4f * fall, -0.35f - 0.55f * fall);
+                victimFig.SetRot(-88f * fall);
+            }
+
+            // Blood spray, then the ring blooming under the corpse.
+            for (int i = 0; i < particles.Length; i++) {
+                float ph = Seg(t, 0.52f + i * 0.012f, 0.9f);
+                var sr = particles[i];
+                if (ph <= 0f || ph >= 1f) { SetAlpha(sr, 0f); continue; }
+                double ang = i * (Math.PI * 2.0 / particles.Length) + 0.9;
+                float r = 0.2f + EaseOut(ph) * 1.7f;
+                sr.transform.localPosition = new Vector3(2.2f + (float)Math.Cos(ang) * r,
+                    -0.15f + (float)Math.Sin(ang) * r * 0.7f - 1.3f * ph * ph, 0f);
+                sr.transform.localScale = Vector3.one * (0.55f - 0.3f * ph);
+                SetAlpha(sr, (1f - ph) * 0.9f * exit);
+            }
+            float bloom = Smooth(Seg(t, 0.62f, 0.9f));
+            propC.transform.localPosition = new Vector3(2.55f, -1.15f, 0f);
+            propC.transform.localScale = Vector3.one * (1.0f + 0.8f * bloom);
+            SetAlpha(propC, 0.9f * bloom * exit);
+        }
+
+        // The Hunter's answer: one silver bolt, fired flat and fast. Deliberately no extra silver
+        // sound here - a LETHAL wolf-form hit already gets werewolf_silver from WerewolfFx's death
+        // sequence, so this uses TOR's own shot bang and never doubles the cue.
+        private static void UpdateSilverBolt(float t, float exit) {
+            float ein = EaseOut(Seg(t, 0f, 0.18f));
+            float kx = Mathf.Lerp(-4.2f, -2.35f, ein);
+            killerFig.SetPos(kx, -0.35f);
+            killerFig.SetAlpha(ein * exit);
+            victimFig.SetAlpha(ein * exit);
+
+            bool fired = t >= 0.42f;
+            if (fired) Sound(1, () => TorSfx("pursuerBlank"));
+
+            // The bolt sits on the crossbow, then crosses the whole stage in ~0.2 s.
+            float fly = EaseOut(Seg(t, 0.42f, 0.62f));
+            float bx = fired ? Mathf.Lerp(kx + 0.9f, 2.25f, fly) : kx + 0.9f;
+            propA.transform.localPosition = new Vector3(bx, 0.05f, 0f);
+            propA.transform.localScale = new Vector3(0.75f + 0.45f * fly, 0.75f - 0.12f * fly, 1f);
+            SetAlpha(propA, (fired ? 1f - Seg(t, 0.58f, 0.66f) : 0.85f * ein) * exit);
+            if (fired && t < 0.5f) killerFig.SetPos(kx - 0.14f * Mathf.Sin(Seg(t, 0.42f, 0.5f) * Mathf.PI), -0.35f);
+
+            // Impact: silver flare + sparks off the wound.
+            float hit = Seg(t, 0.6f, 0.78f);
+            propB.transform.localPosition = new Vector3(2.3f, 0.02f, 0f);
+            propB.transform.localScale = Vector3.one * Mathf.Lerp(0.3f, 1.8f, EaseOut(hit));
+            SetAlpha(propB, hit > 0f && hit < 1f ? (1f - hit) * exit : 0f);
+            SetAlpha(flash, t >= 0.6f ? Mathf.Max(0f, 0.55f - 3f * (t - 0.6f)) : 0f);
+
+            for (int i = 0; i < particles.Length; i++) {
+                float ph = Seg(t, 0.6f + i * 0.015f, 0.95f);
+                var sr = particles[i];
+                if (ph <= 0f || ph >= 1f) { SetAlpha(sr, 0f); continue; }
+                double ang = i * (Math.PI * 2.0 / particles.Length) + 0.3;
+                float r = 0.2f + EaseOut(ph) * 1.35f;
+                sr.transform.localPosition = new Vector3(2.3f + (float)Math.Cos(ang) * r,
+                    0.02f + (float)Math.Sin(ang) * r - 0.8f * ph * ph, 0f);
+                sr.transform.localScale = Vector3.one * (0.8f - 0.5f * ph);
+                SetAlpha(sr, (1f - ph) * exit);
+            }
+
+            if (t < 0.6f) {
+                victimFig.SetPos(Mathf.Lerp(4.2f, 2.6f, ein), -0.35f);
+            } else {
+                float jerk = EaseOut(Seg(t, 0.6f, 0.68f));
+                float fall = Smooth(Seg(t, 0.68f, 0.94f));
+                victimFig.SetPos(2.6f + 0.4f * jerk + 0.25f * fall, -0.35f - 0.55f * fall);
+                victimFig.SetRot(-84f * fall);
+                victimFig.SetTint(t < 0.7f ? Color.Lerp(SilverCol, victimFig.color, jerk) : victimFig.color, exit);
+            }
+        }
+
+        // The Pelican: no killer figure at all (the victim never learns who ate them - the whole
+        // role is body denial), just a beak out of the dark that closes and leaves nothing behind.
+        private static void UpdatePelican(float t, float exit) {
+            float ein = EaseOut(Seg(t, 0f, 0.18f));
+            victimFig.SetPos(0.4f, -0.35f + 0.05f * Mathf.Sin(t * 12f) * (1f - Seg(t, 0.4f, 0.5f)));
+            victimFig.SetAlpha(ein * exit);
+
+            // The beak sweeps in from off-screen, gaping, then snaps shut on the victim.
+            float sweep = Smooth(Seg(t, 0.1f, 0.48f));
+            float snap = Seg(t, 0.48f, 0.58f);
+            float leave = Smooth(Seg(t, 0.72f, 1f));
+            propA.transform.localPosition = new Vector3(Mathf.Lerp(-5.2f, -0.55f, sweep) - 4.4f * leave,
+                                                        0.15f - 0.25f * EaseOut(snap), 0f);
+            propA.transform.localScale = new Vector3(Mathf.Lerp(1.15f, 1.6f, sweep),
+                                                     Mathf.Lerp(1.6f, 0.95f, EaseOut(snap)), 1f);
+            SetAlpha(propA, Mathf.Min(1f, ein * 1.5f) * exit);
+
+            if (t >= 0.48f) Sound(1, () => UCAssets.PlayPelicanSwallowAt(PlayerControl.LocalPlayer.GetTruePosition()));
+
+            // The gulp: a soft teal shockwave, and the victim is simply GONE - no fall, no corpse.
+            float gulp = Seg(t, 0.5f, 0.78f);
+            propB.transform.localPosition = new Vector3(0.4f, -0.1f, 0f);
+            propB.transform.localScale = Vector3.one * Mathf.Lerp(0.4f, 2.3f, EaseOut(gulp));
+            SetAlpha(propB, gulp > 0f && gulp < 1f ? 0.55f * (1f - gulp) * exit : 0f);
+            SetAlpha(flash, t >= 0.5f ? Mathf.Max(0f, 0.3f - 1.6f * (t - 0.5f)) : 0f);
+
+            if (t >= 0.48f) {
+                float eaten = Smooth(Seg(t, 0.48f, 0.74f));
+                victimFig.SetScale(1f - 0.75f * eaten);
+                victimFig.SetPos(0.4f - 0.5f * eaten, -0.35f + 0.2f * eaten);
+                victimFig.SetRot(24f * eaten);
+                victimFig.SetAlpha((1f - eaten) * exit);
+            }
+
+            for (int i = 0; i < particles.Length; i++) {
+                float ph = Seg(t, 0.54f + i * 0.05f, 0.9f + i * 0.02f);
+                var sr = particles[i];
+                if (ph <= 0f || ph >= 1f) { SetAlpha(sr, 0f); continue; }
+                sr.transform.localPosition = new Vector3(0.05f + (i % 3) * 0.42f + Jitter(0.04f),
+                                                         -0.6f + ph * 1.9f, 0f);
+                sr.transform.localScale = Vector3.one * (0.3f + 0.45f * ph);
+                SetAlpha(sr, Mathf.Sin(ph * Mathf.PI) * 0.7f * exit);
             }
         }
     }

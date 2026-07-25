@@ -51,7 +51,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         private static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
@@ -61,8 +66,7 @@ namespace UnknownsCollection {
             follower != null && PlayerControl.LocalPlayer != null && follower.PlayerId == PlayerControl.LocalPlayer.PlayerId;
 
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -150,26 +154,23 @@ namespace UnknownsCollection {
 
         public static void MarkFromDraft(byte playerId) => ApplySetFollower(playerId);
 
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetFollower: ApplySetFollower(reader.ReadByte()); break;
-                        case SubShiftRole: {
-                            byte fId = reader.ReadByte();
-                            byte tId = reader.ReadByte();
-                            ApplyShiftRole(fId, tId);
-                            break;
-                        }
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetFollower: ApplySetFollower(reader.ReadByte()); break;
+                    case SubShiftRole: {
+                        byte fId = reader.ReadByte();
+                        byte tId = reader.ReadByte();
+                        ApplyShiftRole(fId, tId);
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Follower] HandleRpc failed: {e}");
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Follower] HandleRpc failed: {e}");
             }
         }
 

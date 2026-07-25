@@ -59,7 +59,7 @@ namespace UnknownsCollection {
         private static bool drainActive;
         private static TheOtherRoles.Objects.CustomButton drainButton;
 
-        // ---- Custom RPC (196) subtypes ----
+        // ---- Custom RPC subtypes: module byte 196 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 196; // == UnknownsCollectionPlugin.SiphonerRpcId
         private const byte SubSetSiphoner = 0;  // siphonerId
         private const byte SubDrain = 1;        // impostorId, penalty(float)
@@ -115,7 +115,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { /* all patches are attribute-based */ }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         // ====================================================================
         // Helpers
@@ -149,8 +154,7 @@ namespace UnknownsCollection {
         // Custom RPC senders (each applies locally too)
         // ====================================================================
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -240,28 +244,25 @@ namespace UnknownsCollection {
         // ====================================================================
         // RPC receiver
         // ====================================================================
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetSiphoner: ApplySetSiphoner(reader.ReadByte()); break;
-                        case SubDrain: {
-                            byte impostorId = reader.ReadByte();
-                            float penalty = reader.ReadSingle();
-                            ApplyDrain(impostorId, penalty);
-                            break;
-                        }
-                        case SubSabotageHold: ApplySabotageHold(reader.ReadSingle()); break;
-                        case SubToggleDrain: ApplyToggleDrain(reader.ReadBoolean()); break;
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetSiphoner: ApplySetSiphoner(reader.ReadByte()); break;
+                    case SubDrain: {
+                        byte impostorId = reader.ReadByte();
+                        float penalty = reader.ReadSingle();
+                        ApplyDrain(impostorId, penalty);
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] HandleRpc failed: {e}");
+                    case SubSabotageHold: ApplySabotageHold(reader.ReadSingle()); break;
+                    case SubToggleDrain: ApplyToggleDrain(reader.ReadBoolean()); break;
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] HandleRpc failed: {e}");
             }
         }
 
@@ -336,7 +337,10 @@ namespace UnknownsCollection {
                         () => PlayerControl.LocalPlayer.CanMove,
                         () => {
                             // OnMeetingEnds: make sure the drain is off and reset to a full cooldown.
-                            if (drainActive) SendToggleDrain(false);
+                            // IsLocalSiphoner guard: this callback fires on EVERY client (the button exists
+                            // everywhere) - without it each meeting ended in a burst of redundant reliable
+                            // RPCs, one per connected player.
+                            if (drainActive && IsLocalSiphoner()) SendToggleDrain(false);
                             drainButton.isEffectActive = false;
                             drainButton.Timer = drainButton.MaxTimer;
                         },

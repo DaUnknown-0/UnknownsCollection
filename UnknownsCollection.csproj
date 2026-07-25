@@ -14,42 +14,42 @@
     </PropertyGroup>
 
     <!-- Embedded audio: logical names "UnknownsCollection.Resources.<file>" (RootNamespace = AssemblyName).
-         Headerless 2-channel signed 32-bit PCM LE @ 48 kHz; loaded by TeslaSound (tesla_warning) and
-         BugSound (Glitch). -->
+         Ogg Vorbis, decoded via NVorbis in UCAssets.LoadRawClip. The lossless .raw masters stay on disk
+         next to them (deliberately NOT embedded any more - see tmp\OGG_MESSBERICHT.md). -->
     <ItemGroup>
-        <EmbeddedResource Include="Resources\tesla_warning.raw" />
-        <EmbeddedResource Include="Resources\beacon_share.raw" />
-        <EmbeddedResource Include="Resources\collector_channel.raw" />
-        <EmbeddedResource Include="Resources\collector_ready.raw" />
-        <EmbeddedResource Include="Resources\copycat_miss.raw" />
-        <EmbeddedResource Include="Resources\copycat_ward.raw" />
-        <EmbeddedResource Include="Resources\illusionist_deny.raw" />
-        <EmbeddedResource Include="Resources\illusionist_record.raw" />
-        <EmbeddedResource Include="Resources\illusionist_unravel.raw" />
-        <EmbeddedResource Include="Resources\maniac_pass.raw" />
-        <EmbeddedResource Include="Resources\maniac_plant.raw" />
-        <EmbeddedResource Include="Resources\manipulator_end.raw" />
-        <EmbeddedResource Include="Resources\poisoner_antidote.raw" />
-        <EmbeddedResource Include="Resources\poltergeist_handstop.raw" />
-        <EmbeddedResource Include="Resources\poltergeist_hexend.raw" />
-        <EmbeddedResource Include="Resources\poltergeist_reveal.raw" />
-        <EmbeddedResource Include="Resources\saboteur_alarm.raw" />
-        <EmbeddedResource Include="Resources\saboteur_defused.raw" />
-        <EmbeddedResource Include="Resources\saboteur_mark.raw" />
-        <EmbeddedResource Include="Resources\saboteur_safe.raw" />
-        <EmbeddedResource Include="Resources\saboteur_scanhit.raw" />
-        <EmbeddedResource Include="Resources\saboteur_scanmiss.raw" />
-        <EmbeddedResource Include="Resources\saboteur_wirewrong.raw" />
-        <EmbeddedResource Include="Resources\shade_reveal.raw" />
-        <EmbeddedResource Include="Resources\silencer_mark.raw" />
-        <EmbeddedResource Include="Resources\siphoner_stop.raw" />
-        <EmbeddedResource Include="Resources\tesla_discharge.raw" />
-        <EmbeddedResource Include="Resources\tesla_promote.raw" />
-        <EmbeddedResource Include="Resources\tesla_pulse.raw" />
-        <EmbeddedResource Include="Resources\tesla_select.raw" />
-        <EmbeddedResource Include="Resources\uc_reveal.raw" />
-        <EmbeddedResource Include="Resources\witness_note.raw" />
-        <EmbeddedResource Include="Resources\Glitch.raw" />
+        <EmbeddedResource Include="Resources\tesla_warning.ogg" />
+        <EmbeddedResource Include="Resources\beacon_share.ogg" />
+        <EmbeddedResource Include="Resources\collector_channel.ogg" />
+        <EmbeddedResource Include="Resources\collector_ready.ogg" />
+        <EmbeddedResource Include="Resources\copycat_miss.ogg" />
+        <EmbeddedResource Include="Resources\copycat_ward.ogg" />
+        <EmbeddedResource Include="Resources\illusionist_deny.ogg" />
+        <EmbeddedResource Include="Resources\illusionist_record.ogg" />
+        <EmbeddedResource Include="Resources\illusionist_unravel.ogg" />
+        <EmbeddedResource Include="Resources\maniac_pass.ogg" />
+        <EmbeddedResource Include="Resources\maniac_plant.ogg" />
+        <EmbeddedResource Include="Resources\manipulator_end.ogg" />
+        <EmbeddedResource Include="Resources\poisoner_antidote.ogg" />
+        <EmbeddedResource Include="Resources\poltergeist_handstop.ogg" />
+        <EmbeddedResource Include="Resources\poltergeist_hexend.ogg" />
+        <EmbeddedResource Include="Resources\poltergeist_reveal.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_alarm.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_defused.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_mark.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_safe.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_scanhit.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_scanmiss.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_wirewrong.ogg" />
+        <EmbeddedResource Include="Resources\shade_reveal.ogg" />
+        <EmbeddedResource Include="Resources\silencer_mark.ogg" />
+        <EmbeddedResource Include="Resources\siphoner_stop.ogg" />
+        <EmbeddedResource Include="Resources\tesla_discharge.ogg" />
+        <EmbeddedResource Include="Resources\tesla_promote.ogg" />
+        <EmbeddedResource Include="Resources\tesla_pulse.ogg" />
+        <EmbeddedResource Include="Resources\tesla_select.ogg" />
+        <EmbeddedResource Include="Resources\uc_reveal.ogg" />
+        <EmbeddedResource Include="Resources\witness_note.ogg" />
+        <EmbeddedResource Include="Resources\Glitch.ogg" />
         <!-- Own button icons (PNG) + synthesized role sounds (same raw PCM format), loaded by UCAssets. -->
         <EmbeddedResource Include="Resources\poltergeist_manifest.png" />
         <EmbeddedResource Include="Resources\poltergeist_door.png" />
@@ -66,30 +66,97 @@
         <EmbeddedResource Include="Resources\saboteur_selflimp.png" />
         <EmbeddedResource Include="Resources\collector_collect.png" />
         <EmbeddedResource Include="Resources\manipulator_fake.png" />
-        <EmbeddedResource Include="Resources\collector_pickup.raw" />
-        <EmbeddedResource Include="Resources\collector_win.raw" />
-        <EmbeddedResource Include="Resources\manipulator_warp.raw" />
+        <EmbeddedResource Include="Resources\collector_pickup.ogg" />
+        <EmbeddedResource Include="Resources\collector_win.ogg" />
+        <EmbeddedResource Include="Resources\manipulator_warp.ogg" />
         <EmbeddedResource Include="Resources\silencer_silence.png" />
         <EmbeddedResource Include="Resources\scout_transparent.png" />
         <EmbeddedResource Include="Resources\siphoner_drain.png" />
-        <EmbeddedResource Include="Resources\poltergeist_manifest.raw" />
-        <EmbeddedResource Include="Resources\poltergeist_poof.raw" />
-        <EmbeddedResource Include="Resources\poltergeist_door.raw" />
-        <EmbeddedResource Include="Resources\poltergeist_hex.raw" />
-        <EmbeddedResource Include="Resources\poltergeist_hand.raw" />
-        <EmbeddedResource Include="Resources\saboteur_zap.raw" />
-        <EmbeddedResource Include="Resources\saboteur_trap.raw" />
-        <EmbeddedResource Include="Resources\maniac_fuse.raw" />
-        <EmbeddedResource Include="Resources\maniac_explosion.raw" />
-        <EmbeddedResource Include="Resources\silencer_silence.raw" />
-        <EmbeddedResource Include="Resources\illusionist_clone.raw" />
-        <EmbeddedResource Include="Resources\poisoner_poison.raw" />
-        <EmbeddedResource Include="Resources\scout_whoosh.raw" />
-        <EmbeddedResource Include="Resources\siphoner_drain.raw" />
-        <EmbeddedResource Include="Resources\witness_sting.raw" />
-        <EmbeddedResource Include="Resources\shade_vanish.raw" />
-        <EmbeddedResource Include="Resources\follower_shift.raw" />
-        <EmbeddedResource Include="Resources\copycat_learn.raw" />
+        <EmbeddedResource Include="Resources\poltergeist_manifest.ogg" />
+        <EmbeddedResource Include="Resources\poltergeist_poof.ogg" />
+        <EmbeddedResource Include="Resources\poltergeist_door.ogg" />
+        <EmbeddedResource Include="Resources\poltergeist_hex.ogg" />
+        <EmbeddedResource Include="Resources\poltergeist_hand.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_zap.ogg" />
+        <EmbeddedResource Include="Resources\saboteur_trap.ogg" />
+        <EmbeddedResource Include="Resources\maniac_fuse.ogg" />
+        <EmbeddedResource Include="Resources\maniac_explosion.ogg" />
+        <EmbeddedResource Include="Resources\silencer_silence.ogg" />
+        <EmbeddedResource Include="Resources\illusionist_clone.ogg" />
+        <EmbeddedResource Include="Resources\poisoner_poison.ogg" />
+        <EmbeddedResource Include="Resources\scout_whoosh.ogg" />
+        <EmbeddedResource Include="Resources\siphoner_drain.ogg" />
+        <EmbeddedResource Include="Resources\witness_sting.ogg" />
+        <EmbeddedResource Include="Resources\shade_vanish.ogg" />
+        <EmbeddedResource Include="Resources\follower_shift.ogg" />
+        <EmbeddedResource Include="Resources\copycat_learn.ogg" />
+        <!-- Werewolf (Paket W1): button icons, world sprites + role sounds/music. The wolf-form
+             skin frames and the two button flipbooks live under Resources\anim\ and are already
+             covered by the anim wildcard below. -->
+        <EmbeddedResource Include="Resources\werewolf_transform.png" />
+        <EmbeddedResource Include="Resources\werewolf_revert.png" />
+        <EmbeddedResource Include="Resources\werewolf_form.png" />
+        <EmbeddedResource Include="Resources\werewolf_bloodring.png" />
+        <EmbeddedResource Include="Resources\overlay_wolfhead.png" />
+        <EmbeddedResource Include="Resources\werewolf_transform.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_revert.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_howl.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_growl.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_kill.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_silver.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_heartbeat.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_form_music.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_form_music2.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_form_music3.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_form_music4.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_form_music5.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_form_music6.ogg" />
+        <EmbeddedResource Include="Resources\werewolf_form_music7.ogg" />
+        <!-- Werewolf victory scene (Paket W4): the moon plus the STILL of the victory flipbook.
+             The 24 werewolf_victory frames themselves live under Resources\anim\ and are already
+             covered by the anim wildcard below. -->
+        <EmbeddedResource Include="Resources\werewolf_moon.png" />
+        <EmbeddedResource Include="Resources\werewolf_victory.png" />
+        <!-- Hunter (Paket W2): kill-button icon, the two flipbook stills and the W4 kill-overlay prop.
+             The hunter_skin/hunter_shoot/werewolf_death FRAMES live under Resources\anim\ and are
+             already covered by the anim wildcard below; werewolf_silver.ogg is embedded by W1 above. -->
+        <EmbeddedResource Include="Resources\hunter_shoot.png" />
+        <EmbeddedResource Include="Resources\hunter_skin.png" />
+        <EmbeddedResource Include="Resources\werewolf_death.png" />
+        <EmbeddedResource Include="Resources\overlay_silverbolt.png" />
+        <!-- Pelican (Paket W3): swallow-button icon, belly HUD sprite, the W4 kill-overlay prop and
+             the role's sound set (croaks + the three-part hunt score: intro, six loop variants,
+             graceful-end outro). The pelican_swallow FRAMES live under Resources\anim\ and are
+             already covered by the anim wildcard below. -->
+        <EmbeddedResource Include="Resources\pelican_swallow.png" />
+        <EmbeddedResource Include="Resources\pelican_belly.png" />
+        <EmbeddedResource Include="Resources\overlay_pelican.png" />
+        <EmbeddedResource Include="Resources\pelican_swallow.ogg" />
+        <EmbeddedResource Include="Resources\pelican_digest.ogg" />
+        <EmbeddedResource Include="Resources\pelican_release.ogg" />
+        <EmbeddedResource Include="Resources\pelican_call.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt_intro.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt_music.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt_music2.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt_music3.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt_music4.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt_music5.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt_music6.ogg" />
+        <EmbeddedResource Include="Resources\pelican_hunt_end.ogg" />
+        <!-- Reactor score (Paket R): the reactor/seismic sabotage soundtrack. Intro (3.2 s), six
+             16 s loop variants (all 120 BPM / F minor, so one intro and one finale fit all of
+             them) and the two finales - boom (9.5 s, blast onset at 7.98 s) and fixed (4 s).
+             Music-channel only: played through UCMusic (cue "reactor", priority 100). -->
+        <EmbeddedResource Include="Resources\reactor_intro.ogg" />
+        <EmbeddedResource Include="Resources\reactor_music.ogg" />
+        <EmbeddedResource Include="Resources\reactor_music2.ogg" />
+        <EmbeddedResource Include="Resources\reactor_music3.ogg" />
+        <EmbeddedResource Include="Resources\reactor_music4.ogg" />
+        <EmbeddedResource Include="Resources\reactor_music5.ogg" />
+        <EmbeddedResource Include="Resources\reactor_music6.ogg" />
+        <EmbeddedResource Include="Resources\reactor_boom.ogg" />
+        <EmbeddedResource Include="Resources\reactor_fixed.ogg" />
         <!-- Animated button icon frames (16 per icon, AssetGen anim/ output). Default logical
              names: UnknownsCollection.Resources.anim.<file> - matched by UCAssets.GetFrames(). -->
         <EmbeddedResource Include="Resources\anim\*.png" />
@@ -128,6 +195,10 @@
         <PackageReference Include="BepInEx.IL2CPP.MSBuild" Version="2.1.0-rc.1" />
         <PackageReference Include="BepInEx.Unity.IL2CPP" Version="6.0.0-be.697" />
         <PackageReference Include="Reactor" Version="2.3.1" />
+        <!-- Ogg-Vorbis decoder (pure C#, MIT). Merged into UnknownsCollection.dll by the
+             MergeNVorbis target below so the mod stays a single deliverable file. -->
+        <PackageReference Include="NVorbis" Version="0.10.5" />
+        <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.34.2" PrivateAssets="all" />
     </ItemGroup>
 
     <!-- TOR DLL location: defaults to the local build, overridable in CI via -p:TheOtherRolesDll=... -->
@@ -143,7 +214,10 @@
         </Reference>
     </ItemGroup>
 
-    <Target Name="CopyCustomContent" AfterTargets="AfterBuild" Condition="Exists('$(AmongUsLatest)/BepInEx/plugins/')">
+    <!-- The NVorbis merge itself lives in ILRepack.targets (the convention file the
+         ILRepack.Lib.MSBuild.Task package picks up; its "ILRepacker" target runs after Build).
+         CopyCustomContent hangs off that target so the plugins folder always gets the MERGED DLL. -->
+    <Target Name="CopyCustomContent" AfterTargets="ILRepacker" Condition="Exists('$(AmongUsLatest)/BepInEx/plugins/')">
         <Message Text="Copying UnknownsCollection to BepInEx plugins" />
         <Copy SourceFiles="$(ProjectDir)\bin\$(Configuration)\net6.0\UnknownsCollection.dll" DestinationFolder="$(AmongUsLatest)/BepInEx/plugins/" />
     </Target>

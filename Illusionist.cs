@@ -59,7 +59,7 @@ namespace UnknownsCollection {
         private static float recordStart;
         private static float lastSample;
 
-        // ---- Custom RPC (195) subtypes ----
+        // ---- Custom RPC subtypes: module byte 195 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 195; // == UnknownsCollectionPlugin.IllusionistRpcId
         private const byte SubSetIllusionist = 0; // illusionistId
         private const byte SubSpawnClone = 1;     // count, then count*(x,y) floats
@@ -95,7 +95,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { /* all patches are attribute-based */ }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         // ====================================================================
         // Helpers
@@ -117,8 +122,7 @@ namespace UnknownsCollection {
         // Custom RPC senders (each applies locally too)
         // ====================================================================
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -192,42 +196,39 @@ namespace UnknownsCollection {
         // ====================================================================
         // RPC receiver
         // ====================================================================
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetIllusionist: ApplySetIllusionist(reader.ReadByte()); break;
-                        case SubSpawnClone: {
-                            bool first = reader.ReadBoolean();
-                            bool last = reader.ReadBoolean();
-                            int count = reader.ReadInt32();
-                            if (first) { rxPts.Clear(); rxVnt.Clear(); }
-                            for (int i = 0; i < count; i++) {
-                                rxPts.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
-                                rxVnt.Add(reader.ReadBoolean());
-                            }
-                            if (last) {
-                                IllusionistClone.Spawn(new List<Vector2>(rxPts), new List<bool>(rxVnt), SampleInterval);
-                                rxPts.Clear(); rxVnt.Clear();
-                            }
-                            break;
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetIllusionist: ApplySetIllusionist(reader.ReadByte()); break;
+                    case SubSpawnClone: {
+                        bool first = reader.ReadBoolean();
+                        bool last = reader.ReadBoolean();
+                        int count = reader.ReadInt32();
+                        if (first) { rxPts.Clear(); rxVnt.Clear(); }
+                        for (int i = 0; i < count; i++) {
+                            rxPts.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
+                            rxVnt.Add(reader.ReadBoolean());
                         }
-                        case SubFlash:
-                            IllusionistClone.Flash(0.4f);
-                            // Sound is Illusionist-only: on non-Illusionist clients this is skipped, so the
-                            // block ping no longer leaks the clone-hit to bystanders. Flash stays public.
-                            if (IsLocalIllusionist()) UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position());
-                            break;
-                        case SubDespawn: IllusionistClone.DespawnWithFx(); break;
+                        if (last) {
+                            IllusionistClone.Spawn(new List<Vector2>(rxPts), new List<bool>(rxVnt), SampleInterval);
+                            rxPts.Clear(); rxVnt.Clear();
+                        }
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] HandleRpc failed: {e}");
+                    case SubFlash:
+                        IllusionistClone.Flash(0.4f);
+                        // Sound is Illusionist-only: on non-Illusionist clients this is skipped, so the
+                        // block ping no longer leaks the clone-hit to bystanders. Flash stays public.
+                        if (IsLocalIllusionist()) UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position());
+                        break;
+                    case SubDespawn: IllusionistClone.DespawnWithFx(); break;
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] HandleRpc failed: {e}");
             }
         }
 

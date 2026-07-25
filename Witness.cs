@@ -66,7 +66,7 @@ namespace UnknownsCollection {
         // Host-only: a pending body-report reveal (reporter, killer, victim) to flush at meeting start.
         private static byte pendingReporter = byte.MaxValue;
 
-        // ---- Custom RPC (197) subtypes ----
+        // ---- Custom RPC subtypes: module byte 197 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 197; // == UnknownsCollectionPlugin.WitnessRpcId
         private const byte SubSetWitness = 0; // witnessId
         private const byte SubWitnessed = 1;  // killerId, victimId
@@ -100,7 +100,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { /* all patches are attribute-based */ }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         // ====================================================================
         // Helpers
@@ -137,8 +142,7 @@ namespace UnknownsCollection {
         // Custom RPC senders (each applies locally too)
         // ====================================================================
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -233,23 +237,20 @@ namespace UnknownsCollection {
         // ====================================================================
         // RPC receiver
         // ====================================================================
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetWitness: ApplySetWitness(reader.ReadByte()); break;
-                        case SubWitnessed: { byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyWitnessed(k, v); break; }
-                        case SubReveal: { byte r = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyReveal(r, k, v); break; }
-                        case SubNote: { byte rc = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyNote(rc, k, v); break; }
-                    }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Witness] HandleRpc failed: {e}");
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetWitness: ApplySetWitness(reader.ReadByte()); break;
+                    case SubWitnessed: { byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyWitnessed(k, v); break; }
+                    case SubReveal: { byte r = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyReveal(r, k, v); break; }
+                    case SubNote: { byte rc = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyNote(rc, k, v); break; }
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Witness] HandleRpc failed: {e}");
             }
         }
 

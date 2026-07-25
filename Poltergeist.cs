@@ -88,7 +88,7 @@ namespace UnknownsCollection {
         public const int HexNightVision = 2;
         private static int hexMode = HexSpeed;
 
-        // ---- Custom RPC (208) subtypes ----
+        // ---- Custom RPC subtypes: module byte 208 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = UnknownsCollectionPlugin.PoltergeistRpcId;
         private const byte SubSetPoltergeist = 0;  // playerId
         private const byte SubDoorHaunt = 1;       // doorId(int), duration(float)
@@ -153,7 +153,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         // ---- Shared helpers ----
 
@@ -178,8 +183,7 @@ namespace UnknownsCollection {
         // ---- RPC plumbing ----
 
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -353,7 +357,10 @@ namespace UnknownsCollection {
         };
 
         // Reactor-style critical system that is currently active and holds user consoles, or 0.
-        private static SystemTypes ActiveReactorSystem() {
+        // INTERNAL (was private) so ReactorMusic.cs can reuse the exact same probe instead of
+        // growing a second, subtly different one - "reactor or seismic stabilizers, whichever this
+        // map has" is one question with one answer. Nothing else about this method changed.
+        internal static SystemTypes ActiveReactorSystem() {
             try {
                 var ship = ShipStatus.Instance;
                 if (ship == null) return 0;
@@ -438,36 +445,33 @@ namespace UnknownsCollection {
             public static void Postfix() { ResetAll(); }
         }
 
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetPoltergeist: ApplySetPoltergeist(reader.ReadByte()); break;
-                        case SubDoorHaunt: {
-                            int doorId = reader.ReadInt32();
-                            float dur = reader.ReadSingle();
-                            ApplyDoorHaunt(doorId, dur);
-                            break;
-                        }
-                        case SubHex: {
-                            byte target = reader.ReadByte();
-                            byte mode = reader.ReadByte();
-                            float dur = reader.ReadSingle();
-                            ApplyHex(target, mode, dur);
-                            break;
-                        }
-                        case SubHandStart: ApplyHandStart(); break;
-                        case SubHandStop: ApplyHandStop(); break;
-                        default: PoltergeistManifest.HandleRpc(subtype, reader); break;
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetPoltergeist: ApplySetPoltergeist(reader.ReadByte()); break;
+                    case SubDoorHaunt: {
+                        int doorId = reader.ReadInt32();
+                        float dur = reader.ReadSingle();
+                        ApplyDoorHaunt(doorId, dur);
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] HandleRpc failed: {e}");
+                    case SubHex: {
+                        byte target = reader.ReadByte();
+                        byte mode = reader.ReadByte();
+                        float dur = reader.ReadSingle();
+                        ApplyHex(target, mode, dur);
+                        break;
+                    }
+                    case SubHandStart: ApplyHandStart(); break;
+                    case SubHandStop: ApplyHandStop(); break;
+                    default: PoltergeistManifest.HandleRpc(subtype, reader); break;
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] HandleRpc failed: {e}");
             }
         }
 

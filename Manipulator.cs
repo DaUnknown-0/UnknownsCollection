@@ -56,7 +56,7 @@ namespace UnknownsCollection {
         private static float fakeUntil;
         private static int fakeSeed;
 
-        // ---- Custom RPC (210) subtypes ----
+        // ---- Custom RPC subtypes: module byte 210 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = UnknownsCollectionPlugin.ManipulatorRpcId;
         private const byte SubSetManipulator = 0; // playerId
         private const byte SubManipulate = 1;     // seed(int), duration(float)
@@ -90,7 +90,12 @@ namespace UnknownsCollection {
             }
         }
 
-        public static void TryPatch(Harmony harmony) { }
+        public static void TryPatch(Harmony harmony) {
+            // Receiver registration for the shared UC channel (UCRpc.CallId = 230). Every module
+            // registers here even when it has no Harmony work left to do - TryPatch is the single
+            // place UnknownsCollectionPlugin.Load() calls for every module.
+            UCRpc.Register(RpcId, HandleModuleRpc);
+        }
 
         private static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
@@ -104,8 +109,7 @@ namespace UnknownsCollection {
         // ---- RPC plumbing ----
 
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -148,26 +152,23 @@ namespace UnknownsCollection {
 
         public static void MarkFromDraft(byte playerId) => ApplySetManipulator(playerId);
 
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetManipulator: ApplySetManipulator(reader.ReadByte()); break;
-                        case SubManipulate: {
-                            int seed = reader.ReadInt32();
-                            float dur = reader.ReadSingle();
-                            ApplyManipulate(seed, dur);
-                            break;
-                        }
+        // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
+        // already consumed the module byte, so this starts at the subtype byte - the wire
+        // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetManipulator: ApplySetManipulator(reader.ReadByte()); break;
+                    case SubManipulate: {
+                        int seed = reader.ReadInt32();
+                        float dur = reader.ReadSingle();
+                        ApplyManipulate(seed, dur);
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Manipulator] HandleRpc failed: {e}");
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Manipulator] HandleRpc failed: {e}");
             }
         }
 

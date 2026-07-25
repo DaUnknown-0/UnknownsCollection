@@ -73,7 +73,8 @@ namespace UnknownsCollection {
         // Everyone charged so far this game - excluded from future selections (no repeats).
         public static readonly System.Collections.Generic.HashSet<byte> chargedHistory = new();
 
-        // ---- Custom RPC (190) subtypes ----
+        // ---- Custom RPC: module byte 190 inside the shared UC channel (UCRpc.CallId = 230) ----
+        // The value is unchanged from the days when 190 was its own callId, so logs/docs still match.
         private const byte RpcId = 190; // == UnknownsCollectionPlugin.TeslaRpcId
         private const byte SubSetTesla = 0;   // teslaId
         private const byte SubSetCharges = 1; // plusId, minusId
@@ -125,6 +126,7 @@ namespace UnknownsCollection {
         // (Everything else is attribute-based and picked up by PatchAll.)
         // ====================================================================
         public static void TryPatch(Harmony harmony) {
+            UCRpc.Register(RpcId, HandleModuleRpc);
             try {
                 var torAsm = typeof(CustomOption).Assembly;
                 try {
@@ -181,8 +183,7 @@ namespace UnknownsCollection {
         // Custom RPC senders (each also applies locally; the sender never receives its own RPC)
         // ====================================================================
         private static MessageWriter BeginRpc(byte subtype) {
-            MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
-                PlayerControl.LocalPlayer.NetId, RpcId, SendOption.Reliable, -1);
+            MessageWriter w = UCRpc.Begin(RpcId); // shared UC channel; RpcId is the module byte
             w.Write(subtype);
             return w;
         }
@@ -314,35 +315,30 @@ namespace UnknownsCollection {
         }
 
         // ====================================================================
-        // RPC receiver
+        // RPC receiver (registered on the shared UC channel in TryPatch; the module byte is already
+        // consumed by UCRpc's dispatcher, so this starts at the subtype byte exactly as before).
         // ====================================================================
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class HandleRpcPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
-                if (callId != RpcId) return true;
-                try {
-                    byte subtype = reader.ReadByte();
-                    switch (subtype) {
-                        case SubSetTesla: ApplySetTesla(reader.ReadByte()); break;
-                        case SubSetCharges: {
-                            byte p = reader.ReadByte();
-                            byte m = reader.ReadByte();
-                            ApplySetCharges(p, m);
-                            break;
-                        }
-                        case SubClear: ApplyClear(); break;
-                        case SubKillFx: {
-                            byte p = reader.ReadByte();
-                            byte m = reader.ReadByte();
-                            ApplyKillFx(p, m);
-                            break;
-                        }
+        private static void HandleModuleRpc(MessageReader reader) {
+            try {
+                byte subtype = reader.ReadByte();
+                switch (subtype) {
+                    case SubSetTesla: ApplySetTesla(reader.ReadByte()); break;
+                    case SubSetCharges: {
+                        byte p = reader.ReadByte();
+                        byte m = reader.ReadByte();
+                        ApplySetCharges(p, m);
+                        break;
                     }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] HandleRpc failed: {e}");
+                    case SubClear: ApplyClear(); break;
+                    case SubKillFx: {
+                        byte p = reader.ReadByte();
+                        byte m = reader.ReadByte();
+                        ApplyKillFx(p, m);
+                        break;
+                    }
                 }
-                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] HandleRpc failed: {e}");
             }
         }
 

@@ -319,9 +319,14 @@ namespace UnknownsCollection {
 
         private static bool ChargeReady() => chargeLeft <= 0f;
 
+        // LightsSabotageActive is part of the condition, not just of the charging: the beast comes out
+        // IN THE DARK. Without it a wolf could bank a full charge during one blackout and then
+        // transform minutes later in broad daylight, which defeats the whole point of the alpha mode
+        // (and of the crew fixing the lights at all).
         public static bool CanTransformNow() =>
             active && IsLocalWerewolf() && IsAlive(werewolf) && !wolfForm && !InMeeting()
-            && ChargeReady() && (OnlyAsLastImpostor == null || !OnlyAsLastImpostor.getBool() || IsLastImpostor());
+            && ChargeReady() && LightsSabotageActive()
+            && (OnlyAsLastImpostor == null || !OnlyAsLastImpostor.getBool() || IsLastImpostor());
 
         private static string MusicClipName() =>
             musicVariant <= 0 ? "werewolf_form_music" : $"werewolf_form_music{musicVariant + 1}";
@@ -787,8 +792,16 @@ namespace UnknownsCollection {
                 && !IsFrameOf(transformButton.Sprite, wolfForm)) transformButton.Sprite = icon;
             // CustomButton re-applies buttonText every Update (Objects/CustomButton.cs:236), so the
             // label can simply be swapped here instead of rebuilding the button.
-            transformButton.buttonText = UCLocalization.Tr(
+            string label = UCLocalization.Tr(
                 wolfForm ? "uc.ui.werewolf.button_revert" : "uc.ui.werewolf.button_transform");
+            if (wolfForm) {
+                // How much wolf time is left. It cannot go on the cooldown ring: CustomButton only
+                // fires onClick while Timer < 0, so a running timer there would lock the werewolf into
+                // its form. The label is the one place that shows a number without disabling the button.
+                int left = Mathf.CeilToInt(Mathf.Max(0f, formEndTime - Time.time));
+                label += $" ({left}s)";
+            }
+            transformButton.buttonText = label;
 
             if (wolfForm) {
                 // Reverting is always allowed - no cooldown ring, the button must be clickable

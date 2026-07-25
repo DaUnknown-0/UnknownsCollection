@@ -62,7 +62,31 @@ namespace UnknownsCollection {
                         !UnknownsCollectionPlugin.KillAnimationsTOR.Value;
                     return UnknownsCollectionPlugin.KillAnimationsTOR.Value;
                 },
-                () => UnknownsCollectionPlugin.KillAnimationsTOR.Value)
+                () => UnknownsCollectionPlugin.KillAnimationsTOR.Value),
+            // Music beds. Like the kill cutscenes these are local taste, so they belong here next to
+            // them rather than in the host's game options. (The reactor score also has a HOST option
+            // deciding whether it plays at all this round; this switch only mutes it for this client.)
+            new(() => UCLocalization.Tr("uc.ui.options.music_werewolf_toggle"),
+                () => {
+                    UnknownsCollectionPlugin.MusicWerewolf.Value =
+                        !UnknownsCollectionPlugin.MusicWerewolf.Value;
+                    return UnknownsCollectionPlugin.MusicWerewolf.Value;
+                },
+                () => UnknownsCollectionPlugin.MusicWerewolf.Value),
+            new(() => UCLocalization.Tr("uc.ui.options.music_pelican_toggle"),
+                () => {
+                    UnknownsCollectionPlugin.MusicPelican.Value =
+                        !UnknownsCollectionPlugin.MusicPelican.Value;
+                    return UnknownsCollectionPlugin.MusicPelican.Value;
+                },
+                () => UnknownsCollectionPlugin.MusicPelican.Value),
+            new(() => UCLocalization.Tr("uc.ui.options.music_reactor_toggle"),
+                () => {
+                    UnknownsCollectionPlugin.MusicReactor.Value =
+                        !UnknownsCollectionPlugin.MusicReactor.Value;
+                    return UnknownsCollectionPlugin.MusicReactor.Value;
+                },
+                () => UnknownsCollectionPlugin.MusicReactor.Value)
         };
 
         [HarmonyPostfix]

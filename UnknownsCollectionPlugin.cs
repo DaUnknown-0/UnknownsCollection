@@ -95,7 +95,13 @@ public class UnknownsCollectionPlugin : BasePlugin
 
         var enabled = Config.Bind("General", "Enabled", true, "Enable this mod");
         if (!enabled.Value) {
-            Logger.LogInfo($"{PluginName} is disabled in config - skipping load.");
+            // Register in the Mod Manager EVEN WHEN DISABLED, then stop. Without this the mod
+            // vanishes from the manager's list the moment someone switches it off - and the only
+            // switch to turn it back on lives in exactly that list, so the mod could never be
+            // re-enabled from inside the game (chicken and egg; it took editing the .cfg by hand).
+            // Nothing else runs: no patches, no options, no RPC channel.
+            RegisterInModManager(enabled);
+            Logger.LogInfo($"{PluginName} is disabled in config - skipping load (still listed in the Mod Manager).");
             return;
         }
 
@@ -313,7 +319,9 @@ public class UnknownsCollectionPlugin : BasePlugin
                 { "RepositoryName", UnknownsCollectionUpdater.RepositoryName },
                 { "ButtonColor", new Color(0.12f, 0.72f, 1f) }, // electric cyan
                 { "Enabled", enabled },
-                { "RuntimeEnabled", true }
+                // False while the mod sits disabled: its patches never ran this session, so a
+                // re-enable needs a restart. The manager still shows the entry and its switch.
+                { "RuntimeEnabled", enabled.Value }
             };
             AppDomain.CurrentDomain.SetData($"ModManager.RegisteredMod.{PluginGuid}", modData);
 

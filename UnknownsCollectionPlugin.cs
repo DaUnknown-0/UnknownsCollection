@@ -258,6 +258,11 @@ public class UnknownsCollectionPlugin : BasePlugin
         // Trap cleanup registration (frees trap-frozen players on round reset AND game end).
         SaboteurTrap.Init();
 
+        // Own custom hats ("Virus", "Werbetafel"). Extracts its PNGs into TOR's TheOtherHats folder
+        // and registers them through reflection - TOR itself stays untouched (see UCHats.cs).
+        // Purely cosmetic, deliberately NOT gated on the mod handshake.
+        UCHats.TryPatch(harmony);
+
         Logger.LogInfo($"{PluginName} v{PluginVersion} loaded.");
     }
 

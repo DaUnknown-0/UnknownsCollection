@@ -21,6 +21,9 @@
  *   - An optional tint color multiplies the renderer (Hunter: the player's own colour, so the crew
  *     still recognises "their sheriff" under the hunter garb; Werewolf: left null - one beast per
  *     round, no need to tell it apart from itself).
+ *   - SIGHT is applied by hand: the renderer fades out at the edge of the LOCAL player's light radius
+ *     and disappears behind walls, because a plain SpriteRenderer carries none of the vanilla player
+ *     material that normally hides a crewmate in the dark (see VisibilityAlpha).
  *   - The NAME TAG is lifted by exactly as much as the replacement is taller than the crewmate body it
  *     hides, so name + TOR's role line keep the same distance to the head they have on a vanilla
  *     crewmate instead of being swallowed by the beast's skull. The whole "Names" parent is moved (name,
@@ -133,6 +136,41 @@ namespace UnknownsCollection {
             owner = null;
         }
 
+        // ---- sight ----
+        // A hand-drawn SpriteRenderer is NOT a crewmate: it carries none of the vanilla player material,
+        // so nothing hides it once the owner walks out of the viewer's torch cone or behind a wall - the
+        // beast (and the hunter) would light up across the whole map. The renderer is therefore faded by
+        // hand against the LOCAL player's own light radius. ShipStatus.CalculateLightRadius is the right
+        // source because everything that widens or narrows a view already ends up in it: the Lighter's
+        // torch, a lights sabotage, the impostor light mod, and this mod's own Beacon/Scout/Poltergeist
+        // postfixes. Walls use the same probe TOR uses to decide whether a player can be targeted.
+        private const float FadeBand = 0.22f;   // fraction of the radius the figure fades out over
+
+        private float VisibilityAlpha() {
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (me == null || me.Data == null || owner == null) return 1f;
+                if (me.Data.IsDead) return 1f;                      // ghosts see the whole map anyway
+                if (owner.PlayerId == me.PlayerId) return 1f;       // your own costume is always yours
+                var ship = ShipStatus.Instance;
+                if (ship == null) return 1f;                        // no ship (lobby/intro): never hide
+
+                float radius = ship.CalculateLightRadius(me.Data);
+                if (radius <= 0f) return 0f;
+                Vector2 from = me.GetTruePosition();
+                Vector2 diff = owner.GetTruePosition() - from;
+                float dist = diff.magnitude;
+                if (dist > radius) return 0f;
+                if (PhysicsHelpers.AnyNonTriggersBetween(from, diff.normalized, dist,
+                                                         Constants.ShipAndObjectsMask)) return 0f;
+
+                float band = radius * FadeBand;
+                return band <= 0.001f ? 1f : Mathf.Clamp01((radius - dist) / band);
+            } catch {
+                return 1f;   // never let a sight probe make the transformation invisible by accident
+            }
+        }
+
         // ---- name tag ----
 
         private void SetupNameLift(PlayerControl player, SpriteRenderer body) {
@@ -234,7 +272,11 @@ namespace UnknownsCollection {
             var set = walking ? walkFrames : idleFrames;
             float fps = walking ? walkFps : idleFps;
             renderer.sprite = set[(int)((Time.time - start) * fps) % set.Length];
-            renderer.color = tint;
+
+            // Sight: the replacement obeys the viewer's own light exactly like the crewmate it hides.
+            float vis = VisibilityAlpha();
+            renderer.enabled = vis > 0.01f;
+            renderer.color = new Color(tint.r, tint.g, tint.b, tint.a * vis);
 
             // Facing: CosmeticsLayer.FlipX is what AU itself uses for the crewmate, so the skin always
             // looks the same way its owner does (including while standing still).

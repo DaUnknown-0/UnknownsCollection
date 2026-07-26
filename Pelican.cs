@@ -21,8 +21,8 @@
  *   RELEASE  If the Pelican dies first, every hidden corpse reappears ON HIS BODY. That is the built-in
  *            counterplay: killing the Pelican hands the crew every piece of evidence at once.
  *   HUNT     The moment exactly two players are alive and one of them is the Pelican, the hunt starts:
- *            a public countdown (option 1547), and for EVERYONE no meetings, no reports, no vents and
- *            no special abilities (the vanilla Impostor kill deliberately stays). Eats the last
+ *            a public countdown (option 1547), and for EVERYONE no meetings, no reports and no vents
+ *            (abilities and the vanilla Impostor kill deliberately stay - see below). Eats the last
  *            survivor -> the Pelican wins alone. Countdown runs out -> the survivor wins with HIS OWN
  *            team / win condition and the Pelican loses.
  *
@@ -58,9 +58,9 @@
  *    PlayerControl.CmdReportDeadBody PREFIX - the single funnel BOTH the report button and the
  *    emergency button go through, so blocking it there cannot be routed around. TOR patches that
  *    method too; returning false only skips the ORIGINAL, never TOR's prefix.
- *    Custom ability buttons are frozen by holding their Timer at 0.5 s every frame: CustomButton
- *    gates BOTH the click and the hotkey on Timer < 0 (Objects/CustomButton.cs:88, :261), so one
- *    write blocks mouse and keyboard at once, and the cooldown resumes by itself afterwards.
+ *    Ability BUTTONS are left alone: freezing every CustomButton's Timer did block them, but a whole
+ *    HUD of parked cooldowns reads as a broken game (playtest 2026-07-26), so the hunt restricts
+ *    movement and information instead of taking abilities away.
  *  - MUSIC runs on the UCMusic channel (cue "pelican_hunt", priority 50), never on SoundManager
  *    directly, so it can never layer over the werewolf form music or a reactor. The loop VARIANT is
  *    rolled once by the host and shipped inside the role-assignment RPC (the Werewolf does the same
@@ -149,7 +149,6 @@ namespace UnknownsCollection {
         private const float OutroFallbackSecs = 6.0f;
         private const float HuntSyncInterval = 5f;
         private const float CallInterval = 8f;
-        private const float FrozenButtonTimer = 0.5f; // held cooldown of every blocked ability button
 
         // ---- Custom RPC subtypes: module byte 212 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = UnknownsCollectionPlugin.PelicanRpcId;
@@ -828,27 +827,11 @@ namespace UnknownsCollection {
             }
         }
 
-        // Every OTHER custom ability button is frozen by holding its cooldown just above zero.
-        // CustomButton gates the click AND the hotkey on Timer < 0 (Objects/CustomButton.cs:88, :261),
-        // so one write per frame blocks mouse and keyboard together, the button visibly greys out, and
-        // the real cooldown simply resumes when the hunt ends. The vanilla Impostor kill button is not
-        // a CustomButton and is deliberately left alone - it is the one ability the hunt keeps.
-        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(Priority.Last)] // after TOR's own CustomButton.HudUpdate ran its timers down
-        static class AbilityFreezePatch {
-            public static void Postfix() {
-                try {
-                    if (!HuntRestrictionsActive()) return;
-                    var list = TheOtherRoles.Objects.CustomButton.buttons;
-                    if (list == null) return;
-                    for (int i = 0; i < list.Count; i++) {
-                        var b = list[i];
-                        if (b == null || ReferenceEquals(b, swallowButton)) continue;
-                        if (b.Timer < FrozenButtonTimer) b.Timer = FrozenButtonTimer;
-                    }
-                } catch { }
-            }
-        }
+        // Custom ability buttons are deliberately NOT touched by the hunt (playtest 2026-07-26).
+        // Holding every CustomButton's Timer just above zero did block click and hotkey, but it also
+        // parked every cooldown in plain sight and stalled abilities that were already running - on
+        // screen that reads as a stuck game, not as a rule. The hunt now restricts only what the 1-vs-1
+        // actually needs: meetings, reports, vents and (optionally) sabotage.
 
         // ====================================================================
         // End game: the guard, the win, the screen

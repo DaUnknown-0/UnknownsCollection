@@ -57,8 +57,22 @@ namespace UnknownsCollection {
         // keeps the props readable while the light-grey crewmate body still clearly reads as "yours".
         private const float TintStrength = 0.6f;
 
+        // The beast must not be handed its target. On the LIVING Werewolf's own client the costume is
+        // never put on: for him the Hunter keeps walking around as the ordinary crewmate he was, and the
+        // wolf has to work out who is hunting him the same way the crew works out who the wolf is.
+        // Everyone else sees the promotion instantly - that is still the point of the role.
+        // Dead werewolves are exempt: a ghost is shown every role anyway, hiding it there buys nothing.
+        private static bool HiddenFromLocalPlayer() {
+            try {
+                if (!Werewolf.active || !Werewolf.IsLocalWerewolf()) return false;
+                var me = PlayerControl.LocalPlayer;
+                return me != null && me.Data != null && !me.Data.IsDead;
+            } catch { return false; }
+        }
+
         public static void AttachSkin(PlayerControl player) {
             try {
+                if (HiddenFromLocalPlayer()) return;
                 Color tint = Color.white;
                 var colorId = player?.Data?.DefaultOutfit?.ColorId ?? -1;
                 var colors = Palette.PlayerColors;
@@ -73,7 +87,14 @@ namespace UnknownsCollection {
         public static void DetachSkin() => skin.Detach();
 
         private static void Tick() {
-            try { skin.Tick(); } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Hunter] skin tick: {e.Message}"); }
+            try {
+                // Belt-and-suspenders half of HiddenFromLocalPlayer: should the costume ever be on when
+                // the local werewolf is alive (a promotion racing the wolf assignment), take it off
+                // again. The reverse case needs no code - once the wolf dies, Hunter's per-frame driver
+                // re-dresses him within a second.
+                if (skin.Attached && HiddenFromLocalPlayer()) { skin.Detach(); return; }
+                skin.Tick();
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Hunter] skin tick: {e.Message}"); }
         }
 
         private static void Clear() {

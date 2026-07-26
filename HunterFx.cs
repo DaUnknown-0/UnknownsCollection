@@ -30,10 +30,11 @@ namespace UnknownsCollection {
         // anywhere near the beast (~2.2 units).
         private const float SkinPpu = 100f;
 
-        // Where the drawn figure ends inside its frame, measured from the BOTTOM (DrawHunterSkin puts
-        // the ground line at 0.90 and the hat crown at ~0.25 of the canvas, counted from the top).
-        // Only used to lift the name tag clear of the hat - see UCCharacterSkin.
-        private const float SkinContentTop = 0.77f;
+        // Where the drawn figure ends inside its frame, measured from the BOTTOM. Read off the
+        // rendered frame itself (content spans y 17..145 of 160 px), not off the drawing code: the
+        // 2026-07-26 redesign fills its canvas much better than the old one, and a stale value here
+        // would leave the name tag sitting in the hat. Only used for that lift - see UCCharacterSkin.
+        private const float SkinContentTop = 0.894f;
 
         private static readonly UCCharacterSkin skin =
             new UCCharacterSkin("Hunter", "hunter_skin_idle", 6, "hunter_skin_walk", 8, SkinPpu,

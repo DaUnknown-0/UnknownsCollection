@@ -23,13 +23,21 @@ using TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class HunterFx {
-        // 160 px source, same canvas convention as the wolf skin. Was 180 ppu, which read as smaller
-        // than the crewmate it replaces (the drawn figure does not fill its frame). 150 ppu puts him
-        // at ~1.07 units - recognisably "your sheriff", just a head taller.
-        private const float SkinPpu = 150f;
+        // 160 px source, same canvas convention as the wolf skin. History: 180 ppu (~0.89 units) read
+        // as smaller than the crewmate it replaces (the drawn figure does not fill its frame), 150 ppu
+        // (~1.07 units) was still only "a head taller". 100 ppu is exactly 150/1.5, i.e. 1.5x the
+        // previous size (~1.6 units): the hunter towers over the crew he protects, without coming
+        // anywhere near the beast (~2.2 units).
+        private const float SkinPpu = 100f;
+
+        // Where the drawn figure ends inside its frame, measured from the BOTTOM (DrawHunterSkin puts
+        // the ground line at 0.90 and the hat crown at ~0.25 of the canvas, counted from the top).
+        // Only used to lift the name tag clear of the hat - see UCCharacterSkin.
+        private const float SkinContentTop = 0.77f;
 
         private static readonly UCCharacterSkin skin =
-            new UCCharacterSkin("Hunter", "hunter_skin_idle", 6, "hunter_skin_walk", 8, SkinPpu);
+            new UCCharacterSkin("Hunter", "hunter_skin_idle", 6, "hunter_skin_walk", 8, SkinPpu,
+                                contentTop: SkinContentTop);
 
         static HunterFx() {
             UCFx.RegisterTick(Tick);

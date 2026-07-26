@@ -21,6 +21,11 @@
  *   - An optional tint color multiplies the renderer (Hunter: the player's own colour, so the crew
  *     still recognises "their sheriff" under the hunter garb; Werewolf: left null - one beast per
  *     round, no need to tell it apart from itself).
+ *   - The NAME TAG is lifted by exactly as much as the replacement is taller than the crewmate body it
+ *     hides, so name + TOR's role line keep the same distance to the head they have on a vanilla
+ *     crewmate instead of being swallowed by the beast's skull. The whole "Names" parent is moved (name,
+ *     role info and colourblind text together) and only its Y is touched, because TOR rewrites that
+ *     parent's Z every frame (PlayerControlPatch: SetLocalZ) to sort the tag behind map objects.
  *
  * One instance = one attach slot (one owner at a time), matching how both callers use it: Werewolf
  * has exactly one beast, Hunter has exactly one hunter per round.
@@ -33,7 +38,7 @@ namespace UnknownsCollection {
     public sealed class UCCharacterSkin {
         private readonly string idleBase, walkBase;
         private readonly int idleCount, walkCount;
-        private readonly float ppu, idleFps, walkFps, walkThreshold, z;
+        private readonly float ppu, idleFps, walkFps, walkThreshold, z, contentTop;
         private readonly string logTag;
 
         private Sprite[] idleFrames, walkFrames;
@@ -48,14 +53,23 @@ namespace UnknownsCollection {
         private float lastOwnerPosTime;
         private Color tint = Color.white;
 
+        private Transform nameParent;   // the "Names" holder: name + TOR role line + colourblind text
+        private float nameBaseY;        // its untouched local Y, restored on detach
+        private float nameLift;         // how far the tag is pushed up while the skin is attached
+
+        /// <param name="contentTop">
+        /// Where the drawn figure ends inside its frame, as a fraction of the frame height counted from
+        /// the BOTTOM (the sprites keep transparent margins, so the frame is taller than the character).
+        /// Used only to lift the name tag by the right amount; 0.8 is a sane default for these canvases.
+        /// </param>
         public UCCharacterSkin(string logTag, string idleBase, int idleCount, string walkBase, int walkCount,
                                 float ppu, float idleFps = 8f, float walkFps = 12f,
-                                float walkThreshold = 0.35f, float z = -0.06f) {
+                                float walkThreshold = 0.35f, float z = -0.06f, float contentTop = 0.8f) {
             this.logTag = logTag;
             this.idleBase = idleBase; this.idleCount = idleCount;
             this.walkBase = walkBase; this.walkCount = walkCount;
             this.ppu = ppu; this.idleFps = idleFps; this.walkFps = walkFps;
-            this.walkThreshold = walkThreshold; this.z = z;
+            this.walkThreshold = walkThreshold; this.z = z; this.contentTop = contentTop;
         }
 
         public bool Attached => go != null && owner != null;
@@ -101,7 +115,9 @@ namespace UnknownsCollection {
                 start = Time.time;
                 lastOwnerPos = player.GetTruePosition();
                 lastOwnerPosTime = Time.time;
+                SetupNameLift(player, body);
                 HideCosmetics(player);
+                LiftName();
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[{logTag}] Attach failed: {e}");
                 Detach();
@@ -109,11 +125,58 @@ namespace UnknownsCollection {
         }
 
         public void Detach() {
+            try { RestoreName(); } catch { }
             try { if (owner != null) RestoreCosmetics(owner); } catch { }
             try { if (go != null) UnityEngine.Object.Destroy(go); } catch { }
             go = null;
             renderer = null;
             owner = null;
+        }
+
+        // ---- name tag ----
+
+        private void SetupNameLift(PlayerControl player, SpriteRenderer body) {
+            nameParent = null;
+            nameLift = 0f;
+            try {
+                var tag = player.cosmetics != null ? player.cosmetics.nameText : null;
+                if (tag == null || tag.transform == null || tag.transform.parent == null) return;
+
+                // Top of the crewmate the skin replaces, and top of the drawn figure - both in the
+                // player's own local space. Anything the skin adds on top is what the tag has to clear.
+                float bodyTop = body != null ? body.bounds.max.y - player.transform.position.y : 0.35f;
+                float skinTop = feetLocalY + idleFrames[0].bounds.size.y * contentTop;
+                float lift = skinTop - bodyTop;
+                if (lift <= 0.01f) return;      // skin no taller than the crewmate: leave the tag alone
+
+                nameParent = tag.transform.parent;
+                nameBaseY = nameParent.localPosition.y;
+                nameLift = lift;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[{logTag}] name lift setup failed: {e.Message}");
+                nameParent = null;
+                nameLift = 0f;
+            }
+        }
+
+        // Re-applied every frame like HideCosmetics: the tag holder is re-positioned by AU and by TOR
+        // (Z sorting) behind our back, and Y must survive all of it. Only Y is written.
+        private void LiftName() {
+            if (nameParent == null || nameLift <= 0f) return;
+            try {
+                var lp = nameParent.localPosition;
+                nameParent.localPosition = new Vector3(lp.x, nameBaseY + nameLift, lp.z);
+            } catch { }
+        }
+
+        private void RestoreName() {
+            if (nameParent == null) return;
+            try {
+                var lp = nameParent.localPosition;
+                nameParent.localPosition = new Vector3(lp.x, nameBaseY, lp.z);
+            } catch { }
+            nameParent = null;
+            nameLift = 0f;
         }
 
         private static void HideCosmetics(PlayerControl p) {
@@ -182,6 +245,7 @@ namespace UnknownsCollection {
             // Re-hide every frame - night vision (setLook), morph/camouflage and the vanilla animator
             // all re-enable these renderers behind our back.
             HideCosmetics(owner);
+            LiftName();
         }
     }
 }

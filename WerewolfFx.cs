@@ -55,8 +55,15 @@ namespace UnknownsCollection {
         // is exactly half of 145, i.e. DOUBLE the previous size (~2.2 units, roughly three crewmates
         // tall). The beast is meant to be unmistakable when it steps into the dark.
         private const float SkinPpu = 72.5f;
+
+        // Where the drawn beast ends inside its frame, measured from the BOTTOM (DrawWerewolfSkin puts
+        // the ground line at 0.90 and the ear tips at ~0.18 of the canvas, counted from the top).
+        // Only used to lift the name tag clear of the head - see UCCharacterSkin.
+        private const float SkinContentTop = 0.82f;
+
         private static readonly UCCharacterSkin skin =
-            new UCCharacterSkin("Werewolf", "werewolf_skin_idle", 6, "werewolf_skin_walk", 8, SkinPpu);
+            new UCCharacterSkin("Werewolf", "werewolf_skin_idle", 6, "werewolf_skin_walk", 8, SkinPpu,
+                                contentTop: SkinContentTop);
 
         // ---- blood rings ----
         private sealed class Ring {

@@ -18,8 +18,12 @@
  *            swallowed are finally, unambiguously dead. (They already were - Among Us has no living
  *            "inside the belly" state and no in-game voice, so the GGD original's living stomach
  *            chat is adapted to "hidden-dead until digested or released"; see WEREWOLF_PLAN.md §10.)
- *   RELEASE  If the Pelican dies first, every hidden corpse reappears ON HIS BODY. That is the built-in
- *            counterplay: killing the Pelican hands the crew every piece of evidence at once.
+ *   RELEASE  If the Pelican dies first, everyone still in the belly comes back ALIVE around his corpse
+ *            (playtest 2026-07-26; they used to reappear as bodies). That is the built-in counterplay,
+ *            and a much sharper one: kill him early and you get your crew back, kill him late and the
+ *            meeting has already digested them. While they are in there the VITALS station lists them
+ *            as alive - the one readout that answers "is he still with us", and a swallowed player
+ *            still can be.
  *   HUNT     The moment exactly two players are alive and one of them is the Pelican, the hunt starts:
  *            a public countdown (option 1547), and for EVERYONE no meetings, no reports and no vents
  *            (abilities and the vanilla Impostor kill deliberately stay - see below). Eats the last
@@ -698,34 +702,123 @@ namespace UnknownsCollection {
             }
         }
 
-        // Bodies reappear around the given position (a small ring so several corpses do not stack into
-        // one unreadable pile). Cannot run twice: the lists are cleared in the same call, and every
-        // client keeps its own copy, so there is no second, remote trigger either.
+        // The Pelican falls -> everyone still in the belly walks back out ALIVE, in a small ring around
+        // his corpse (playtest decision 2026-07-26; before this they came back as bodies). Only the
+        // undigested are in these lists at all: a meeting empties them for good, so anyone swallowed
+        // before the last meeting stays dead. That keeps the counterplay sharp - kill him early and you
+        // get your crew back, kill him late and you only get the evidence.
+        //
+        // No RPC: like the swallow list itself, every client runs this from identical synced inputs
+        // (PlayerControl.MurderPlayer / Exiled fire everywhere), so each one revives the same people.
+        // The pieces that are NOT purely local are handled by the one client that owns them - the host
+        // marks the player info dirty so late state stays right, and the revived player's own client is
+        // the only one allowed to move him.
         private static void ReleaseAll(Vector2 at) {
             if (swallowed.Count == 0 && swallowedBodies.Count == 0) return;
-            int i = 0;
-            int n = Mathf.Max(1, swallowedBodies.Count);
-            foreach (var kvp in swallowedBodies) {
-                var db = kvp.Value;
-                if (db == null) { i++; continue; }
-                try {
-                    float a = (Mathf.PI * 2f) * i / n;
-                    float r = n == 1 ? 0.0f : 0.45f;
-                    var go = db.gameObject;
-                    go.transform.position = new Vector3(at.x + Mathf.Cos(a) * r, at.y + Mathf.Sin(a) * r,
-                                                        go.transform.position.z);
-                    go.SetActive(true);
-                } catch { }
-                i++;
+
+            var ids = new List<byte>(swallowed);
+            int n = Mathf.Max(1, ids.Count);
+            for (int i = 0; i < ids.Count; i++) {
+                float a = (Mathf.PI * 2f) * i / n;
+                float r = ids.Count == 1 ? 0f : 0.55f;
+                RevivePlayer(ids[i], new Vector2(at.x + Mathf.Cos(a) * r, at.y + Mathf.Sin(a) * r));
             }
-            int released = swallowedBodies.Count;
+
+            // The hidden corpses go with them - a body left behind would be reportable evidence of a
+            // player who is standing right there.
+            foreach (var kvp in swallowedBodies) {
+                try { if (kvp.Value != null) UnityEngine.Object.Destroy(kvp.Value.gameObject); } catch { }
+            }
+
+            int released = ids.Count;
             swallowedBodies.Clear();
             swallowed.Clear();
             pendingHide.Clear();
             PelicanHud.HideBelly();
             if (released > 0) {
                 try { UCAssets.PlayPelicanReleaseAt(at); } catch { }
-                UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] Released {released} body/bodies on the Pelican's corpse.");
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] Released {released} player(s) alive from the belly.");
+            }
+        }
+
+        // TOR's GameHistory is an INTERNAL static class, so its death ledger is reached by reflection
+        // (the same shape UCRoleDraft uses for TOR's internal draft data). The FieldInfo is cached but
+        // the VALUE never is: clearGameHistory() assigns a brand new list every round, so a cached list
+        // would be last round's. A failure here is survivable - the player is alive either way, the
+        // meeting would just still print him as murdered.
+        private static FieldInfo deadPlayersField;
+        private static bool ledgerTried;
+
+        private static List<DeadPlayer> DeadPlayersLedger() {
+            if (!ledgerTried) {
+                ledgerTried = true;
+                try {
+                    var t = AccessTools.TypeByName("TheOtherRoles.GameHistory");
+                    deadPlayersField = t?.GetField("deadPlayers", BindingFlags.Public | BindingFlags.Static);
+                    if (deadPlayersField == null)
+                        UnknownsCollectionPlugin.Logger?.LogWarning(
+                            "[Pelican] GameHistory.deadPlayers not found - revived players stay in TOR's death list.");
+                } catch { }
+            }
+            try { return deadPlayersField?.GetValue(null) as List<DeadPlayer>; } catch { return null; }
+        }
+
+        // One victim back on his feet. PlayerControl.Revive() is the game's own path (TOR uses it for
+        // PropHunt's "prop becomes hunter", CustomGameModes/PropHunt.cs:500), so animation state,
+        // collider and visibility come back the way the game expects them to.
+        private static void RevivePlayer(byte id, Vector2 at) {
+            try {
+                var p = Helpers.playerById(id);
+                if (p == null || p.Data == null || p.Data.Disconnected || !p.Data.IsDead) return;
+
+                p.Revive();
+                p.Data.IsDead = false;
+
+                // TOR's own death ledger drives the meeting/end-screen "died at" lines and several
+                // roles' information - leaving the entry in would report a living player as murdered.
+                try { DeadPlayersLedger()?.RemoveAll(d => d != null && d.player != null && d.player.PlayerId == id); }
+                catch { }
+
+                // Host owns GameData: mark the info dirty so the revived state also reaches anyone
+                // whose client did not run this (a late joiner, a dropped message).
+                if (AmHost()) { try { p.Data.MarkDirty(); } catch { } }
+
+                // Movement is owner-authoritative - only his own client may put him back on the floor.
+                if (p.AmOwner) {
+                    try { p.NetTransform.RpcSnapTo(at); } catch { p.transform.position = at; }
+                    try { Helpers.showFlash(Color, 1.5f, UCLocalization.Tr("uc.ui.pelican.freed_flash")); } catch { }
+                } else {
+                    p.transform.position = at;   // instant local correction until his next position update
+                }
+
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] {p.Data.PlayerName} came back out alive.");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] revive of {id} failed: {e}");
+            }
+        }
+
+        // While a player is in the belly he is DEAD to every system in the game (that is what makes the
+        // role work), but the vitals station is where the crew reads "is he still with us" - and someone
+        // who can still be freed is not gone yet. Same postfix shape as the Manipulator's vitals lie
+        // (Manipulator.cs:293-317), including the alive background the vanilla SetAlive() forgets.
+        [HarmonyPatch(typeof(VitalsMinigame), nameof(VitalsMinigame.Update))]
+        static class BellyVitalsPatch {
+            public static void Postfix(VitalsMinigame __instance) {
+                try {
+                    if (!active || swallowed.Count == 0) return;
+                    if (__instance == null || __instance.vitals == null) return;
+                    foreach (var panel in __instance.vitals) {
+                        if (panel == null || !panel.IsDead) continue;
+                        if (panel.PlayerInfo == null || panel.PlayerInfo.Disconnected) continue;
+                        if (!swallowed.Contains(panel.PlayerInfo.PlayerId)) continue;
+                        panel.SetAlive();
+                        var prefab = __instance.PanelPrefab;
+                        if (prefab != null && prefab.Background != null && panel.Background != null)
+                            panel.Background.sprite = prefab.Background.sprite;
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] belly vitals failed: {e}");
+                }
             }
         }
 
@@ -814,16 +907,49 @@ namespace UnknownsCollection {
             }
         }
 
-        // Sabotage (option 1549). TOR's own Janitor block uses exactly this Refresh postfix
-        // (UsablesPatch.cs:205-215), so the button is re-disabled right after the game re-enables it.
+        private static bool SabotageBlocked() =>
+            HuntRestrictionsActive() && (HuntBlocksSabotage == null || HuntBlocksSabotage.getBool());
+
+        // Sabotage (option 1549) has THREE doors, and the greyed-out HUD button is only the first one.
+        // 1) The button itself. TOR's own Janitor block uses exactly this Refresh postfix
+        //    (UsablesPatch.cs:205-215), so it is re-disabled right after the game re-enables it.
         [HarmonyPatch(typeof(SabotageButton), nameof(SabotageButton.Refresh))]
         static class SabotageBlockPatch {
             public static void Postfix() {
                 try {
-                    if (!HuntRestrictionsActive()) return;
-                    if (HuntBlocksSabotage != null && !HuntBlocksSabotage.getBool()) return;
+                    if (!SabotageBlocked()) return;
                     FastDestroyableSingleton<HudManager>.Instance.SabotageButton.SetDisabled();
                 } catch { }
+            }
+        }
+
+        // 2) The MAP. Tab opens the sabotage overlay directly for an Impostor, which walks straight
+        //    past the disabled button (playtest 2026-07-26). Downgrading the mode is TOR's own move for
+        //    PropHunt (CustomGameModes/PropHunt.cs:611-616): the map still opens, just without the
+        //    sabotage controls.
+        [HarmonyPatch(typeof(MapBehaviour), nameof(MapBehaviour.Show))]
+        static class SabotageMapBlockPatch {
+            public static void Prefix(ref MapOptions opts) {
+                try {
+                    if (!SabotageBlocked()) return;
+                    if (opts.Mode == MapOptions.Modes.Sabotage) opts.Mode = MapOptions.Modes.Normal;
+                } catch { }
+            }
+        }
+
+        // 3) The call itself, for every route that never touches our UI at all: a map left open when
+        //    the hunt starts, a hotkey, TOR's Jackal lights button (Buttons.cs:1078-1092). Every
+        //    sabotage in the game funnels through SystemTypes.Sabotage; REPAIRS carry the sabotaged
+        //    system's own type instead, so the crew can still fix what is already running.
+        [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.RpcUpdateSystem),
+                      new[] { typeof(SystemTypes), typeof(byte) })]
+        static class SabotageCallBlockPatch {
+            public static bool Prefix(SystemTypes systemType) {
+                try {
+                    if (!SabotageBlocked() || systemType != SystemTypes.Sabotage) return true;
+                    UnknownsCollectionPlugin.Logger?.LogInfo("[Pelican] Sabotage blocked - the hunt is running.");
+                    return false;
+                } catch { return true; }
             }
         }
 

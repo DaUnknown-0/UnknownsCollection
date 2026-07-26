@@ -23,12 +23,16 @@
  *    KillButton.cooldownTimerText: a clone inherits that button's RectTransform and would need the
  *    whole pivot/sizeDelta/margin collapse dance before its transform position means anything. A
  *    fresh component starts with an empty rect, so the transform IS the anchor.
+ *  - The HUNT countdown gives way to the top-corner version list instead of sitting at a fixed
+ *    height: that list is the vanilla PingTracker text and grows with every installed mod, so its
+ *    real rendered bounds decide how far down the countdown goes (see PositionHunt).
  *  - Everything the labels print is ASCII (the HUD font has no glyphs for the usual box-drawing /
  *    check-mark characters - they render as empty rectangles). Player names are passed through as
  *    they are; those already render everywhere else in the game.
  */
 
 using System.Collections.Generic;
+using HarmonyLib;
 using UnityEngine;
 
 namespace UnknownsCollection {
@@ -39,6 +43,18 @@ namespace UnknownsCollection {
         private static TMPro.TextMeshPro bellyText;
         private static SpriteRenderer bellyIcon;
         private static TMPro.TextMeshPro huntText;
+
+        // The top-corner version list is the vanilla PingTracker text, and it grows DOWNWARDS with
+        // every installed mod - with six of them it reaches right into the countdown (playtest
+        // 2026-07-26). Instead of guessing a height, the countdown is parked under the block's real
+        // rendered bounds; it only ever moves DOWN from its designed spot, so a lobby with one mod
+        // still gets the position this HUD was laid out for.
+        private static PingTracker pingTracker;
+
+        [HarmonyPatch(typeof(PingTracker), nameof(PingTracker.Update))]
+        static class PingTrackerCachePatch {
+            public static void Postfix(PingTracker __instance) { pingTracker = __instance; }
+        }
 
         // ---- Belly (Pelican only) -------------------------------------------------------------
 
@@ -100,18 +116,43 @@ namespace UnknownsCollection {
 
         // ---- Hunt countdown (everyone) --------------------------------------------------------
 
+        private const float HuntY = 2.05f;      // designed spot: top centre, under the sabotage banner
+        private const float HuntMinY = 0.95f;   // however long the version list gets, never sink past this
+        private const float HuntGap = 0.28f;    // clearance between the version block and the countdown
+
         private static void EnsureHunt() {
             if (huntText != null) return;
             var hud = HudManager.Instance;
             if (hud == null) return;
             var go = new GameObject("PelicanHuntCountdown");
             go.transform.SetParent(hud.transform);
-            go.transform.localPosition = new Vector3(0f, 2.05f, -50f);
+            go.transform.localPosition = new Vector3(0f, HuntY, -50f);
             go.transform.localScale = Vector3.one;
             huntText = go.AddComponent<TMPro.TextMeshPro>();
             huntText.fontSize = 2.4f;
             huntText.alignment = TMPro.TextAlignmentOptions.Center;
             huntText.enableWordWrapping = false;
+        }
+
+        // Drop the countdown below the version block. Renderer.bounds is the mesh's real world-space
+        // box, so this counts whatever the block actually prints - vanilla ping line, TOR, and every
+        // mod that appended a line of its own - without this file knowing any of them.
+        private static void PositionHunt() {
+            if (huntText == null) return;
+            float y = HuntY;
+            try {
+                var hud = HudManager.Instance;
+                if (hud != null && pingTracker != null && pingTracker.text != null) {
+                    var r = pingTracker.text.GetComponent<Renderer>();
+                    if (r != null && r.isVisible) {
+                        float localBottom = hud.transform.InverseTransformPoint(
+                            new Vector3(0f, r.bounds.min.y, 0f)).y;
+                        y = Mathf.Clamp(localBottom - HuntGap, HuntMinY, HuntY);
+                    }
+                }
+            } catch { }
+            var p = huntText.transform.localPosition;
+            if (!Mathf.Approximately(p.y, y)) huntText.transform.localPosition = new Vector3(p.x, y, p.z);
         }
 
         public static void ShowHunt(float secondsLeft) {
@@ -122,6 +163,7 @@ namespace UnknownsCollection {
             int mm = (int)(s / 60f);
             int ss = (int)(s % 60f);
             huntText.text = UCLocalization.Tr("uc.ui.pelican.hunt_title") + "  " + mm.ToString("0") + ":" + ss.ToString("00");
+            PositionHunt();
             if (s <= 10f) {
                 // Final ten seconds: a hard red flicker that speeds up as the clock drains.
                 float t = Mathf.PingPong(Time.time * Mathf.Lerp(3f, 9f, 1f - s / 10f), 1f);

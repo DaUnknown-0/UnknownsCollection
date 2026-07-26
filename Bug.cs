@@ -125,7 +125,6 @@ namespace UnknownsCollection {
 
         private static FieldInfo winConditionField;
         private static TMPro.TMP_Text bonusText;
-        private static Vector3 baseBonusPos;
         private static void SetWinCondition(int value) {
             try {
                 if (winConditionField == null) {
@@ -393,13 +392,28 @@ namespace UnknownsCollection {
         private static GameObject fakeLineGo;    // phase-A fake TOR bonus line, destroyed at takeover
         private static Vector3 podiumBeanScale = new Vector3(0.9f, 0.9f, 1f);
 
+        // Where the banner sits: directly under the win text, measured against what that text ACTUALLY
+        // renders. TOR's own bonus line uses a flat -0.5 (EndGamePatch.cs:288), which is fine for a line
+        // created together with a freshly laid-out "Victory" - but our takeover banner is born three
+        // seconds later, on top of a win text that the glitch effect is already scrambling into longer
+        // strings, and a fixed offset dropped "Bug Wins" straight into the middle of it (playtest
+        // 2026-07-26). Taking the drop from the rendered half-height holds at any font size or
+        // resolution; the flat 0.62 is only the fallback for a text that has not been meshed yet.
+        private static Vector3 BannerPos(EndGameManager mgr) {
+            var win = mgr.WinText.transform;
+            float drop = 0.62f;
+            try {
+                var r = mgr.WinText.GetComponent<Renderer>();
+                if (r != null && r.bounds.extents.y > 0.01f) drop = r.bounds.extents.y + 0.3f;
+            } catch { }
+            return new Vector3(win.position.x, win.position.y - drop, win.position.z);
+        }
+
         // The green "Bug Wins" banner (previously created inline in EndGameFxPatch, unchanged look).
         private static void CreateBugBanner(EndGameManager mgr) {
             if (mgr == null || mgr.WinText == null) return;
             GameObject bonus = UnityEngine.Object.Instantiate(mgr.WinText.gameObject);
-            bonus.transform.position = new Vector3(mgr.WinText.transform.position.x,
-                mgr.WinText.transform.position.y - 0.5f,
-                mgr.WinText.transform.position.z);
+            bonus.transform.position = BannerPos(mgr);
             bonusText = bonus.GetComponent<TMP_Text>();
             bonusText.text = UCLocalization.Tr("uc.ui.bug.win_banner");
             bool glitchOn = UnknownsCollectionPlugin.BugGlitchEnabled.Value;
@@ -408,7 +422,6 @@ namespace UnknownsCollection {
             // toggle off), keep the instant full-size behaviour unchanged.
             bonus.transform.localScale = glitchOn ? new Vector3(0.05f, 0.05f, 1f) : new Vector3(0.7f, 0.7f, 1f);
             bonusText.color = glitchOn ? new Color(Color.r, Color.g, Color.b, 0f) : Color;
-            baseBonusPos = bonus.transform.localPosition;
         }
 
         // Phase-A fake of TOR's bonus line - the exact strings/colors EndGameManagerSetUpPatch would
@@ -785,7 +798,10 @@ namespace UnknownsCollection {
                             : Color;
                         bonusText.color = new Color(target.r, target.g, target.b, entryEase);
                         bonusText.transform.localScale = new Vector3(Mathf.Lerp(0.05f, 0.7f, entryEase), Mathf.Lerp(0.05f, 0.7f, entryEase), 1f);
-                        bonusText.transform.localPosition = baseBonusPos;
+                        // Re-anchored EVERY frame under the win text instead of restored to a position
+                        // captured once: the scramble-morph changes the win text's own extents while
+                        // this runs, so a frozen offset ends up inside it.
+                        bonusText.transform.position = BannerPos(mgr);
                     }
                 } catch { }
             }

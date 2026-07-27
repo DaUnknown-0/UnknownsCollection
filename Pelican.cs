@@ -24,6 +24,10 @@
  *            meeting has already digested them. While they are in there the VITALS station lists them
  *            as alive - the one readout that answers "is he still with us", and a swallowed player
  *            still can be.
+ *   BELLY VIEW  Because he is not finally dead yet, a swallowed player does not get the ghost's usual
+ *            reward: no roles, no ghost info, no walking. His camera is locked onto the Pelican - the
+ *            one thing he may watch is the bird that ate him. All three end the moment the belly does
+ *            (digestion or release); see TickBelly.
  *   HUNT     The moment exactly two players are alive and one of them is the Pelican, the hunt starts:
  *            a public countdown (option 1547), and for EVERYONE no meetings, no reports and no vents
  *            (abilities and the vanilla Impostor kill deliberately stay - see below). Eats the last
@@ -385,6 +389,7 @@ namespace UnknownsCollection {
         private static void ClearState() {
             try { UCMusic.Release(MusicCue); } catch { }
             try { PelicanHud.HideAll(); } catch { }
+            ForceLeaveBelly();
             pelican = null;
             active = false;
             pelicanPlayerId = byte.MaxValue;
@@ -488,6 +493,10 @@ namespace UnknownsCollection {
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {
+                    // Runs BEFORE the "is there even a Pelican" bail-out: this is also the path that
+                    // hands movement, the camera and the ghost info back once the belly lets go.
+                    TickBelly();
+
                     if (!active || pelican == null) { PelicanHud.HideAll(); return; }
 
                     RetryPendingHides();
@@ -501,6 +510,141 @@ namespace UnknownsCollection {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] HudUpdate failed: {e}");
                 }
             }
+        }
+
+        // ====================================================================
+        // Inside the belly: the swallowed spectate the Pelican and learn nothing
+        // ====================================================================
+        //
+        // A swallowed player is dead in Among Us terms but NOT dead in the round's terms: while the
+        // Pelican carries him he can still walk back out (RELEASE), which is why the vitals list him as
+        // alive. So he must not get the ghost's usual reward either - reading everyone's role off their
+        // head and flying wherever he likes. Until the belly lets go of him (digested at the first
+        // meeting, or released when the Pelican falls) he is inside it: no role information, no walking,
+        // and exactly one thing to look at - the bird that ate him.
+        //
+        // Everything here is LOCAL and edge-triggered, and each of the three pieces remembers whether WE
+        // were the ones who took it away - nothing is ever handed back that we did not take.
+        private static bool bellyLocked;     // we set moveable = false
+        private static bool bellyCamera;     // we moved the camera off the local player
+        private static bool bellyInfoHidden; // we forced TOR's ghost-info flags off
+
+        // "The belly still has him." Dead (a release makes him alive again, which ends this state by
+        // itself) and still on the swallow list (digestion at the first meeting clears it for good).
+        public static bool LocalIsSwallowed() {
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (!active || me == null || me.Data == null || !me.Data.IsDead) return false;
+                return swallowed.Contains(me.PlayerId);
+            } catch {
+                return false;
+            }
+        }
+
+        private static void TickBelly() {
+            bool inBelly = LocalIsSwallowed();
+            var me = PlayerControl.LocalPlayer;
+
+            // 1. No role information. TOR reads these three flags in every place where it decides what a
+            //    ghost may see (Helpers.shouldShowGhostInfo:232, the name plates in
+            //    PlayerControlPatch:550-561, the haunt menu), so switching them off covers all of them
+            //    at once instead of chasing each readout with a patch of its own.
+            if (inBelly) {
+                bellyInfoHidden = true;
+                SetGhostFlags(false, false, false);
+            } else if (bellyInfoHidden) {
+                bellyInfoHidden = false;
+                RestoreGhostInfoFlags();
+            }
+
+            var hud = FastDestroyableSingleton<HudManager>.Instance;
+            var cam = hud != null ? hud.PlayerCam : null;
+
+            // 2. Spectate the bird. Re-applied every frame on purpose: AU re-targets the camera itself
+            //    (meeting, exile, respawn), and this has to win right after it does.
+            if (cam != null) {
+                if (inBelly && pelican != null && pelican.Data != null && !pelican.Data.Disconnected) {
+                    if (cam.Target != pelican) cam.SetTarget(pelican);
+                    bellyCamera = true;
+                } else if (bellyCamera) {
+                    bellyCamera = false;
+                    if (me != null) cam.SetTarget(me);
+                }
+            }
+
+            // 3. Nobody walks around inside a stomach. `moveable` is never touched during a meeting: AU
+            //    owns it there, and handing movement back mid-vote is exactly the kind of release the
+            //    Saboteur's traps had to learn to avoid.
+            if (InMeeting() || me == null) return;
+            if (inBelly) {
+                bellyLocked = true;
+                if (me.moveable) me.moveable = false;
+            } else if (bellyLocked) {
+                bellyLocked = false;
+                me.moveable = true;
+            }
+        }
+
+        // Restored from TOR'S OWN CONFIG rather than from a saved copy: the client options menu writes
+        // the config entry AND the flag (ClientOptionsPatch.cs:17-20), so the config is the truthful
+        // "what did this player actually pick" source even if he toggled it while inside the belly.
+        private static void RestoreGhostInfoFlags() {
+            try {
+                SetGhostFlags(TheOtherRolesPlugin.GhostsSeeRoles.Value,
+                              TheOtherRolesPlugin.GhostsSeeModifier.Value,
+                              TheOtherRolesPlugin.GhostsSeeInformation.Value);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] ghost-info restore failed: {e}");
+            }
+        }
+
+        // TORMapOptions is INTERNAL to TOR, so its three ghost-info flags are written by reflection -
+        // the same idiom this file already uses for TOR's internal GameHistory ledger. Resolved once;
+        // if a future TOR renames them the belly simply keeps whatever ghost info it would have had,
+        // which is a readable degradation instead of a crash in a per-frame path.
+        private static bool ghostFlagsResolved;
+        private static FieldInfo fGhostRoles, fGhostModifier, fGhostInfo;
+
+        private static void SetGhostFlags(bool roles, bool modifier, bool info) {
+            if (!ghostFlagsResolved) {
+                ghostFlagsResolved = true;
+                try {
+                    var t = AccessTools.TypeByName("TheOtherRoles.TORMapOptions");
+                    const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+                    fGhostRoles = t?.GetField("ghostsSeeRoles", flags);
+                    fGhostModifier = t?.GetField("ghostsSeeModifier", flags);
+                    fGhostInfo = t?.GetField("ghostsSeeInformation", flags);
+                    if (fGhostRoles == null || fGhostModifier == null || fGhostInfo == null)
+                        UnknownsCollectionPlugin.Logger?.LogWarning(
+                            "[Pelican] TORMapOptions ghost flags not found - the swallowed keep their ghost info.");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] ghost flag lookup failed: {e}");
+                }
+            }
+            try {
+                fGhostRoles?.SetValue(null, roles);
+                fGhostModifier?.SetValue(null, modifier);
+                fGhostInfo?.SetValue(null, info);
+            } catch { }
+        }
+
+        // Unconditional release for the two reset paths. A leftover moveable=false, a camera parked on
+        // last round's Pelican or permanently blinded ghost info would all travel into the next game -
+        // the same lobby-leak rule the rest of the mod follows.
+        private static void ForceLeaveBelly() {
+            if (bellyInfoHidden) { bellyInfoHidden = false; RestoreGhostInfoFlags(); }
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (bellyCamera) {
+                    bellyCamera = false;
+                    var hud = FastDestroyableSingleton<HudManager>.Instance;
+                    if (hud != null && hud.PlayerCam != null && me != null) hud.PlayerCam.SetTarget(me);
+                }
+                if (bellyLocked) {
+                    bellyLocked = false;
+                    if (me != null) me.moveable = true;
+                }
+            } catch { }
         }
 
         // A DeadBody is normally already instantiated when our MurderPlayer postfix runs (that is what

@@ -16,8 +16,9 @@
  *            opener.
  *   WOLF     Transforming starts Y seconds (option 1556) of WOLF DARKNESS:
  *            - nobody can fix the lights (SwitchMinigame closes itself),
- *            - EVERY player is reduced to a small flashlight radius (option 1515) - except the
- *              werewolf (full impostor vision) and the Lighter (keeps his own vision),
+ *            - EVERY player is reduced to a real TORCH: a small light radius (option 1515) AND the
+ *              Lighter's directional flashlight cone - except the werewolf (full impostor vision),
+ *              the Lighter (keeps his own) and the dead,
  *            - the wolf is faster (1554) and kills faster (1553),
  *            - everyone SEES the beast: the crewmate cosmetics are replaced by an animated wolf skin,
  *            - his victims are marked with a public blood ring - the forensic price of the power.
@@ -44,6 +45,13 @@
  *    (ShipStatusPatch.cs:17-81, the Trickster branch at :55 is the precedent for forcing darkness on
  *    everyone). Under HarmonyX every prefix runs and `false` only skips the ORIGINAL - a second prefix
  *    could never win against TOR's, a postfix always does.
+ *  - The flashlight CONE is two more postfixes, on PlayerControl.IsFlashlightEnabled and
+ *    PlayerControl.AdjustLighting - the exact pair TOR uses for the Lighter (PlayerControlPatch.cs:
+ *    1463-1488), whose prefixes both return false and hard-code "only the Lighter". A radius alone is
+ *    not a flashlight: it just shrinks the circle (and during a lights sabotage it would even make the
+ *    crew's circle BIGGER than it already is). The cone is purely local state - it never leaves the
+ *    client whose light it is - and is edge-triggered from the per-frame driver, because AU calls
+ *    AdjustLighting on its own schedule only.
  *  - SwitchMinigame.Begin is a POSTFIX that calls Close(), byte-for-byte the shape TOR uses for the
  *    Swapper (UsablesPatch.cs:295-303), so the two coexist instead of fighting.
  *  - The vent block is a POSTFIX on Vent.CanUse (setting canUse/couldUse to false), NOT a prefix on
@@ -564,6 +572,7 @@ namespace UnknownsCollection {
                 try { WerewolfFx.ClearBloodRings(); } catch { }
                 try { UCMusic.Release(MusicCue); } catch { }
                 StopHeartbeat();
+                ForceConeOff();
                 werewolf = null;
                 active = false;
                 wolfForm = false;
@@ -593,6 +602,7 @@ namespace UnknownsCollection {
                 try { WerewolfFx.ClearBloodRings(); } catch { }
                 try { UCMusic.Release(MusicCue); } catch { }
                 StopHeartbeat();
+                ForceConeOff();
                 werewolf = null;
                 active = false;
                 wolfForm = false;
@@ -691,6 +701,11 @@ namespace UnknownsCollection {
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {
+                    // The cone is a per-CLIENT thing (every survivor carries his own torch), so it ticks
+                    // BEFORE the "is there even a beast" bail-out: that is also the path which switches
+                    // the torch back off once the form, the round or the wolf itself is gone.
+                    TickCone();
+
                     if (!active || werewolf == null) return;
 
                     // 1. Safety net: the beast dies/leaves -> the form dies with it (the murder/exile
@@ -867,6 +882,117 @@ namespace UnknownsCollection {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] LightPatch failed: {e}");
                 }
             }
+        }
+
+        // ---- The flashlight CONE (the other half of "flashlight") ----
+        //
+        // The radius above only shrinks the circle. What actually makes a torch is the CONE, and TOR's
+        // Lighter shows the exact three pieces it takes (PlayerControlPatch.cs:1463-1488):
+        //   1. PlayerControl.IsFlashlightEnabled has to say yes for the local player,
+        //   2. PlayerControl.AdjustLighting has to hand the light source over to the flashlight setup:
+        //      lightSource.SetupLightingForGameplay(true, width, TargetFlashlight.transform),
+        //   3. SetFlashlightInputMethod picks how the cone is aimed (mouse / stick).
+        // TOR owns BOTH of those methods with prefixes that return false and hard-code "only the
+        // Lighter" (IsFlashlightEnabled sets __result = false for everyone else), so POSTFIXES are the
+        // only way in - the same rule as the radius patch above.
+        //
+        // All of this is strictly LOCAL: a cone only ever exists on the client whose own light it is,
+        // and it is never sent anywhere.
+
+        // TOR's own Lighter default (option 113 "Flashlight Width", 0.1-1.0). The Hunter's cone is
+        // widened by the same multiplier that already scales his radius (option 1504), so one setting
+        // shapes his whole torch instead of adding a second slider for it.
+        private const float ConeWidth = 0.3f;
+
+        // True while WE are the ones holding the cone on. It is what tells "switch our torch off again"
+        // apart from "this client never had one" - without it the postfix would also stamp
+        // enableFlashlight=false onto the Lighter's cone and onto Fungle's own night flashlight.
+        private static bool coneIsOurs;
+        private static bool coneWarned;
+
+        private static bool IsLocalLighter() {
+            var me = PlayerControl.LocalPlayer;
+            return me != null && Lighter.lighter != null && Lighter.lighter.PlayerId == me.PlayerId;
+        }
+
+        // Who walks the dark with a torch: everybody EXCEPT the wolf (he owns the dark with full
+        // impostor vision), the Lighter (TOR already gives him his own cone) and the dead (ghosts see
+        // everything anyway). Exactly the carve-out list of the radius postfix above.
+        private static bool LocalWantsCone() {
+            try {
+                if (!WolfDarkActive()) return false;
+                var me = PlayerControl.LocalPlayer;
+                if (me == null || me.Data == null || me.Data.IsDead || me.Data.Disconnected) return false;
+                if (werewolf != null && me.PlayerId == werewolf.PlayerId) return false;
+                if (IsLocalLighter()) return false;
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
+        private static float LocalConeWidth() {
+            float w = ConeWidth;
+            var me = PlayerControl.LocalPlayer;
+            if (Hunter.active && Hunter.hunter != null && me != null && Hunter.hunter.PlayerId == me.PlayerId)
+                w *= Hunter.FlashlightMultiplierValue();
+            return Mathf.Clamp(w, 0.1f, 1f);
+        }
+
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.IsFlashlightEnabled))]
+        static class FlashlightEnabledPatch {
+            public static void Postfix(PlayerControl __instance, ref bool __result) {
+                try {
+                    if (__instance == null || !__instance.AmOwner) return;
+                    if (LocalWantsCone()) __result = true;
+                } catch { }
+            }
+        }
+
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.AdjustLighting))]
+        static class AdjustLightingPatch {
+            public static void Postfix(PlayerControl __instance) {
+                try {
+                    if (__instance == null || !__instance.AmOwner) return;
+                    bool want = LocalWantsCone();
+                    if (!want && !coneIsOurs) return;   // nothing of ours to set, nothing to undo
+                    if (__instance.lightSource == null || __instance.TargetFlashlight == null) return;
+                    coneIsOurs = want;
+                    __instance.SetFlashlightInputMethod();
+                    __instance.lightSource.SetupLightingForGameplay(
+                        want, LocalConeWidth(), __instance.TargetFlashlight.transform);
+                } catch (Exception e) {
+                    if (!coneWarned) {   // per-frame path - report it once, never spam the log
+                        coneWarned = true;
+                        UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] flashlight cone failed: {e}");
+                    }
+                }
+            }
+        }
+
+        // The cone is edge-triggered: AU calls AdjustLighting on its own schedule only, so every change
+        // of our own condition (transform, revert, silver wound, death, meeting, round end) has to ask
+        // for it. One bool compare per frame, one call per actual change.
+        private static void TickCone() {
+            if (LocalWantsCone() == coneIsOurs) return;
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (me != null) me.AdjustLighting();   // the postfix above does the actual work
+            } catch { }
+        }
+
+        // The torch has to be TURNED OFF, not just forgotten: dropping the flag alone would leave it
+        // burning into the next lobby (the resetVariables lobby-leak rule).
+        private static void ForceConeOff() {
+            if (!coneIsOurs) return;
+            coneIsOurs = false;
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (me != null && me.lightSource != null && me.TargetFlashlight != null) {
+                    me.SetFlashlightInputMethod();
+                    me.lightSource.SetupLightingForGameplay(false, ConeWidth, me.TargetFlashlight.transform);
+                }
+            } catch { }
         }
 
         // Nobody fixes the lights while the beast is out. Same shape TOR uses to keep the Swapper away

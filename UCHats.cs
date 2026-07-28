@@ -1,16 +1,16 @@
 // Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
-// Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
+// Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherHats), GPL-3.0.
 
 /*
- * UCHats - two OWN custom hats ("Virus", "Werbetafel") added to TOR's hat shop from the outside,
- * WITHOUT a single change to The Other Roles.
+ * UCHats - three OWN custom hats ("Virus", "Werbetafel", "Werewolf") added to TOR's hat shop
+ * from the outside, WITHOUT a single change to The Other Roles.
  *
  * ---------------------------------------------------------------------------------------------
  * WHY THE DETOUR (disk extraction + reflection) IS NECESSARY
  * ---------------------------------------------------------------------------------------------
- * TOR builds every custom hat in CustomHatManager.CreateHatBehaviour(CustomHat), and the sprite
- * itself comes from the PRIVATE CustomHatManager.CreateHatSprite(string):
+ * TOR builds every custom hat in CustomHatManager.CreateHatBehaviour(CustomHat), and the sprites
+ * come from the PRIVATE CustomHatManager.CreateHatSprite(string):
  *
  *     var texture = Helpers.loadTextureFromDisk(Path.Combine(HatsDirectory, path));
  *     if (texture == null) texture = Helpers.loadTextureFromResources(path);
@@ -29,7 +29,9 @@
  *      without ever knowing that this mod exists.
  *
  * Hence: we embed the PNGs in our own DLL and extract them into TheOtherHats on startup (step 1),
- * then hand TOR a CustomHat record that points at the extracted file name (step 2).
+ * then hand TOR CustomHat records that point at the extracted file names (step 2). Everything TOR
+ * itself has to read (Resource, BackResource, ClimbResource) must be ON DISK; the extra blink
+ * frames of the animated hats stay embedded-only and go through our own loader.
  *
  * The registration list, CustomHatManager.UnregisteredHats, is `internal static` - visible inside
  * TheOtherRoles.dll only - so it can only be reached by reflection. The CustomHat class itself is
@@ -38,28 +40,46 @@
  * a real HatData, so our hats travel through TOR's completely untouched code path.
  *
  * Step 3 - the download guard: HatsLoader.CoFetchHats calls GenerateDownloadList(UnregisteredHats)
- * right after adding the repository hats. Our two entries have no ResHash*, and
+ * right after adding the repository hats. Our entries have no ResHash*, and
  * ResourceRequireDownload() treats "no hash" as "must download", so TOR would try to fetch
- * .../TheOtherHats/master/hats/UC_Virus.png and log a 404. We therefore hang a Harmony POSTFIX on
- * GenerateDownloadList and remove our own file names from the returned list. A postfix (instead of
- * a prefix that hides the hats, or a transpiler) was chosen because it is the smallest possible
- * intervention: the original method runs completely unchanged, TOR's own hats keep their normal
- * hash check, and we only edit the two strings that belong to us. It is also self-healing - if the
- * files are ever missing from disk, we still do not ask TOR to download them from a repository
+ * .../TheOtherHats/master/hats/UC_*.png and log a 404 per file. We therefore hang a Harmony
+ * POSTFIX on GenerateDownloadList and remove our own file names from the returned list. A postfix
+ * (instead of a prefix that hides the hats, or a transpiler) was chosen because it is the smallest
+ * possible intervention: the original method runs completely unchanged, TOR's own hats keep their
+ * normal hash check, and we only edit the strings that belong to us. It is also self-healing - if
+ * the files are ever missing from disk, we still do not ask TOR to download them from a repository
  * that does not host them.
  *
- * Step 4 - the animation: HatData/HatViewData have no notion of frames or time (see CustomHat.cs
- * and HatExtension.cs - purely static sprite slots), so a blinking hat cannot be expressed in
+ * Step 4 - the animations: HatData/HatViewData have no notion of frames or time (see CustomHat.cs
+ * and HatExtension.cs - purely static sprite slots), so an animated hat cannot be expressed in
  * TOR's data model at all. Instead we own the last word per frame: HatParentPatches.LateUpdatePrefix
  * returns false for cached custom hats (it skips the original LateUpdate), but HarmonyX still runs
- * every POSTFIX afterwards - so our postfix on HatParent.LateUpdate is the final writer of
- * FrontLayer.sprite each frame. Six frames at 6 fps, driven by Time.time, purely local and purely
- * cosmetic: no RPC, no host authority, and deliberately NO dependency on TeslaVersionHandshake -
- * the hats must work even when nobody else has the mod (everyone else simply sees the default hat,
- * exactly like with any other custom hat that a player has not downloaded).
+ * every POSTFIX afterwards - so our postfix on HatParent.LateUpdate is the final writer of the
+ * animated layer's sprite each frame. Driven by Time.time, purely local and purely cosmetic: no
+ * RPC, no host authority, and deliberately NO dependency on TeslaVersionHandshake - the hats must
+ * work even when nobody else has the mod (everyone else simply sees the default hat, exactly like
+ * with any other custom hat that a player has not downloaded).
+ *
+ * Layer mechanics that the HatDef table below leans on (all verified in TOR 4.8.0 sources):
+ *   - PopulateFromViewData: InFront=true -> FrontLayer only. Behind WITH BackImage -> BOTH layers
+ *     (Back = BackImage, Front = MainImage). Behind WITHOUT BackImage -> BackLayer only.
+ *     CreateHatBehaviour forces Behind = true whenever BackResource is set.
+ *   - SetClimbAnim/SetFloorAnim DISABLE the BackLayer and put ClimbImage/FloorImage on the
+ *     FrontLayer. A climb sprite must therefore contain the WHOLE design in one image, and our
+ *     animation postfix uses "BackLayer off although this hat has a BackImage" as the cheap,
+ *     reflection-free signal that a climb/floor pose is active (pose guard 1). Pose guard 2
+ *     compares against HatViewData.ClimbImage via a one-time reflection read of TOR's internal
+ *     ViewDataCache - overwriting the climb sprite once would lose the pose until the next
+ *     SetIdleAnim, because SetClimbAnim only fires on pose CHANGES, not per frame.
+ *   - FloorImage is forced to MainImage by CreateHatBehaviour, so corpses show the static main
+ *     sprite (without the back layer). Not fixable from outside; looks acceptable.
+ *
+ * TOR-internal reflection touch points (all soft-fail with a logged warning):
+ *   CustomHatManager.HatsDirectory (property), CustomHatManager.UnregisteredHats (field),
+ *   CustomHatManager.ViewDataCache (field, only for pose guard 2).
  *
  * Nothing in here writes to TheOtherRoles-main: no TOR file is added, changed or patched at build
- * time; every hook is a runtime Harmony patch plus one reflection read.
+ * time; every hook is a runtime Harmony patch plus reflection reads.
  */
 
 using HarmonyLib;
@@ -76,31 +96,88 @@ namespace UnknownsCollection {
         // Embedded PNGs: Resources\hats\*.png, pinned to this logical name in the csproj.
         private const string ResourcePrefix = "UnknownsCollection.Resources.hats.";
 
-        // File names used INSIDE <Among Us>/TheOtherHats. Deliberately prefixed "UC_" so they can
-        // never collide with a file of the official TheOtherHats repository (which would make our
-        // download-strip below drop somebody else's hat).
-        private const string VirusFile = "UC_Virus.png";
-        private const string WerbetafelFile = "UC_Werbetafel.png";
-
-        // Shop entries. The names were checked against the official TheOtherHats manifest and are free.
-        private const string VirusName = "Virus";
-        private const string WerbetafelName = "Werbetafel";
         private const string Author = "DaUnknown-0";
-        // Own package so both hats get their own headline in the hat shop instead of being scattered
+        // Own package so the hats get their own headline in the hat shop instead of being scattered
         // into TOR's "Misc." bucket (HatsTabPatches groups by HatExtension.Package).
         private const string Package = "Unknown's Collection";
 
-        // Blink animation (Werbetafel only): 6 frames at 6 fps -> a full cycle every second.
-        private const int WerbetafelFrames = 6;
-        private const float WerbetafelFps = 6f;
+        // Which renderer an animation writes to. This cannot be derived from HatData.InFront:
+        // a hat with a BackImage has InFront == false but keeps its MainImage on the FRONT layer
+        // (both layers active), so the layer carrying the animated part is a per-hat decision.
+        private enum AnimTarget { Front, Back }
 
-        // Only the files TOR itself has to read need to exist on disk: the hat's `Resource`.
-        // The five remaining blink frames are never seen by TOR - our own postfix loads them
-        // straight out of this assembly - so we do not litter the player's game folder with them.
-        private static readonly string[] OwnDiskFiles = { VirusFile, WerbetafelFile };
+        // One declaration per hat; everything else (disk files, download strip list, animation
+        // lookup) is derived from this table. File names use the "UC_" prefix so they can never
+        // collide with a file of the official TheOtherHats repository (which would make our
+        // download-strip below drop somebody else's hat). Hat NAMES were checked against the
+        // official TheOtherHats manifest and are free.
+        private sealed class HatDef {
+            // --- declaration ---
+            public string Name;
+            public bool Behind;
+            public string MainFile;                 // in <Among Us>\TheOtherHats (read by TOR)
+            public string BackFile;                 // null = no back layer
+            public string ClimbFile;                // null = vanishes on ladders (pre-fix behavior)
+            public string MainRes;                  // embedded source (without ResourcePrefix)
+            public string BackRes;
+            public string ClimbRes;                 // null while ClimbFile is set = reuse an already
+                                                    //   extracted file (no second copy on disk)
+            public int AnimFrames;                  // 0 = static hat
+            public float AnimFps;
+            public string AnimPattern;              // "{0}" = 1-based frame index
+            public AnimTarget Target;
+            public bool LockFlip;                   // true = never mirror (pure-text hats)
+            // --- runtime state ---
+            public bool DiskOk, BackOk, ClimbOk;
+            public Sprite[] Frames;
+            public bool FramesTried;
+        }
 
-        private static Sprite[] frames;
-        private static bool framesTried;
+        private static readonly HatDef[] Defs = {
+            new HatDef {
+                Name = "Virus",
+                MainFile = "UC_Virus.png", MainRes = "virus.png",
+                // Ladder pose: deliberately the SAME png as idle. The spike wreath sits AROUND the
+                // body and fits the climb silhouette too; before this, the hat vanished on ladders
+                // (ClimbImage == null). No ClimbRes -> no second copy on disk.
+                ClimbFile = "UC_Virus.png", ClimbRes = null,
+            },
+            new HatDef {
+                Name = "Werbetafel", Behind = true,
+                MainFile = "UC_Werbetafel.png", MainRes = "werbetafel_1.png",
+                // Ladder pose shows the player from behind, so this is the BACK of the billboard
+                // (plain metal, no text - also sidesteps every mirrored-text problem).
+                ClimbFile = "UC_Werbetafel_climb.png", ClimbRes = "werbetafel_climb.png",
+                AnimFrames = 6, AnimFps = 6f, AnimPattern = "werbetafel_{0}.png",
+                // Behind without BackImage -> TOR renders the whole hat through the BackLayer.
+                Target = AnimTarget.Back,
+                // Never mirror the billboard: a hat that is pure text has no "left version" - it
+                // must always read the same way. (TOR's own answer would be a flipresource PNG,
+                // but a second pre-mirrored copy of six blink frames for one flag is not worth it.)
+                LockFlip = true,
+            },
+            new HatDef {
+                Name = "Werewolf", Behind = true,   // forced by BackResource anyway
+                MainFile = "UC_Werewolf.png", MainRes = "werewolf_1.png",
+                BackFile = "UC_Werewolf_back.png", BackRes = "werewolf_back.png",
+                ClimbFile = "UC_Werewolf_climb.png", ClimbRes = "werewolf_climb.png",
+                // Full-body beast in side profile (crewmates stand sideways; the snout points the
+                // same way as the visor). Frames 2..6 only vary the glowing eye.
+                AnimFrames = 6, AnimFps = 6f, AnimPattern = "werewolf_{0}.png",
+                // BackImage present -> BOTH layers active; the eye lives on the FrontLayer.
+                Target = AnimTarget.Front,
+                LockFlip = false,                   // the profile mirrors with the walk direction
+            },
+        };
+
+        // Every file we ever put into TheOtherHats - the download guard strips exactly these.
+        private static readonly string[] OwnDiskFiles = Defs
+            .SelectMany(d => new[] { d.MainFile, d.BackFile, d.ClimbFile })
+            .Where(f => f != null).Distinct().ToArray();
+
+        // Animated hats by HatData.name, filled in TryPatch (only hats that actually registered).
+        private static readonly Dictionary<string, HatDef> AnimByName = new();
+
         private static bool loggedAnimError;
 
         public static void TryPatch(Harmony harmony) {
@@ -112,28 +189,44 @@ namespace UnknownsCollection {
                     return;
                 }
 
-                // Step 1: put the two PNGs TOR needs next to the repository hats.
-                bool virusOk = ExtractIfNeeded(dir, ResourcePrefix + "virus.png", VirusFile);
-                bool tafelOk = ExtractIfNeeded(dir, ResourcePrefix + "werbetafel_1.png", WerbetafelFile);
-
-                // Step 2: register - but only hats whose file actually made it to disk. Registering a
-                // hat without its file would make TOR's CreateHatBehaviour throw on every GetHatById
-                // (it treats that as "not downloaded yet") and keep its loader loop alive forever.
-                var pending = new List<CustomHat>();
-                if (virusOk) {
-                    pending.Add(new CustomHat {
-                        Name = VirusName, Author = Author, Package = Package,
-                        Resource = VirusFile, Adaptive = false, Bounce = false, Behind = false
-                    });
+                // Step 1: put every PNG TOR itself reads next to the repository hats.
+                foreach (var def in Defs) {
+                    def.DiskOk = ExtractIfNeeded(dir, ResourcePrefix + def.MainRes, def.MainFile);
+                    def.BackOk = def.BackRes != null
+                        && ExtractIfNeeded(dir, ResourcePrefix + def.BackRes, def.BackFile);
+                    def.ClimbOk = def.ClimbRes != null
+                        ? ExtractIfNeeded(dir, ResourcePrefix + def.ClimbRes, def.ClimbFile)
+                        : def.ClimbFile != null && def.DiskOk;   // climb reuses the main file
                 }
-                if (tafelOk) {
-                    pending.Add(new CustomHat {
-                        Name = WerbetafelName, Author = Author, Package = Package,
-                        // Behind: the billboard is mounted BEHIND the player, so the crewmate stands in
-                        // front of its own advertisement instead of being covered by it. TOR renders a
-                        // "behind" hat through BackLayer (CreateHatBehaviour sets InFront = !Behind).
-                        Resource = WerbetafelFile, Adaptive = false, Bounce = false, Behind = true
-                    });
+
+                // Step 2: register - but only hats whose main file actually made it to disk.
+                // Registering a hat without its file would make TOR's CreateHatBehaviour throw on
+                // every GetHatById (it treats that as "not downloaded yet") and keep its loader
+                // loop alive forever.
+                var pending = new List<CustomHat>();
+                foreach (var def in Defs) {
+                    if (!def.DiskOk) continue;
+
+                    // A BackResource whose file is missing would be WORSE than none at all:
+                    // CreateHatBehaviour forces Behind = true without checking the sprite, and
+                    // PopulateFromViewData then renders the MainImage on the BackLayer - the whole
+                    // hat would hide behind the player. Degrade to front-only instead.
+                    bool back = def.BackRes != null && def.BackOk;
+                    if (def.BackRes != null && !back) {
+                        UnknownsCollectionPlugin.Logger?.LogWarning(
+                            $"[Hats] {def.Name}: back sprite missing - falling back to front-only.");
+                    }
+
+                    var ch = new CustomHat {
+                        Name = def.Name, Author = Author, Package = Package,
+                        Resource = def.MainFile, Adaptive = false, Bounce = false,
+                        Behind = back || (def.BackRes == null && def.Behind),
+                    };
+                    if (back) ch.BackResource = def.BackFile;
+                    if (def.ClimbOk) ch.ClimbResource = def.ClimbFile;
+                    pending.Add(ch);
+
+                    if (def.AnimFrames > 0) AnimByName[def.Name] = def;
                 }
 
                 if (pending.Count > 0 && !Register(pending)) return;
@@ -141,7 +234,7 @@ namespace UnknownsCollection {
                 // Step 3 + 4: the two Harmony hooks. Patched manually (not via [HarmonyPatch]
                 // attributes) so a missing target logs a clear line instead of blowing up PatchAll.
                 PatchDownloadGuard(harmony);
-                PatchAnimation(harmony);
+                if (AnimByName.Count > 0) PatchAnimation(harmony);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[Hats] registered {pending.Count} custom hat(s) in {dir}.");
@@ -244,7 +337,7 @@ namespace UnknownsCollection {
             var target = AccessTools.Method(typeof(CustomHatManager), "GenerateDownloadList");
             if (target == null) {
                 UnknownsCollectionPlugin.Logger?.LogWarning(
-                    "[Hats] GenerateDownloadList not found - TOR may log a 404 for our hat files.");
+                    "[Hats] GenerateDownloadList not found - TOR may log 404s for our hat files.");
                 return;
             }
             harmony.Patch(target, postfix: new HarmonyMethod(
@@ -262,13 +355,13 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Step 4: the blinking Werbetafel -------------------------------------------------
+        // ---- Step 4: the frame animations ----------------------------------------------------
 
         private static void PatchAnimation(Harmony harmony) {
             var target = AccessTools.Method(typeof(HatParent), nameof(HatParent.LateUpdate));
             if (target == null) {
                 UnknownsCollectionPlugin.Logger?.LogWarning(
-                    "[Hats] HatParent.LateUpdate not found - Werbetafel stays on its first frame.");
+                    "[Hats] HatParent.LateUpdate not found - animated hats stay on their first frame.");
                 return;
             }
             harmony.Patch(target, postfix: new HarmonyMethod(
@@ -282,57 +375,87 @@ namespace UnknownsCollection {
             try {
                 if (__instance == null) return;
                 var hat = __instance.Hat;
-                if (hat == null || hat.name != WerbetafelName) return;
+                if (hat == null || !AnimByName.TryGetValue(hat.name, out var def)) return;
 
-                var strip = Frames;
-                if (strip == null) return;
-
-                // Our hat is InFront (no back resource), but stay generic: TOR renders a "behind"
-                // hat through BackLayer, so follow the same rule PopulateFromViewData uses.
-                var renderer = hat.InFront ? __instance.FrontLayer : __instance.BackLayer;
+                var renderer = def.Target == AnimTarget.Front ? __instance.FrontLayer : __instance.BackLayer;
                 if (renderer == null || !renderer.enabled) return;
 
-                // Ladder/climb pose: SetClimbAnimPrefix writes hatViewData.ClimbImage, which is null
-                // for a hat without a climb resource. Leaving a null sprite alone means we never
-                // force the billboard back on while the player is climbing, and never fight
-                // SetClimbAnim over the same renderer.
+                // Ladder/climb pose of BackLayer-hats: SetClimbAnim disables the BackLayer, so a
+                // disabled renderer already returned above. A null sprite covers hats without a
+                // climb resource (nothing to animate over).
                 if (renderer.sprite == null) return;
 
-                // Never mirror the billboard. Cosmetics follow the player's facing, which turned the
-                // advertisement into unreadable mirror writing whenever the player walked left. A hat
-                // that is pure text has no "left version" - it must always read the same way. (TOR's
-                // own answer to this is an extra flipresource PNG, but a second pre-mirrored copy of
-                // six blink frames would double the asset count for something one flag fixes.)
-                if (renderer.flipX) renderer.flipX = false;
+                // Pose guard 1 (reflection-free): a hat whose BackImage is registered has BOTH
+                // layers enabled in the idle pose; SetClimbAnim/SetFloorAnim switch the BackLayer
+                // off. Skipping here also keeps corpses on the static FloorImage (= MainImage).
+                if (def.BackOk && (__instance.BackLayer == null || !__instance.BackLayer.enabled)) return;
 
-                int index = Mathf.FloorToInt(Time.time * WerbetafelFps) % strip.Length;
+                // Pose guard 2 (exact): never write over the climb sprite. SetClimbAnim fires only
+                // on pose CHANGES - overwrite it once and the pose is gone until SetIdleAnim.
+                if (TryGetViewData(hat.name, out var view) && view != null &&
+                    (renderer.sprite == view.ClimbImage || renderer.sprite == view.LeftClimbImage)) return;
+
+                // Never mirror pure-text hats. Cosmetics follow the player's facing, which turned
+                // the billboard into unreadable mirror writing whenever the player walked left.
+                if (def.LockFlip && renderer.flipX) renderer.flipX = false;
+
+                var strip = GetFrames(def);
+                if (strip == null) return;
+
+                int index = Mathf.FloorToInt(Time.time * def.AnimFps) % strip.Length;
                 var frame = strip[index];
                 if (frame != null && renderer.sprite != frame) renderer.sprite = frame;
             } catch (Exception ex) {
                 if (loggedAnimError) return;
                 loggedAnimError = true;
-                UnknownsCollectionPlugin.Logger?.LogError($"[Hats] blink animation failed (logged once): {ex}");
+                UnknownsCollectionPlugin.Logger?.LogError($"[Hats] hat animation failed (logged once): {ex}");
             }
         }
 
-        // Lazily built on the first rendered frame (Unity is definitely up by then). All six frames
-        // or none: a half-loaded strip would blink with holes, so we fall back to the static frame 1
-        // that TOR already loaded from disk.
-        private static Sprite[] Frames {
-            get {
-                if (framesTried) return frames;
-                framesTried = true;
-                var built = new Sprite[WerbetafelFrames];
-                for (int i = 0; i < built.Length; i++) {
-                    built[i] = LoadHatSprite($"{ResourcePrefix}werbetafel_{i + 1}.png");
-                    if (built[i] != null) continue;
+        // One-time reflection read of TOR's internal ViewDataCache (Dictionary<string, HatViewData>,
+        // readonly - the reference never changes, so caching the dictionary object is safe).
+        // Deliberately NOT CosmeticsCache.GetHat: TOR has a prefix on it that logs on every call,
+        // which would flood the log once per frame. If the reflection breaks with a TOR update,
+        // pose guard 1 still protects every hat that has a back layer.
+        private static Dictionary<string, HatViewData> viewCache;
+        private static bool viewCacheTried;
+
+        private static bool TryGetViewData(string name, out HatViewData view) {
+            view = null;
+            if (!viewCacheTried) {
+                viewCacheTried = true;
+                try {
+                    var field = typeof(CustomHatManager).GetField(
+                        "ViewDataCache", BindingFlags.NonPublic | BindingFlags.Static);
+                    viewCache = field?.GetValue(null) as Dictionary<string, HatViewData>;
+                } catch (Exception ex) {
                     UnknownsCollectionPlugin.Logger?.LogWarning(
-                        $"[Hats] blink frame {i + 1} missing - Werbetafel stays static.");
-                    return null;
+                        $"[Hats] ViewDataCache reflection failed ({ex.Message}).");
                 }
-                frames = built;
-                return frames;
+                if (viewCache == null) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning(
+                        "[Hats] ViewDataCache unreachable - climb-pose guard runs on layer states only.");
+                }
             }
+            return viewCache != null && viewCache.TryGetValue(name, out view);
+        }
+
+        // Lazily built on the first rendered frame (Unity is definitely up by then). All frames or
+        // none: a half-loaded strip would blink with holes, so we fall back to the static frame 1
+        // that TOR already loaded from disk.
+        private static Sprite[] GetFrames(HatDef def) {
+            if (def.FramesTried) return def.Frames;
+            def.FramesTried = true;
+            var built = new Sprite[def.AnimFrames];
+            for (int i = 0; i < built.Length; i++) {
+                built[i] = LoadHatSprite(ResourcePrefix + string.Format(def.AnimPattern, i + 1));
+                if (built[i] != null) continue;
+                UnknownsCollectionPlugin.Logger?.LogWarning(
+                    $"[Hats] {def.Name}: anim frame {i + 1} missing - hat stays static.");
+                return null;
+            }
+            def.Frames = built;
+            return built;
         }
 
         // Same calibration TOR's private CreateHatSprite uses (CustomHatManager.cs): pivot

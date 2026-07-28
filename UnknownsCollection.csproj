@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.1.4.7</Version>
+        <Version>1.1.4.20</Version>
         <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade (Impostor); Siphoner, Witness, Scout, Beacon (Crewmate); Bug, Follower, Copycat (Neutral); Poltergeist (ghost, keeps its team).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
@@ -185,10 +185,11 @@
         <EmbeddedResource Include="Resources\overlay_claw.png" />
         <EmbeddedResource Include="Resources\overlay_wanted.png" />
         <EmbeddedResource Include="Resources\overlay_coin.png" />
-        <!-- Custom hats (UCHats): "Virus" plus the six blink frames of "Werbetafel". Explicit
-             LogicalName so the lookup never depends on the root-namespace default. UCHats extracts
-             the two frames TOR itself has to read into <Among Us>\TheOtherHats; the remaining five
-             blink frames are only ever read from here. -->
+        <!-- Custom hats (UCHats): "Virus", "Werbetafel" (6 blink frames + climb) and "Werewolf"
+             (full-body: 6 eye-glow frames + back + climb). Explicit LogicalName so the lookup
+             never depends on the root-namespace default. UCHats extracts only the files TOR
+             itself has to read (main/back/climb per hat) into <Among Us>\TheOtherHats; the
+             remaining animation frames are only ever read from here. -->
         <EmbeddedResource Include="Resources\hats\*.png" LogicalName="UnknownsCollection.Resources.hats.%(Filename)%(Extension)" />
         <!-- Localization tables (UCLocalization): one flat JSON map per language. Explicit
              LogicalName so the lookup never depends on the root-namespace default. -->

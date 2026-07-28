@@ -13,8 +13,9 @@
  *       a) the moment the form flips, the werewolf turns pitch black - exactly the Camouflager
  *          look, setLook("", 6, "", "", "", "") (RPC.cs:644) - while the transform flare burns,
  *       b) after that dark beat the beast appears: the full-body "Werewolf" custom hat (UCHats,
- *          front + back + climb layers, animated eye) worn as his complete look (visor/skin/pet
- *          stripped), and the player is scaled up by 1.5x (WolfSizePatch below - a Priority.Low
+ *          front + back + climb layers, animated eye) worn on the still camo-black body (colour 6,
+ *          so no player colour peeks out under the fur; visor/skin/pet stripped, the name comes
+ *          back), and the player is scaled up by 1.5x (WolfSizePatch below - a Priority.Low
  *          postfix on PlayerControl.FixedUpdate, because TOR's playerSizeUpdate forces 0.7 on
  *          EVERY player EVERY frame (PlayerControlPatch.cs:463-486), so only a later postfix
  *          sticks; the collider is counter-scaled like TOR does for the Mini, so the hitbox
@@ -154,13 +155,14 @@ namespace UnknownsCollection {
             } catch (Exception e) { WarnOnce(e); }
         }
 
-        // The beast: own name and colour, the full-body Werewolf hat, no visor/skin/pet - the hat IS
-        // the whole silhouette (front + back layer), everything else would poke out of the fur.
+        // The beast: own name, but the CAMO-BLACK body (colour 6) under the full-body Werewolf hat,
+        // no visor/skin/pet - the hat IS the whole silhouette (front + back layer), and the body
+        // parts that still peek out under the fur (the legs) must read as the beast's shadow, not
+        // as the player's own colour (playtest 2026-07-28: purple legs under the pelt).
         private static void ApplyWolfLook() {
             try {
                 if (lookOwner == null || lookOwner.Data == null || GlobalCamoActive()) return;
-                lookOwner.setLook(lookOwner.Data.PlayerName, lookOwner.Data.DefaultOutfit.ColorId,
-                                  UCHats.WerewolfHatId, "", "", "");
+                lookOwner.setLook(lookOwner.Data.PlayerName, 6, UCHats.WerewolfHatId, "", "", "");
             } catch (Exception e) { WarnOnce(e); }
         }
 

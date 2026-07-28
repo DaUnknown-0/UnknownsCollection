@@ -82,6 +82,7 @@
  * time; every hook is a runtime Harmony patch plus reflection reads.
  */
 
+using AmongUs.Data;
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
@@ -93,6 +94,11 @@ using UnityEngine;
 
 namespace UnknownsCollection {
     public static class UCHats {
+        // The Werewolf hat's ProductId, exactly as CreateHatBehaviour derives it ("hat_" + Name,
+        // CustomHatManager.cs:97). Shared with WerewolfFx, which puts this hat on the transformed
+        // beast via setLook - which is also WHY the hat lock below exists.
+        public const string WerewolfHatId = "hat_Werewolf";
+
         // Embedded PNGs: Resources\hats\*.png, pinned to this logical name in the csproj.
         private const string ResourcePrefix = "UnknownsCollection.Resources.hats.";
 
@@ -235,6 +241,10 @@ namespace UnknownsCollection {
                 // attributes) so a missing target logs a clear line instead of blowing up PatchAll.
                 PatchDownloadGuard(harmony);
                 if (AnimByName.Count > 0) PatchAnimation(harmony);
+
+                // Step 5: the Werewolf hat lock (see the section at the bottom of this file). Only
+                // armed when the Werewolf hat actually made it into the shop.
+                if (pending.Any(h => h?.Name == "Werewolf")) UCFx.RegisterTick(TickHatLock);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[Hats] registered {pending.Count} custom hat(s) in {dir}.");
@@ -478,6 +488,106 @@ namespace UnknownsCollection {
             } catch (Exception ex) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] sprite load failed ({logicalName}): {ex.Message}");
                 return null;
+            }
+        }
+
+        // ---- Step 5: the Werewolf hat lock (user decision 2026-07-28) ----------------------
+        //
+        // While the Werewolf ROLE is enabled (spawn rate > 0), the full-body Werewolf hat is the
+        // beast's transformation look (WerewolfFx puts it on via setLook) - so nobody may WEAR it
+        // as an ordinary cosmetic: a crewmate walking around as the beast would fake (or mask) a
+        // transformation. Three layers, from soft to hard:
+        //
+        //   1. The wardrobe chip is greyed out and its button disabled (HatsTab.OnEnable postfix -
+        //      it must be a postfix because TOR's own OnEnablePrefix returns false and rebuilds the
+        //      whole tab itself, HatsTabPatches.cs:21; the chips only exist after it ran).
+        //   2. ClickEquip is blocked as a backstop (controller flow selects with A and equips with
+        //      a separate button, so a disabled chip alone does not cover every input path).
+        //   3. TickHatLock runs on the shared UCFx tick (HudManager.Update - main menu wardrobes
+        //      have no HUD, but there LocalPlayer is null and only the saved value matters, which
+        //      layer 1+2 already protect): if the SAVED hat is the Werewolf hat while the role is
+        //      on, it is swapped back to the hat the player wore BEFORE - remembered in the plugin
+        //      config every time we see a different hat, so it survives restarts - and announced
+        //      via RpcSetHat so the lobby sees the swap immediately.
+        //
+        // The role option is read live: the host's own value is always current, a client's value is
+        // whatever the lobby last synced - exactly the scope in which the hat matters.
+
+        private const string NoHatId = "hat_NoHat";   // vanilla "empty" hat, verified in the 4.7.0 metadata
+        private static float lastHatFixTime;          // throttle: never spam RpcSetHat if a swap cannot stick
+
+        private static bool WerewolfHatLocked() {
+            try { return Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0; }
+            catch { return false; }
+        }
+
+        private static string PreviousHat() {
+            var entry = UnknownsCollectionPlugin.WerewolfPreviousHat;
+            string prev = entry != null ? entry.Value : null;
+            return string.IsNullOrEmpty(prev) || prev == WerewolfHatId ? NoHatId : prev;
+        }
+
+        private static void RememberHat(string hatId) {
+            try {
+                var entry = UnknownsCollectionPlugin.WerewolfPreviousHat;
+                if (entry == null || string.IsNullOrEmpty(hatId) || hatId == WerewolfHatId) return;
+                if (entry.Value != hatId) entry.Value = hatId;   // ConfigEntry setters persist to disk
+            } catch { }
+        }
+
+        private static void TickHatLock() {
+            try {
+                var customization = DataManager.Player?.Customization;
+                if (customization == null) return;
+                string saved = customization.Hat;
+                if (string.IsNullOrEmpty(saved)) return;
+                if (saved != WerewolfHatId) { RememberHat(saved); return; }
+                if (!WerewolfHatLocked()) return;
+                if (Time.time - lastHatFixTime < 1f) return;
+                lastHatFixTime = Time.time;
+
+                string prev = PreviousHat();
+                customization.Hat = prev;
+                var lp = PlayerControl.LocalPlayer;
+                if (lp != null) lp.RpcSetHat(prev);
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Hats] Werewolf role is enabled - the Werewolf hat was swapped back to '{prev}'.");
+            } catch (Exception ex) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] hat lock tick failed: {ex.Message}");
+            }
+        }
+
+        // Layer 1: grey the chip out. SetUnavailable is the vanilla "locked cosmetic" treatment;
+        // disabling the PassiveButton kills the hover/click listeners TOR wired up in its own
+        // OnEnable prefix (HatsTabPatches.cs:100-109).
+        [HarmonyPatch(typeof(HatsTab), nameof(HatsTab.OnEnable))]
+        private static class HatsTabLockPatch {
+            public static void Postfix(HatsTab __instance) {
+                try {
+                    if (!WerewolfHatLocked() || __instance == null || __instance.ColorChips == null) return;
+                    foreach (ColorChip chip in __instance.ColorChips) {
+                        var hat = chip != null && chip.Inner != null ? chip.Inner.Hat : null;
+                        if (hat == null || hat.ProductId != WerewolfHatId) continue;
+                        try { chip.SetUnavailable(); } catch { }
+                        try { if (chip.Button != null) chip.Button.enabled = false; } catch { }
+                    }
+                } catch (Exception ex) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] hat lock (tab) failed: {ex.Message}");
+                }
+            }
+        }
+
+        // Layer 2: the equip itself. currentHat is what SelectHat last previewed - exactly what
+        // ClickEquip would write into the save and the RpcSetHat.
+        [HarmonyPatch(typeof(HatsTab), nameof(HatsTab.ClickEquip))]
+        private static class HatsTabEquipPatch {
+            public static bool Prefix(HatsTab __instance) {
+                try {
+                    if (!WerewolfHatLocked() || __instance == null) return true;
+                    var hat = __instance.currentHat;
+                    if (hat != null && hat.ProductId == WerewolfHatId) return false;
+                } catch { }
+                return true;
             }
         }
     }

@@ -16,11 +16,15 @@
  *            opener.
  *   WOLF     Transforming starts Y seconds (option 1556) of WOLF DARKNESS:
  *            - nobody can fix the lights (SwitchMinigame closes itself),
- *            - EVERY player is reduced to a real TORCH: a small light radius (option 1515) AND the
- *              Lighter's directional flashlight cone - except the werewolf (full impostor vision),
+ *            - EVERY player is reduced to a real TORCH: a light radius (option 1515 - infinite, or
+ *              2.0x down to 0.5x of the standard crew sight) AND the Lighter's directional flashlight
+ *              cone - except the werewolf (full impostor vision, never less than the torch),
  *              the Lighter (keeps his own) and the dead,
  *            - the wolf is faster (1554) and kills faster (1553),
- *            - everyone SEES the beast: the crewmate cosmetics are replaced by an animated wolf skin,
+ *            - everyone SEES the beast: after a short pitch-black beat (the Camouflager look) the
+ *              werewolf wears the full-body "Werewolf" custom hat as his entire look, at 1.5x
+ *              player scale (WerewolfFx owns the pixels, UCHats locks the hat away from the
+ *              lobby wardrobe while the role is enabled),
  *            - his victims are marked with a public blood ring - the forensic price of the power.
  *            The form ends by itself after Y, at meeting start and at the werewolf's death; the charge
  *            then restarts from full.
@@ -108,7 +112,7 @@ namespace UnknownsCollection {
         // ---- Options (spillover 1513-1519 + 1482) ----
         public static CustomOption OnlyAsLastImpostor;     // 1513
         public static CustomOption SpyCountsAsImpostor;    // 1514
-        public static CustomOption FlashlightRadius;       // 1515 (%)
+        public static CustomOption FlashlightRadius;       // 1515 (choice: infinite / 2.0x .. 0.5x)
         public static CustomOption WolfFormRestrictions;   // 1516
         public static CustomOption ExhaustionSlow;         // 1517
         public static CustomOption TrapperTrapWounds;      // 1518
@@ -206,8 +210,15 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 SpyCountsAsImpostor = CustomOption.Create(1514, Types.Impostor, "Spy Counts As Impostor",
                     false, SpawnRate);
-                FlashlightRadius = CustomOption.Create(1515, Types.Impostor, "Flashlight Radius For Everyone (%)",
-                    35f, 10f, 100f, 5f, SpawnRate);
+                // Option 1515 is a CHOICE list, not a numeric slider: the wanted range ("infinite,
+                // then 2x down to 0.5x of the standard sight") has a special value at one end that no
+                // min/max/step slider can express. It is created through the CONSTRUCTOR instead of
+                // CustomOption.Create, because the string overload always defaults to index 0
+                // (CustomOptions.cs:80 passes "" as the default value) and index 0 is "Infinite" here -
+                // the constructor is public and takes the default value directly, so the list can keep
+                // the user's own order without the "list the default first" trick option 1557 needs.
+                FlashlightRadius = new CustomOption(1515, Types.Impostor, "Flashlight Radius For Everyone",
+                    FlashlightChoices, FlashlightChoices[DefaultFlashlightIndex], SpawnRate, false);
                 WolfFormRestrictions = CustomOption.Create(1516, Types.Impostor, "Wolf Form Restrictions",
                     true, SpawnRate);
                 ExhaustionSlow = CustomOption.Create(1517, Types.Impostor, "Exhaustion Slow After Revert",
@@ -272,8 +283,32 @@ namespace UnknownsCollection {
             SpeedMultiplier != null ? SpeedMultiplier.getFloat() / 100f : 1.4f;
         private static float KillReductionValue() =>
             Mathf.Clamp01((KillCooldownReduction != null ? KillCooldownReduction.getFloat() : 30f) / 100f);
-        private static float FlashlightFactor() =>
-            Mathf.Clamp01((FlashlightRadius != null ? FlashlightRadius.getFloat() : 35f) / 100f);
+        // ---- The torch (option 1515) ----
+        //
+        // The visible choices and the numbers behind them. Index 0 is "no limit at all", the rest are
+        // multipliers of the STANDARD crew sight (see CrewBaseRadius below). The two arrays are kept in
+        // lockstep and everything reads the FACTOR BY INDEX, never by parsing the visible text:
+        // UCLocalization replaces opt.selections with translated strings (UCLocalization.cs:178), so a
+        // text-based lookup would break in every non-English client.
+        private static readonly string[] FlashlightChoices = {
+            "Infinite",
+            "2.0x", "1.9x", "1.8x", "1.7x", "1.6x", "1.5x", "1.4x", "1.3x", "1.2x", "1.1x",
+            "1.0x", "0.9x", "0.8x", "0.7x", "0.6x", "0.5x",
+        };
+        private static readonly float[] FlashlightFactors = {
+            0f,   // index 0 = infinite, handled separately - never used as a factor
+            2.0f, 1.9f, 1.8f, 1.7f, 1.6f, 1.5f, 1.4f, 1.3f, 1.2f, 1.1f,
+            1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f,
+        };
+        // 0.5x - the darkest setting, and the closest one to the old fixed 35%-of-MaxLightRadius value.
+        private const int DefaultFlashlightIndex = 16;
+
+        private static int FlashlightIndex() {
+            if (FlashlightRadius == null) return DefaultFlashlightIndex;
+            return Mathf.Clamp(FlashlightRadius.getSelection(), 0, FlashlightFactors.Length - 1);
+        }
+        private static bool FlashlightInfinite() => FlashlightIndex() == 0;
+        private static float FlashlightFactor() => FlashlightFactors[FlashlightIndex()];
         private static bool RestrictionsOn() => WolfFormRestrictions == null || WolfFormRestrictions.getBool();
 
         // 0 = Wounds (default), 1 = Kills, 2 = No effect - the order of the selection array above.
@@ -453,7 +488,7 @@ namespace UnknownsCollection {
                 if (HowlOnTransform == null || HowlOnTransform.getBool())
                     UCAssets.PlayWerewolfHowlAt(pos);
                 WerewolfFx.SpawnFlare(pos);
-                WerewolfFx.AttachSkin(werewolf);
+                WerewolfFx.BeginTransformLook(werewolf);
 
                 // Force-close a lights minigame that is ALREADY open on this client (the Begin postfix
                 // below only catches the ones opened from now on) - Swapper precedent, UsablesPatch.cs:295.
@@ -473,7 +508,7 @@ namespace UnknownsCollection {
 
                 UCAssets.PlayWerewolfRevertAt(pos);
                 WerewolfFx.SpawnFlare(pos, 0.35f);
-                WerewolfFx.DetachSkin();
+                WerewolfFx.BeginRevertLook();
                 UCMusic.Release(MusicCue);
 
                 if (IsLocalWerewolf()) {
@@ -492,7 +527,7 @@ namespace UnknownsCollection {
             if (!wolfForm) return;
             wolfForm = false;
             formEndTime = 0f;
-            WerewolfFx.DetachSkin();
+            WerewolfFx.ClearLook();
             UCMusic.Release(MusicCue);
             if (IsLocalWerewolf()) {
                 chargeLeft = ChargeTimeValue();
@@ -518,7 +553,7 @@ namespace UnknownsCollection {
                 wolfForm = false;
                 formEndTime = 0f;
                 UCAssets.PlayWerewolfRevertAt(pos);
-                WerewolfFx.DetachSkin();
+                WerewolfFx.BeginRevertLook();
                 UCMusic.Release(MusicCue);
                 if (IsLocalWerewolf()) {
                     chargeLeft = ChargeTimeValue();
@@ -568,7 +603,7 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
             public static void Postfix() {
-                try { WerewolfFx.DetachSkin(); } catch { }
+                try { WerewolfFx.ClearLook(); } catch { }
                 try { WerewolfFx.ClearBloodRings(); } catch { }
                 try { UCMusic.Release(MusicCue); } catch { }
                 StopHeartbeat();
@@ -598,7 +633,7 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class GameJoinPatch {
             public static void Postfix() {
-                try { WerewolfFx.DetachSkin(); } catch { }
+                try { WerewolfFx.ClearLook(); } catch { }
                 try { WerewolfFx.ClearBloodRings(); } catch { }
                 try { UCMusic.Release(MusicCue); } catch { }
                 StopHeartbeat();
@@ -853,6 +888,29 @@ namespace UnknownsCollection {
         // Wolf darkness: vision + lights-fix block
         // ====================================================================
 
+        // What option 1515 measures itself against: the STANDARD crew sight, i.e. what a crewmate sees
+        // with the lights ON (MaxLightRadius * CrewLightMod - the value TOR's own GetNeutralLightRadius
+        // lerps to at switch value 255, ShipStatusPatch.cs:95). Deliberately NOT the current, sabotaged
+        // radius: the wolf darkness always runs during a lights sabotage, so measuring against the
+        // sabotaged circle would leave even "2x" pitch black. Taking CrewLightMod into account (the old
+        // code used bare MaxLightRadius) means a host who already plays with a bigger or smaller crew
+        // vision keeps that as the reference point - "0.5x" is half of what THIS lobby calls normal.
+        private static float CrewBaseRadius(ShipStatus ship) {
+            float mod = 1f;
+            try { mod = GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod; } catch { }
+            return ship.MaxLightRadius * mod;
+        }
+
+        // "Infinite" is a number too - the light just has to outrun the screen. The AU camera shows
+        // roughly 3 world units in each direction and MaxLightRadius alone already fills a good part of
+        // it, so ten times that is past every edge of the view; walls still cut the light off, which is
+        // exactly what makes it read as "the torch reaches as far as you can see".
+        private const float InfiniteRadiusFactor = 10f;
+
+        private static float TorchRadius(ShipStatus ship) =>
+            FlashlightInfinite() ? ship.MaxLightRadius * InfiniteRadiusFactor
+                                 : CrewBaseRadius(ship) * FlashlightFactor();
+
         // POSTFIX - see the file header: TOR's own CalculateLightRadius prefix (ShipStatusPatch.cs:17)
         // returns false, so only a postfix can have the last word.
         [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.CalculateLightRadius))]
@@ -861,10 +919,15 @@ namespace UnknownsCollection {
                                        [HarmonyArgument(0)] NetworkedPlayerInfo p) {
                 try {
                     if (!WolfDarkActive() || p == null || __instance == null) return;
-                    // The beast owns the dark: full impostor vision.
+                    // The beast owns the dark: full impostor vision - but never LESS than the torch the
+                    // crew is walking around with. With the torch set to 2x or infinite the crew's
+                    // circle would otherwise out-reach the wolf's, and the hunted would spot the hunter
+                    // first. Max() keeps "the wolf sees at least as far as his prey" true at every
+                    // setting while leaving the usual (torch < impostor vision) case untouched.
                     if (werewolf != null && p.PlayerId == werewolf.PlayerId) {
-                        __result = __instance.MaxLightRadius
-                                   * GameOptionsManager.Instance.currentNormalGameOptions.ImpostorLightMod;
+                        float imp = __instance.MaxLightRadius
+                                    * GameOptionsManager.Instance.currentNormalGameOptions.ImpostorLightMod;
+                        __result = Mathf.Max(imp, TorchRadius(__instance));
                         return;
                     }
                     // The Lighter keeps whatever TOR just computed for him (explicit carve-out).
@@ -873,11 +936,15 @@ namespace UnknownsCollection {
                     // SAME crew radius as everyone else, scaled up by his own multiplier (option 1504,
                     // 1.0-2.5x; 1.0 = same as the crew, 2.5x = well beyond it) instead of a flat value,
                     // so he stays meaningfully ahead of the crew without matching the wolf's full sight.
+                    // At "Infinite" there is nothing left to scale - everyone already sees to the edge
+                    // of the screen - so his multiplier simply has no effect there.
                     if (Hunter.active && Hunter.hunter != null && p.PlayerId == Hunter.hunter.PlayerId) {
-                        __result = __instance.MaxLightRadius * FlashlightFactor() * Hunter.FlashlightMultiplierValue();
+                        __result = FlashlightInfinite()
+                            ? TorchRadius(__instance)
+                            : CrewBaseRadius(__instance) * FlashlightFactor() * Hunter.FlashlightMultiplierValue();
                         return;
                     }
-                    __result = __instance.MaxLightRadius * FlashlightFactor();
+                    __result = TorchRadius(__instance);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] LightPatch failed: {e}");
                 }

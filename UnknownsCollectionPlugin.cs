@@ -88,6 +88,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public static ConfigEntry<bool> HelpMenuGerman { get; set; }
     public static ConfigEntry<bool> KillAnimationsUC { get; set; }
     public static ConfigEntry<bool> KillAnimationsTOR { get; set; }
+    public static ConfigEntry<string> WerewolfPreviousHat { get; set; }
 
     internal static Assembly TORAssembly;
 
@@ -177,6 +178,11 @@ public class UnknownsCollectionPlugin : BasePlugin
             "Play the hunt music during the pelican's final chase.");
         MusicReactor = Config.Bind("Music", "Reactor Music", true,
             "Play the reactor/seismic sabotage score (only ever heard if the host enabled it in the game options).");
+        // Bookkeeping for the Werewolf hat lock (UCHats.TickHatLock): the last hat this player wore
+        // that was NOT the Werewolf hat, so an enabled Werewolf role can swap it back - even across
+        // a game restart. Written by the mod, not meant to be edited by hand.
+        WerewolfPreviousHat = Config.Bind("Cosmetics", "Last Hat Before Werewolf", "",
+            "Internal: the hat worn before the Werewolf hat, restored while the Werewolf role is enabled.");
 
         // The Bug role (Neutral). Survive until the end and win with the winning team.
         Bug.CreateOptions();

@@ -8,14 +8,25 @@
  * VICTIM's animation). Werewolf.cs owns the rules, this file owns the pixels. Effects, all of them
  * deliberately PUBLIC (visible to every client):
  *
- *  1. WOLF SKIN (the beast itself). While the werewolf is transformed, its real cosmetics are hidden
- *     and a single child SpriteRenderer plays the hand-drawn wolf flipbook instead (6-frame idle /
- *     8-frame walk, chosen from the player's movement, flipX from the cosmetics' own facing flag).
- *     Chosen over a per-cosmetic renderer swap (IllusionistClone's approach) because the wolf is not
- *     a crewmate silhouette at all - there is nothing to map hat/visor/skin onto - and because a
- *     single renderer cannot desync from AU's body pivot/animator. The actual renderer-swap mechanic
- *     now lives in UCCharacterSkin (Paket W2 refactor: the Hunter's own skin, HunterFx.cs, needs the
- *     EXACT same mechanic, so it was pulled out into a shared class instead of being copy-pasted).
+ *  1. WOLF LOOK (the beast itself; user decision 2026-07-28, replaces the old UCCharacterSkin
+ *     flipbook). The transformation is a LOOK CHANGE through TOR's own setLook pipeline:
+ *       a) the moment the form flips, the werewolf turns pitch black - exactly the Camouflager
+ *          look, setLook("", 6, "", "", "", "") (RPC.cs:644) - while the transform flare burns,
+ *       b) after that dark beat the beast appears: the full-body "Werewolf" custom hat (UCHats,
+ *          front + back + climb layers, animated eye) worn as his complete look (visor/skin/pet
+ *          stripped), and the player is scaled up by 1.5x (WolfSizePatch below - a Priority.Low
+ *          postfix on PlayerControl.FixedUpdate, because TOR's playerSizeUpdate forces 0.7 on
+ *          EVERY player EVERY frame (PlayerControlPatch.cs:463-486), so only a later postfix
+ *          sticks; the collider is counter-scaled like TOR does for the Mini, so the hitbox
+ *          stays vanilla-sized),
+ *       c) the revert runs the same dark beat backwards and ends in setDefaultLook.
+ *     Because the beast is an ordinary hat on the ordinary body, every vanilla rule (darkness,
+ *     walls, ladders/climb pose, corpses) works without the hand-rolled visibility math the old
+ *     flipbook needed. A per-frame guard re-applies the wolf look if something else (Camouflager
+ *     end, night vision) rewrote it - and deliberately backs off WHILE a global camouflage or the
+ *     Mushroom mixup is running (the beast is hidden like everyone else, TOR restores looks when
+ *     it ends). The matching lobby-side rule - nobody can WEAR the Werewolf hat while the role is
+ *     enabled - lives in UCHats.cs (hat lock).
  *
  *  2. BLOOD RING. A wolf-form kill leaves a ring of blood + paw prints around the corpse, visible to
  *     everyone - the forensic counterweight to the reduced kill cooldown. Needs no RPC: the murder
@@ -49,22 +60,6 @@ using TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class WerewolfFx {
-        // ---- wolf skin (UCCharacterSkin, shared mechanic - see UCCharacterSkin.cs) ----
-        // 160 px frames. History: 180 ppu (~0.89 units) read as too small next to a crewmate (~0.7),
-        // 145 was still not enough - the wolf crouches and never fills its frame vertically. 72.5 ppu
-        // is exactly half of 145, i.e. DOUBLE the previous size (~2.2 units, roughly three crewmates
-        // tall). The beast is meant to be unmistakable when it steps into the dark.
-        private const float SkinPpu = 72.5f;
-
-        // Where the drawn beast ends inside its frame, measured from the BOTTOM (DrawWerewolfSkin puts
-        // the ground line at 0.90 and the ear tips at ~0.18 of the canvas, counted from the top).
-        // Only used to lift the name tag clear of the head - see UCCharacterSkin.
-        private const float SkinContentTop = 0.82f;
-
-        private static readonly UCCharacterSkin skin =
-            new UCCharacterSkin("Werewolf", "werewolf_skin_idle", 6, "werewolf_skin_walk", 8, SkinPpu,
-                                contentTop: SkinContentTop);
-
         // ---- blood rings ----
         private sealed class Ring {
             public GameObject go;
@@ -95,14 +90,158 @@ namespace UnknownsCollection {
         public static void Init() { }
 
         // ==================================================================================
-        // Wolf skin (thin wrapper around the shared UCCharacterSkin - see that file for the mechanic)
+        // Wolf look (see the file header, item 1): dark camo beat -> Werewolf hat + 1.5x scale.
+        // All of this is purely visual and runs on EVERY client from the synced wolfForm flag,
+        // exactly like the old skin did - no RPC of its own.
         // ==================================================================================
+        private enum LookPhase { None, DarkToWolf, Wolf, DarkToHuman }
 
-        public static bool SkinAttached => skin.Attached;
+        private static LookPhase lookPhase = LookPhase.None;
+        private static PlayerControl lookOwner;
+        private static float lookPhaseEnd;
+        private static bool lookWarned;
 
-        public static void AttachSkin(PlayerControl player) => skin.Attach(player);
+        // The dark beats share their length with the flares SpawnFlare draws over them (0.55 s on
+        // transform, 0.35 s on revert), so the black crewmate is exactly the silhouette inside the
+        // burst and the beast/human pops in when the light collapses.
+        private const float TransformDarkSecs = 0.55f;
+        private const float RevertDarkSecs = 0.35f;
 
-        public static void DetachSkin() => skin.Detach();
+        // 1.5x the vanilla crewmate (user decision 2026-07-28). 0.7 is what TOR's playerSizeUpdate
+        // stamps on every non-Mini player each frame (PlayerControlPatch.cs:467).
+        private const float VanillaScale = 0.7f;
+        private const float WolfScaleFactor = 1.5f;
+
+        private static bool GlobalCamoActive() {
+            try { return Camouflager.camouflageTimer > 0f || Helpers.MushroomSabotageActive(); }
+            catch { return false; }
+        }
+
+        public static void BeginTransformLook(PlayerControl player) {
+            if (player == null) return;
+            lookOwner = player;
+            lookPhase = LookPhase.DarkToWolf;
+            lookPhaseEnd = Time.time + TransformDarkSecs;
+            ApplyDarkLook();
+        }
+
+        public static void BeginRevertLook() {
+            if (lookOwner == null) { lookPhase = LookPhase.None; return; }
+            lookPhase = LookPhase.DarkToHuman;
+            lookPhaseEnd = Time.time + RevertDarkSecs;
+            ApplyDarkLook();
+            ResetScale(lookOwner); // shrink with the flash, not a beat later
+        }
+
+        // Instant, silent restore - the meeting/death/reset path. Safe to call when nothing is on.
+        public static void ClearLook() {
+            var owner = lookOwner;
+            var phase = lookPhase;
+            lookPhase = LookPhase.None;
+            lookOwner = null;
+            if (owner == null || phase == LookPhase.None) return;
+            try { if (!GlobalCamoActive()) owner.setDefaultLook(); } catch { }
+            ResetScale(owner);
+        }
+
+        // Black like the Camouflager makes everyone - byte-for-byte TOR's own camo look (RPC.cs:644).
+        // If a global camouflage/mixup is already running the werewolf is black (or a mushroom)
+        // anyway, and overwriting would fight TOR's own restore.
+        private static void ApplyDarkLook() {
+            try {
+                if (GlobalCamoActive() || lookOwner == null) return;
+                lookOwner.setLook("", 6, "", "", "", "");
+            } catch (Exception e) { WarnOnce(e); }
+        }
+
+        // The beast: own name and colour, the full-body Werewolf hat, no visor/skin/pet - the hat IS
+        // the whole silhouette (front + back layer), everything else would poke out of the fur.
+        private static void ApplyWolfLook() {
+            try {
+                if (lookOwner == null || lookOwner.Data == null || GlobalCamoActive()) return;
+                lookOwner.setLook(lookOwner.Data.PlayerName, lookOwner.Data.DefaultOutfit.ColorId,
+                                  UCHats.WerewolfHatId, "", "", "");
+            } catch (Exception e) { WarnOnce(e); }
+        }
+
+        private static bool WearsWolfHat() {
+            try {
+                var hp = lookOwner != null && lookOwner.cosmetics != null ? lookOwner.cosmetics.hat : null;
+                return hp != null && hp.Hat != null && hp.Hat.ProductId == UCHats.WerewolfHatId;
+            } catch { return true; } // a broken probe must never turn into a per-frame setLook storm
+        }
+
+        private static void ResetScale(PlayerControl p) {
+            try {
+                if (p == null) return;
+                p.transform.localScale = new Vector3(VanillaScale, VanillaScale, 1f);
+                var col = p.Collider != null ? p.Collider.TryCast<CircleCollider2D>() : null;
+                if (col != null) {
+                    col.radius = Mini.defaultColliderRadius;
+                    col.offset = Mini.defaultColliderOffset * Vector2.down;
+                }
+            } catch { }
+        }
+
+        private static void WarnOnce(Exception e) {
+            if (lookWarned) return;
+            lookWarned = true;
+            UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] wolf look failed (logged once): {e}");
+        }
+
+        private static void TickLook() {
+            if (lookPhase == LookPhase.None) return;
+            if (lookOwner == null || lookOwner.Data == null
+                || lookOwner.Data.Disconnected || lookOwner.Data.IsDead) { ClearLook(); return; }
+
+            switch (lookPhase) {
+                case LookPhase.DarkToWolf:
+                    if (Time.time >= lookPhaseEnd) {
+                        lookPhase = LookPhase.Wolf;
+                        ApplyWolfLook();
+                    }
+                    break;
+                case LookPhase.Wolf:
+                    // Re-apply guard: a Camouflager end or night-vision pass rewrites the look via
+                    // setDefaultLook behind our back - the hat probe is one string compare per frame.
+                    if (!GlobalCamoActive() && !WearsWolfHat()) ApplyWolfLook();
+                    break;
+                case LookPhase.DarkToHuman:
+                    if (Time.time >= lookPhaseEnd) {
+                        var owner = lookOwner;
+                        lookPhase = LookPhase.None;
+                        lookOwner = null;
+                        try { if (!GlobalCamoActive()) owner.setDefaultLook(); } catch { }
+                        ResetScale(owner);
+                    }
+                    break;
+            }
+        }
+
+        // TOR's playerSizeUpdate stamps localScale = 0.7 and the default collider onto EVERY player in
+        // its own PlayerControl.FixedUpdate postfix (PlayerControlPatch.cs:463-486, no priority), so
+        // the beast's size has to be a LATER postfix on the same method - Priority.Low, the same trick
+        // Werewolf.cs's MurderPatch uses to run after TOR's kill-timer writes. The collider is scaled
+        // back down by the same factor (the Mini precedent, just inverted), so the beast LOOKS half a
+        // player taller but collides and gets targeted exactly like the human underneath.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.FixedUpdate))]
+        [HarmonyPriority(Priority.Low)]
+        static class WolfSizePatch {
+            public static void Postfix(PlayerControl __instance) {
+                try {
+                    if (lookPhase != LookPhase.Wolf || lookOwner == null || __instance == null) return;
+                    if (__instance.PlayerId != lookOwner.PlayerId) return;
+                    // Same gate as TOR's own postfix: outside a running round it never writes 0.7,
+                    // so we must not write 1.05 either.
+                    if (AmongUsClient.Instance == null
+                        || AmongUsClient.Instance.GameState != InnerNet.InnerNetClient.GameStates.Started) return;
+                    float scale = VanillaScale * WolfScaleFactor;
+                    __instance.transform.localScale = new Vector3(scale, scale, 1f);
+                    var col = __instance.Collider != null ? __instance.Collider.TryCast<CircleCollider2D>() : null;
+                    if (col != null) col.radius = Mini.defaultColliderRadius * VanillaScale / scale;
+                } catch { }
+            }
+        }
 
         // ==================================================================================
         // Blood ring
@@ -440,14 +579,14 @@ namespace UnknownsCollection {
         // ==================================================================================
 
         private static void Tick() {
-            try { skin.Tick(); } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Werewolf] skin tick: {e.Message}"); }
+            try { TickLook(); } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Werewolf] look tick: {e.Message}"); }
             try { TickRings(); } catch { }
             try { TickFlares(); } catch { }
             try { TickDeathSeqs(); } catch { }
         }
 
         private static void Clear() {
-            try { DetachSkin(); } catch { }
+            try { ClearLook(); } catch { }
             try { ClearBloodRings(); } catch { }
             try {
                 foreach (var f in flares) if (f.go != null) UnityEngine.Object.Destroy(f.go);

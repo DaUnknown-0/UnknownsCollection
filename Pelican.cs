@@ -318,6 +318,15 @@ namespace UnknownsCollection {
         // Appliers (every client)
         // ====================================================================
         private static void ApplySetPelican(byte id, byte variant) {
+            // A handover (or a withdrawal via id 255) has to undo what the PREVIOUS bird left
+            // behind, not just reset the round fields: anyone still inside the belly would stay
+            // swallowed forever (the per-frame driver that releases them only runs while a pelican
+            // is active), the hunt music would keep playing and the hunt HUD would stay up.
+            // Idempotent - on a first assignment there is nothing to release.
+            try { UCMusic.Release(MusicCue); } catch { }
+            try { PelicanHud.HideAll(); } catch { }
+            ForceLeaveBelly();
+
             pelican = Helpers.playerById(id);
             active = pelican != null;
             pelicanPlayerId = active ? id : byte.MaxValue;

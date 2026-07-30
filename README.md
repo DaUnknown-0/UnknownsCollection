@@ -107,6 +107,20 @@ and cached once via `UCAssets`.
 
 ---
 
+## Host tooling hook: PlayerTuning
+
+Besides the roles, the mod carries one module that is **not** a role: `PlayerTuning` (module byte 213
+on the shared RPC channel). It lets a host tool set per-player overrides that every client then
+applies locally: movement speed, ability/kill cooldown, a vent ban, and a full task-list
+replacement. It has no options and never acts on its own: it only reacts to what a host sends, and
+every send is gated on the usual "everyone runs this build" handshake. State clears on round start
+and when joining another lobby.
+
+This exists here because the *effects* are client-side (movement is client-authoritative, cooldowns
+tick locally, vents resolve locally), so the receiving code has to be present on every client.
+
+---
+
 ## Installation
 
 1. Install [BepInEx (IL2CPP)](https://github.com/BepInEx/BepInEx) and

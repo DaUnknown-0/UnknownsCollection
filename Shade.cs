@@ -145,9 +145,30 @@ namespace UnknownsCollection {
             shade = Helpers.playerById(id);
             active = shade != null;
             if (active) UCPromotion.Claim(id);
+            // Bodies hidden by the PREVIOUS shade must come back before the bookkeeping is dropped:
+            // clearing the dictionaries alone leaves them permanently invisible and unreportable,
+            // because the only code that re-enables a body is the reveal path, which needs exactly
+            // the entries being cleared here. Matters on every handover and on a withdrawal (255).
+            RevealAllHiddenBodies();
             hiddenBodies.Clear();
             hiddenBodyRefs.Clear();
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Shade] The Shade is {shade.Data?.PlayerName}.");
+        }
+
+        // Re-enables every body this role hid. Safe to call when nothing is hidden.
+        private static void RevealAllHiddenBodies() {
+            try {
+                foreach (var kv in hiddenBodyRefs)
+                    if (kv.Value != null) kv.Value.gameObject.SetActive(true);
+                // Fallback for bodies whose DeadBody reference was never captured (or was replaced):
+                // walk the live objects once and re-enable anything still on the hidden list.
+                if (hiddenBodies.Count > 0) {
+                    foreach (var db in GameObject.FindObjectsOfType<DeadBody>()) {
+                        if (db == null || !hiddenBodies.ContainsKey(db.ParentId)) continue;
+                        db.gameObject.SetActive(true);
+                    }
+                }
+            } catch { }
         }
 
         private static void ApplyHideBody(byte victimId, Vector2 pos) {

@@ -237,6 +237,18 @@ namespace UnknownsCollection {
         // ---- RPC application (runs on every client) ----
 
         private static void ApplySetPoltergeist(byte id) {
+            // Everything the PREVIOUS ghost left running has to go first: an active manifestation
+            // would keep standing around, hexes would keep their victims blind or boosted, and the
+            // aura FX would linger - none of them are cleared by the fields below, and the per-frame
+            // driver that would end them only runs while a poltergeist is active. Matters on a
+            // handover and on a withdrawal (id 255, which lands in the !active exit below).
+            try { PoltergeistManifest.Reset(); } catch { }
+            try { PoltergeistFx.Clear(); } catch { }
+            hexes.Clear();
+            hauntedDoors.Clear();
+            handChanneling = false;
+            speedHexApplied = false;
+
             poltergeist = Helpers.playerById(id);
             active = poltergeist != null;
             if (!active) return;

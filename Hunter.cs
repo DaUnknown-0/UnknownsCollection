@@ -254,9 +254,39 @@ namespace UnknownsCollection {
             }
         }
 
+        // Withdraw the promotion again (host tooling only - the game itself never un-promotes).
+        // ApplySetHunter refuses to run while `active` is set, on purpose: the promotion must happen
+        // exactly once per round. So a host tool that reassigns roles cannot simply send a new
+        // SubSetHunter - it needs this explicit clear, which travels the same module byte and
+        // therefore takes the costume off on EVERY client, not just the host's screen.
+        // playerId 255 means "no hunter"; ApplyClearHunter runs the shared ClearState().
+        public static void SendClearHunter() {
+            try {
+                var w = Werewolf.BeginRpc(SubSetHunter);
+                w.Write(byte.MaxValue);
+                w.Write((byte)0);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplySetHunter(byte.MaxValue, false);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Hunter] SendClearHunter failed: {e}");
+            }
+        }
+
         // Runs on EVERY client (the host applies it locally right after sending).
         public static void ApplySetHunter(byte id, bool naturalGuesser) {
             try {
+                // 255 = withdrawal (see SendClearHunter). Handled BEFORE the once-per-round guard,
+                // which is exactly what it has to bypass; hostFired stays true so UC's own trigger
+                // does not re-promote the same sheriff a moment later.
+                if (id == byte.MaxValue) {
+                    if (!active) return;
+                    string was = hunter?.Data?.PlayerName ?? "?";
+                    ClearState();
+                    hostFired = true;
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Hunter] promotion withdrawn from {was}.");
+                    return;
+                }
+
                 if (active) return;                       // the promotion happens exactly once
                 var p = Helpers.playerById(id);
                 if (p == null) return;

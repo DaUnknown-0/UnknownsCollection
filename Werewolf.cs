@@ -449,6 +449,15 @@ namespace UnknownsCollection {
         // Appliers (all of these run on EVERY client)
         // ====================================================================
         private static void ApplySetWerewolf(byte id, byte variant) {
+            // This resets wolfForm/charge below, so the effects that belong to those states have to
+            // go with them: wolf look, blood rings, the round music cue, the vision cone and the
+            // charge heartbeat. Clearing the fields alone is not enough - those effects live outside
+            // them, and the per-frame driver that would normally stop them runs ONLY for the current
+            // werewolf. A handed-over or withdrawn beast therefore kept its look and kept the
+            // heartbeat pounding for the rest of the round. Idempotent, so a fresh assignment is
+            // unaffected.
+            ClearLingeringEffects();
+
             werewolf = Helpers.playerById(id);
             active = werewolf != null;
             if (active) UCPromotion.Claim(id);
@@ -597,17 +606,25 @@ namespace UnknownsCollection {
             heartbeatSource = null;
         }
 
+        // Everything that outlives the wolfForm/charge fields: look, blood rings, round music, the
+        // vision cone and the heartbeat loop. Used by the round reset AND by every (re)assignment,
+        // so no effect can survive a handover. Each call is safe to repeat.
+        private static void ClearLingeringEffects() {
+            try { WerewolfFx.ClearLook(); } catch { }
+            try { WerewolfFx.ClearBloodRings(); } catch { }
+            try { UCMusic.Release(MusicCue); } catch { }
+            StopHeartbeat();
+            ForceConeOff();
+        }
+
         // ====================================================================
         // Round reset
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
             public static void Postfix() {
-                try { WerewolfFx.ClearLook(); } catch { }
-                try { WerewolfFx.ClearBloodRings(); } catch { }
-                try { UCMusic.Release(MusicCue); } catch { }
-                StopHeartbeat();
-                ForceConeOff();
+                ClearLingeringEffects();
+
                 werewolf = null;
                 active = false;
                 wolfForm = false;
@@ -633,11 +650,8 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class GameJoinPatch {
             public static void Postfix() {
-                try { WerewolfFx.ClearLook(); } catch { }
-                try { WerewolfFx.ClearBloodRings(); } catch { }
-                try { UCMusic.Release(MusicCue); } catch { }
-                StopHeartbeat();
-                ForceConeOff();
+                ClearLingeringEffects();
+
                 werewolf = null;
                 active = false;
                 wolfForm = false;
@@ -740,6 +754,17 @@ namespace UnknownsCollection {
                     // BEFORE the "is there even a beast" bail-out: that is also the path which switches
                     // the torch back off once the form, the round or the wolf itself is gone.
                     TickCone();
+
+                    // Same reasoning for the heartbeat, which is a LOCAL loop: everything that starts
+                    // and stops it lives behind the two bail-outs below, so anyone who stops being the
+                    // werewolf (role reassigned, withdrawn, died) would never reach the stop call and
+                    // the loop would pound on for the rest of the session. A single frame gate that
+                    // repeats the full audibility condition cannot be bypassed by any exit path.
+                    if (heartbeatSource != null) {
+                        bool audible = active && werewolf != null && IsLocalWerewolf() && IsAlive(werewolf)
+                                       && !InMeeting() && !wolfForm && chargeLeft > 0f && LightsSabotageActive();
+                        if (!audible) StopHeartbeat();
+                    }
 
                     if (!active || werewolf == null) return;
 

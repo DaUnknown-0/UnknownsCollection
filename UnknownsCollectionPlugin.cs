@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.1.4.29";
+    public const string PluginVersion = "1.1.4.32";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -78,6 +78,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte ManipulatorRpcId = 210;
     public const byte WerewolfRpcId = 211;
     public const byte PelicanRpcId = 212;
+    public const byte PlayerTuningRpcId = 213; // host tooling: per-player speed/cooldown/vent/tasks
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -250,6 +251,11 @@ public class UnknownsCollectionPlugin : BasePlugin
         // the explosion. Off by default; runs on the UCMusic channel at the mod's highest priority.
         ReactorMusic.CreateOptions();
         ReactorMusic.TryPatch(harmony);
+
+        // PlayerTuning - remote-control surface for host tooling (per-player speed/cooldown/vent
+        // ban/task replacement, module byte 213). No options, no own game logic; the Harmony
+        // patches are attribute-based and come in via PatchAll below.
+        PlayerTuning.TryPatch(harmony);
 
         // Localization: loads the uc.* tables and translates UC's RoleInfos + options by
         // matching their pristine English text (follows UTS's UTS.Loc.ActiveCode/Epoch via

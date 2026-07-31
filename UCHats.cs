@@ -94,10 +94,12 @@ using UnityEngine;
 
 namespace UnknownsCollection {
     public static class UCHats {
-        // The Werewolf hat's ProductId, exactly as CreateHatBehaviour derives it ("hat_" + Name,
-        // CustomHatManager.cs:97). Shared with WerewolfFx, which puts this hat on the transformed
-        // beast via setLook - which is also WHY the hat lock below exists.
+        // The role-costume hats' ProductIds, exactly as CreateHatBehaviour derives them ("hat_" + Name,
+        // CustomHatManager.cs:97). Shared with WerewolfFx / HunterFx, which put these hats on the
+        // transformed beast resp. the promoted sheriff via setLook - which is also WHY the hat locks
+        // at the bottom of this file exist.
         public const string WerewolfHatId = "hat_Werewolf";
+        public const string HunterHatId = "hat_Monster Hunter";
 
         // Embedded PNGs: Resources\hats\*.png, pinned to this logical name in the csproj.
         private const string ResourcePrefix = "UnknownsCollection.Resources.hats.";
@@ -174,6 +176,23 @@ namespace UnknownsCollection {
                 Target = AnimTarget.Front,
                 LockFlip = false,                   // the profile mirrors with the walk direction
             },
+            new HatDef {
+                // The Hunter's costume (Paket W2): unlike the beast this hat does NOT hide the player -
+                // body, legs and visor stay uncovered on purpose, the hat only adds the leather hat,
+                // coat, quiver and crossbow. That is what lets the crew still recognise "our sheriff"
+                // under the hunter's garb (the same rule the old flipbook skin followed).
+                // Name deliberately not "Hunter": the official TheOtherHats repository is not readable
+                // offline, and a name collision would silently drop our hat (Register skips duplicates).
+                Name = "Monster Hunter", Behind = true,   // forced by BackResource anyway
+                MainFile = "UC_Hunter.png", MainRes = "hunter_1.png",
+                BackFile = "UC_Hunter_back.png", BackRes = "hunter_back.png",
+                ClimbFile = "UC_Hunter_climb.png", ClimbRes = "hunter_climb.png",
+                // Side profile like the wolf (crewmates stand sideways); frames 2..6 only vary the
+                // silver glint on the bolt tip and the sheriff star.
+                AnimFrames = 6, AnimFps = 6f, AnimPattern = "hunter_{0}.png",
+                Target = AnimTarget.Front,
+                LockFlip = false,                   // the profile mirrors with the walk direction
+            },
         };
 
         // Every file we ever put into TheOtherHats - the download guard strips exactly these.
@@ -242,9 +261,10 @@ namespace UnknownsCollection {
                 PatchDownloadGuard(harmony);
                 if (AnimByName.Count > 0) PatchAnimation(harmony);
 
-                // Step 5: the Werewolf hat lock (see the section at the bottom of this file). Only
-                // armed when the Werewolf hat actually made it into the shop.
-                if (pending.Any(h => h?.Name == "Werewolf")) UCFx.RegisterTick(TickHatLock);
+                // Step 5: the role-costume hat locks (see the section at the bottom of this file).
+                // Only armed when at least one lockable hat actually made it into the shop.
+                if (pending.Any(h => h != null && IsRoleHat("hat_" + h.Name)))
+                    UCFx.RegisterTick(TickHatLock);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[Hats] registered {pending.Count} custom hat(s) in {dir}.");
@@ -331,7 +351,14 @@ namespace UnknownsCollection {
                     return false;
                 }
                 foreach (var hat in hats) {
-                    if (list.Any(h => h?.Name == hat.Name)) continue;
+                    // A name collision with the official repository would silently drop our hat -
+                    // and for a role costume that means the role loses its look. Worth a line in the
+                    // log rather than a quiet `continue`.
+                    if (list.Any(h => h?.Name == hat.Name)) {
+                        UnknownsCollectionPlugin.Logger?.LogWarning(
+                            $"[Hats] a hat named '{hat.Name}' is already registered - ours is skipped.");
+                        continue;
+                    }
                     list.Add(hat);
                 }
                 return true;
@@ -491,12 +518,17 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Step 5: the Werewolf hat lock (user decision 2026-07-28) ----------------------
+        // ---- Step 5: the role-costume hat locks (user decisions 2026-07-28 / 2026-07-31) ------
         //
-        // While the Werewolf ROLE is enabled (spawn rate > 0), the full-body Werewolf hat is the
-        // beast's transformation look (WerewolfFx puts it on via setLook) - so nobody may WEAR it
-        // as an ordinary cosmetic: a crewmate walking around as the beast would fake (or mask) a
-        // transformation. Three layers, from soft to hard:
+        // A hat that a ROLE wears as its costume must not be wearable as an ordinary cosmetic while
+        // that role can still turn up in a round:
+        //   Werewolf hat        - the beast's transformation look (WerewolfFx.ApplyWolfLook). A
+        //                         crewmate walking around as the beast would fake (or mask) one.
+        //   Monster Hunter hat  - the promoted sheriff's costume (HunterFx.ApplyHunterLook). A
+        //                         crewmate in the hunter's coat would fake the very promotion the
+        //                         whole crew is watching for - and the guess protection that hangs
+        //                         off "everyone can see who the Hunter is" would protect a liar.
+        // Three layers, from soft to hard:
         //
         //   1. The wardrobe chip is greyed out and its button disabled (HatsTab.OnEnable postfix -
         //      it must be a postfix because TOR's own OnEnablePrefix returns false and rebuilds the
@@ -505,32 +537,68 @@ namespace UnknownsCollection {
         //      a separate button, so a disabled chip alone does not cover every input path).
         //   3. TickHatLock runs on the shared UCFx tick (HudManager.Update - main menu wardrobes
         //      have no HUD, but there LocalPlayer is null and only the saved value matters, which
-        //      layer 1+2 already protect): if the SAVED hat is the Werewolf hat while the role is
-        //      on, it is swapped back to the hat the player wore BEFORE - remembered in the plugin
-        //      config every time we see a different hat, so it survives restarts - and announced
-        //      via RpcSetHat so the lobby sees the swap immediately.
+        //      layer 1+2 already protect): if the SAVED hat is a locked one, it is swapped back to
+        //      the hat the player wore BEFORE - remembered in the plugin config every time we see an
+        //      unlocked hat, so it survives restarts - and announced via RpcSetHat so the lobby sees
+        //      the swap immediately.
         //
-        // The role option is read live: the host's own value is always current, a client's value is
-        // whatever the lobby last synced - exactly the scope in which the hat matters.
+        // The role options are read live: the host's own values are always current, a client's are
+        // whatever the lobby last synced - exactly the scope in which the hat matters. Deliberately
+        // NOT gated on TeslaVersionHandshake: a wardrobe in the main menu has no lobby to ask.
 
         private const string NoHatId = "hat_NoHat";   // vanilla "empty" hat, verified in the 4.7.0 metadata
         private static float lastHatFixTime;          // throttle: never spam RpcSetHat if a swap cannot stick
+
+        // One entry per hat that a role can put on somebody. Evaluated live; a throwing option read
+        // must never lock a hat by accident, so every probe fails to "not locked".
+        private static readonly (string Id, Func<bool> Locked)[] HatLocks = {
+            (WerewolfHatId, WerewolfHatLocked),
+            (HunterHatId, HunterHatLocked),
+        };
 
         private static bool WerewolfHatLocked() {
             try { return Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0; }
             catch { return false; }
         }
 
+        // "A Hunter can happen in this lobby": a Werewolf to hunt, the Hunter event switched on, a
+        // Sheriff to promote - and the costume itself switched on (option 1508). With the costume off
+        // the hat is nobody's uniform, so it stays an ordinary cosmetic everyone may wear.
+        private static bool HunterHatLocked() {
+            try {
+                return Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0
+                    && Hunter.Enabled != null && Hunter.Enabled.getBool()
+                    && Hunter.HatCostume != null && Hunter.HatCostume.getBool()
+                    && TheOtherRoles.CustomOptionHolder.sheriffSpawnRate != null
+                    && TheOtherRoles.CustomOptionHolder.sheriffSpawnRate.getSelection() > 0;
+            } catch { return false; }
+        }
+
+        private static bool IsHatLocked(string productId) {
+            if (string.IsNullOrEmpty(productId)) return false;
+            foreach (var lock_ in HatLocks)
+                if (productId == lock_.Id && lock_.Locked()) return true;
+            return false;
+        }
+
+        // A role hat is never a valid fallback - not even a currently unlocked one, because the very
+        // next option change would need another swap.
+        private static bool IsRoleHat(string productId) {
+            if (string.IsNullOrEmpty(productId)) return false;
+            foreach (var lock_ in HatLocks) if (productId == lock_.Id) return true;
+            return false;
+        }
+
         private static string PreviousHat() {
-            var entry = UnknownsCollectionPlugin.WerewolfPreviousHat;
+            var entry = UnknownsCollectionPlugin.PreviousHatBeforeLock;
             string prev = entry != null ? entry.Value : null;
-            return string.IsNullOrEmpty(prev) || prev == WerewolfHatId ? NoHatId : prev;
+            return string.IsNullOrEmpty(prev) || IsRoleHat(prev) ? NoHatId : prev;
         }
 
         private static void RememberHat(string hatId) {
             try {
-                var entry = UnknownsCollectionPlugin.WerewolfPreviousHat;
-                if (entry == null || string.IsNullOrEmpty(hatId) || hatId == WerewolfHatId) return;
+                var entry = UnknownsCollectionPlugin.PreviousHatBeforeLock;
+                if (entry == null || string.IsNullOrEmpty(hatId) || IsRoleHat(hatId)) return;
                 if (entry.Value != hatId) entry.Value = hatId;   // ConfigEntry setters persist to disk
             } catch { }
         }
@@ -541,8 +609,7 @@ namespace UnknownsCollection {
                 if (customization == null) return;
                 string saved = customization.Hat;
                 if (string.IsNullOrEmpty(saved)) return;
-                if (saved != WerewolfHatId) { RememberHat(saved); return; }
-                if (!WerewolfHatLocked()) return;
+                if (!IsHatLocked(saved)) { RememberHat(saved); return; }
                 if (Time.time - lastHatFixTime < 1f) return;
                 lastHatFixTime = Time.time;
 
@@ -551,7 +618,7 @@ namespace UnknownsCollection {
                 var lp = PlayerControl.LocalPlayer;
                 if (lp != null) lp.RpcSetHat(prev);
                 UnknownsCollectionPlugin.Logger?.LogInfo(
-                    $"[Hats] Werewolf role is enabled - the Werewolf hat was swapped back to '{prev}'.");
+                    $"[Hats] '{saved}' is a role costume in this lobby - swapped back to '{prev}'.");
             } catch (Exception ex) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] hat lock tick failed: {ex.Message}");
             }
@@ -564,10 +631,10 @@ namespace UnknownsCollection {
         private static class HatsTabLockPatch {
             public static void Postfix(HatsTab __instance) {
                 try {
-                    if (!WerewolfHatLocked() || __instance == null || __instance.ColorChips == null) return;
+                    if (__instance == null || __instance.ColorChips == null) return;
                     foreach (ColorChip chip in __instance.ColorChips) {
                         var hat = chip != null && chip.Inner != null ? chip.Inner.Hat : null;
-                        if (hat == null || hat.ProductId != WerewolfHatId) continue;
+                        if (hat == null || !IsHatLocked(hat.ProductId)) continue;
                         try { chip.SetUnavailable(); } catch { }
                         try { if (chip.Button != null) chip.Button.enabled = false; } catch { }
                     }
@@ -583,9 +650,9 @@ namespace UnknownsCollection {
         private static class HatsTabEquipPatch {
             public static bool Prefix(HatsTab __instance) {
                 try {
-                    if (!WerewolfHatLocked() || __instance == null) return true;
+                    if (__instance == null) return true;
                     var hat = __instance.currentHat;
-                    if (hat != null && hat.ProductId == WerewolfHatId) return false;
+                    if (hat != null && IsHatLocked(hat.ProductId)) return false;
                 } catch { }
                 return true;
             }

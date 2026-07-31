@@ -67,11 +67,15 @@ namespace UnknownsCollection {
         public static Sprite WerewolfVictorySprite => GetSprite("UnknownsCollection.Resources.werewolf_victory.png", 100f);
 
         // Hunter (Paket W2, the Sheriff's endgame). hunter_shoot is the animated kill-button icon at the
-        // standard 115 ppu; hunter_skin/werewolf_death are the STILLS of the two flipbooks that live
-        // under Resources/anim (same ppu as their frames, so a still and a frame are interchangeable);
-        // overlay_silverbolt is the kill-overlay prop reserved for W4 (Kind.SilverBolt).
+        // standard 115 ppu; werewolf_death is the STILL of the flipbook that lives under Resources/anim
+        // (same ppu as its frames, so a still and a frame are interchangeable); overlay_silverbolt is
+        // the kill-overlay prop reserved for W4 (Kind.SilverBolt).
         public static Sprite HunterShootIcon => GetSprite("UnknownsCollection.Resources.hunter_shoot.png", 115f);
-        public static Sprite HunterSkinSprite => GetSprite("UnknownsCollection.Resources.hunter_skin.png", 180f);
+        // Frame 1 of the "Monster Hunter" hat - the costume the promoted Sheriff actually wears since
+        // 2026-07-31 (HunterFx). Used by the help-menu demo, which draws it OVER a crewmate figure the
+        // same way the game layers the hat over the bean; the ppu is irrelevant there because StagePic
+        // rescales to a target height, so it stays at the standard value.
+        public static Sprite HunterHatSprite => GetSprite("UnknownsCollection.Resources.hats.hunter_1.png", 115f);
         public static Sprite WerewolfDeathSprite => GetSprite("UnknownsCollection.Resources.werewolf_death.png", 200f);
         public static Sprite OverlaySilverBolt => GetSprite("UnknownsCollection.Resources.overlay_silverbolt.png", 100f);
 
@@ -130,20 +134,6 @@ namespace UnknownsCollection {
             return frames;
         }
 
-        // Character-skin frame strip (Werewolf wolf form, later the Hunter): N frames named
-        // "<baseName>_fNN.png" under Resources/anim, loaded with a BOTTOM-CENTRE pivot so the sprite
-        // stands on the same ground line as the crewmate it replaces (a centred pivot would sink the
-        // figure into the floor by half its height). Returns null if any frame is missing so callers
-        // can fall back to the untouched vanilla cosmetics instead of a half-built skin.
-        public static Sprite[] GetSkinFrames(string baseName, int count, float pixelsPerUnit) {
-            var frames = new Sprite[count];
-            for (int i = 0; i < count; i++) {
-                frames[i] = GetSprite($"UnknownsCollection.Resources.anim.{baseName}_f{i:00}.png",
-                                      pixelsPerUnit, new Vector2(0.5f, 0f));
-                if (frames[i] == null) return null;
-            }
-            return frames;
-        }
 
         public static Sprite GetSprite(string path, float pixelsPerUnit) =>
             GetSprite(path, pixelsPerUnit, new Vector2(0.5f, 0.5f));

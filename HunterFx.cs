@@ -7,38 +7,48 @@
  *
  * The Sheriff's promotion into the Hunter is meant to be SEEN by everyone the instant it happens -
  * unlike the Werewolf, this is not a toggled "form", it is a one-time, permanent costume change for
- * the rest of the round. Mechanically it is the exact same renderer-swap idea WerewolfFx pioneered in
- * Paket W1 (hide the real cosmetics, show a hand-drawn idle/walk flipbook on a child SpriteRenderer),
- * so instead of re-implementing it this file just instantiates the shared UCCharacterSkin the two
- * classes now both sit on top of (see UCCharacterSkin.cs).
+ * the rest of the round.
  *
- * The one deliberate difference: the Hunter's body is TINTED with the player's own colour (multiplied
- * onto the sprite), so the crew still recognises "our sheriff" under the hunter's coat - the Werewolf
- * has none (there is only ever one beast, nothing to tell it apart from itself).
+ * ---------------------------------------------------------------------------------------------
+ * WHY THIS IS A HAT AND NO LONGER A RENDERER SWAP (user decision 2026-07-31)
+ * ---------------------------------------------------------------------------------------------
+ * The first implementation hid the real cosmetics and played a hand-drawn idle/walk flipbook on a
+ * child SpriteRenderer (UCCharacterSkin, deleted with this change - it had no callers left). That
+ * mechanic has to re-implement by
+ * hand everything a crewmate gets for free: light radius, walls, name tag height, morph/camo
+ * interaction, every renderer AU re-enables behind its back. The Werewolf had already moved to the
+ * other approach - a full-body CUSTOM HAT applied through TOR's own setLook pipeline - and the
+ * Hunter now follows it:
+ *
+ *   - The costume is the "Monster Hunter" hat (UCHats). It is drawn to leave body, legs and visor
+ *     UNCOVERED on purpose, so the crew still recognises "our sheriff" under the hat, coat, quiver
+ *     and crossbow. That is the same design rule the flipbook followed - here it costs nothing,
+ *     because the player's own colour simply stays visible instead of being faked with a tint.
+ *   - setLook only touches the LOCAL cosmetics (Helpers.cs:367, RawSetColor/Visor/Hat/Pet), so
+ *     "who may see the promotion" is a per-client decision with no RPC involved - which is exactly
+ *     what the living-Werewolf carve-out below needs.
+ *   - Everything vanilla (darkness, Chameleon, Morphling, camouflage, the name tag) keeps working,
+ *     because the player IS still an ordinary crewmate wearing an ordinary hat.
+ *
+ * The look is re-applied from a per-frame guard (one string compare) rather than once: TOR's night
+ * vision, a Camouflager ending and Morphling reverts all call setDefaultLook behind our back. While
+ * a global camouflage or mushroom mixup is running the costume stays off entirely - overwriting it
+ * would fight TOR's own restore, exactly as WerewolfFx does it.
+ *
+ * Option 1508 (Hunter.HatCostume) switches the whole costume off. Then the promotion is invisible,
+ * the hat is an ordinary cosmetic anybody may wear (the UCHats hat lock reads the same option) and
+ * the guess protection in Hunter.cs lapses with it - nobody can see who the Hunter is, so there is
+ * nothing left to protect.
  */
 
 using System;
-using UnityEngine;
 using TheOtherRoles;
 
 namespace UnknownsCollection {
     public static class HunterFx {
-        // 160 px source, same canvas convention as the wolf skin. History: 180 ppu (~0.89 units) read
-        // as smaller than the crewmate it replaces (the drawn figure does not fill its frame), 150 ppu
-        // (~1.07 units) was still only "a head taller". 100 ppu is exactly 150/1.5, i.e. 1.5x the
-        // previous size (~1.6 units): the hunter towers over the crew he protects, without coming
-        // anywhere near the beast (~2.2 units).
-        private const float SkinPpu = 100f;
-
-        // Where the drawn figure ends inside its frame, measured from the BOTTOM. Read off the
-        // rendered frame itself (content spans y 17..145 of 160 px), not off the drawing code: the
-        // 2026-07-26 redesign fills its canvas much better than the old one, and a stale value here
-        // would leave the name tag sitting in the hat. Only used for that lift - see UCCharacterSkin.
-        private const float SkinContentTop = 0.894f;
-
-        private static readonly UCCharacterSkin skin =
-            new UCCharacterSkin("Hunter", "hunter_skin_idle", 6, "hunter_skin_walk", 8, SkinPpu,
-                                contentTop: SkinContentTop);
+        // Whom the costume is currently applied to ON THIS CLIENT. null = nobody is dressed up.
+        private static PlayerControl lookOwner;
+        private static bool lookWarned;
 
         static HunterFx() {
             UCFx.RegisterTick(Tick);
@@ -50,56 +60,122 @@ namespace UnknownsCollection {
         // WerewolfFx.Init()/BeaconFx.Init().
         public static void Init() { }
 
-        public static bool SkinAttached => skin.Attached;
+        // Name kept from the flipbook era so Hunter.cs's driver reads the same: "is the costume on?"
+        public static bool SkinAttached => lookOwner != null;
 
-        // How far the player's colour is pushed into the sprite. A single SpriteRenderer can only
-        // multiply the WHOLE frame, hat/coat/crossbow included, so a full-strength tint would drown the
-        // dark leather and the silver bolt in the player's colour. Lerping the multiplier from white
-        // keeps the props readable while the light-grey crewmate body still clearly reads as "yours".
-        private const float TintStrength = 0.6f;
-
-        // The beast must not be handed its target. On the LIVING Werewolf's own client the costume is
-        // never put on: for him the Hunter keeps walking around as the ordinary crewmate he was, and the
-        // wolf has to work out who is hunting him the same way the crew works out who the wolf is.
-        // Everyone else sees the promotion instantly - that is still the point of the role.
-        // Dead werewolves are exempt: a ghost is shown every role anyway, hiding it there buys nothing.
-        private static bool HiddenFromLocalPlayer() {
-            try {
-                if (!Werewolf.active || !Werewolf.IsLocalWerewolf()) return false;
-                var me = PlayerControl.LocalPlayer;
-                return me != null && me.Data != null && !me.Data.IsDead;
-            } catch { return false; }
+        // Host option 1508. Defaults to ON when the option does not exist yet (only ever hit by
+        // callers that run before CreateOptions).
+        public static bool CostumeEnabled() {
+            try { return Hunter.HatCostume == null || Hunter.HatCostume.getBool(); }
+            catch { return true; }
         }
 
-        public static void AttachSkin(PlayerControl player) {
+        // ---- who gets to see it ----
+        //
+        // The beast must not be handed its target: on the LIVING Werewolf's own client the costume is
+        // never put on, so for him the Hunter keeps walking around as the ordinary crewmate he was and
+        // the wolf has to work out who is hunting it the same way the crew works out who the wolf is.
+        // Dead werewolves are exempt - a ghost is shown every role anyway, hiding it there buys nothing.
+        //
+        // Deliberately written as a question about an ARBITRARY viewer, not just the local player: it
+        // is computed from state every client has (Werewolf.werewolf plus the death flags), so every
+        // client can answer it for every player. Hunter.cs's guess protection is built on exactly that -
+        // it has to know whether somebody ELSE (a lover, a jackal) can see the Hunter.
+        public static bool LookVisibleTo(PlayerControl viewer) {
             try {
-                if (HiddenFromLocalPlayer()) return;
-                Color tint = Color.white;
-                var colorId = player?.Data?.DefaultOutfit?.ColorId ?? -1;
-                var colors = Palette.PlayerColors;
-                if (colorId >= 0 && colors != null && colorId < colors.Length)
-                    tint = Color.Lerp(Color.white, colors[colorId], TintStrength);
-                skin.Attach(player, tint);
-            } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[Hunter] AttachSkin failed: {e}");
+                if (!CostumeEnabled()) return false;
+                if (viewer == null || viewer.Data == null) return false;
+                if (viewer.Data.IsDead) return true;                 // ghosts see everything
+                if (!Werewolf.active || Werewolf.werewolf == null) return true;
+                return Werewolf.werewolf.PlayerId != viewer.PlayerId;
+            } catch {
+                return true;   // a broken probe must never hide the promotion from the whole lobby
             }
         }
 
-        public static void DetachSkin() => skin.Detach();
+        private static bool HiddenFromLocalPlayer() => !LookVisibleTo(PlayerControl.LocalPlayer);
+
+        // ---- applying the look ----
+
+        public static void AttachSkin(PlayerControl player) {
+            try {
+                if (player == null || player.Data == null) return;
+                if (!CostumeEnabled() || HiddenFromLocalPlayer()) return;
+                lookOwner = player;
+                ApplyHunterLook();
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Hunter] AttachSkin failed: {e}");
+                lookOwner = null;
+            }
+        }
+
+        public static void DetachSkin() {
+            var owner = lookOwner;
+            lookOwner = null;
+            if (owner == null) return;
+            // While a global camouflage is running TOR owns every look - it restores the right one
+            // when it ends, and writing here would only fight it.
+            try { if (!GlobalCamoActive()) owner.setDefaultLook(); } catch { }
+        }
+
+        // Own name, OWN COLOUR (the whole point: the crew keeps recognising their sheriff) and the
+        // Monster Hunter hat. Visor and skin are cleared the way the Werewolf clears its own: the hat
+        // sprite is drawn over a bare bean, and a lobby visor or outfit would poke through the coat.
+        // The PET is deliberately kept - it is a separate creature walking next to the player, not
+        // part of the costume (the same call the flipbook mechanic made).
+        private static void ApplyHunterLook() {
+            try {
+                if (lookOwner == null || lookOwner.Data == null || GlobalCamoActive()) return;
+                var outfit = lookOwner.Data.DefaultOutfit;
+                lookOwner.setLook(lookOwner.Data.PlayerName,
+                                  outfit != null ? outfit.ColorId : 0,
+                                  UCHats.HunterHatId, "", "",
+                                  outfit != null ? outfit.PetId : "");
+            } catch (Exception e) {
+                if (lookWarned) return;
+                lookWarned = true;
+                UnknownsCollectionPlugin.Logger?.LogError($"[Hunter] hunter look failed (logged once): {e}");
+            }
+        }
+
+        private static bool WearsHunterHat() {
+            try {
+                var hp = lookOwner != null && lookOwner.cosmetics != null ? lookOwner.cosmetics.hat : null;
+                return hp != null && hp.Hat != null && hp.Hat.ProductId == UCHats.HunterHatId;
+            } catch { return true; }   // a broken probe must never turn into a per-frame setLook storm
+        }
+
+        private static bool GlobalCamoActive() {
+            try { return Camouflager.camouflageTimer > 0f || Helpers.MushroomSabotageActive(); }
+            catch { return false; }
+        }
 
         private static void Tick() {
             try {
-                // Belt-and-suspenders half of HiddenFromLocalPlayer: should the costume ever be on when
-                // the local werewolf is alive (a promotion racing the wolf assignment), take it off
-                // again. The reverse case needs no code - once the wolf dies, Hunter's per-frame driver
-                // re-dresses him within a second.
-                if (skin.Attached && HiddenFromLocalPlayer()) { skin.Detach(); return; }
-                skin.Tick();
-            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Hunter] skin tick: {e.Message}"); }
+                if (lookOwner == null) return;
+
+                // Owner gone/dead -> the costume comes off (Hunter.cs's death patches do the same;
+                // this is the belt-and-suspenders half).
+                if (lookOwner.Data == null || lookOwner.Data.Disconnected || lookOwner.Data.IsDead) {
+                    DetachSkin();
+                    return;
+                }
+                // The local player BECAME the living werewolf (or the host switched the costume off
+                // mid-round): take it off again. The reverse case needs no code here - Hunter's
+                // per-frame driver re-dresses him within a second.
+                if (HiddenFromLocalPlayer()) { DetachSkin(); return; }
+
+                // Re-apply guard: night vision, a camouflage ending or a morph revert rewrite the look
+                // via setDefaultLook behind our back. One string compare per frame.
+                if (!GlobalCamoActive() && !WearsHunterHat()) ApplyHunterLook();
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Hunter] look tick: {e.Message}");
+            }
         }
 
         private static void Clear() {
-            try { skin.Detach(); } catch { }
+            try { DetachSkin(); } catch { }
+            lookWarned = false;
         }
     }
 }

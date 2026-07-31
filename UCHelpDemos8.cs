@@ -120,10 +120,23 @@ namespace UnknownsCollection {
         // Hunter: the last Impostor IS the beast and the original Sheriff is still alive - so the
         // Sheriff becomes The Hunter. Silver bolt, stronger flashlight, and the wolf goes down.
         // ================================================================
+        // Geometry of the "Monster Hunter" hat sprite (tmp/hunterhut.html, 300x375 px): the crewmate
+        // it is calibrated against sits between y146 (head) and y340 (feet), counted from the TOP.
+        // The demo derives its hat size from the figure instead of hardcoding a height, so the two
+        // stay aligned even if the demo crewmate is ever rescaled.
+        private const float HatSpriteH = 375f, HatBeanTop = 146f, HatBeanBottom = 340f;
+        private static float hunterHatH;      // world height of the whole hat sprite
+        private static float hunterHatMidY;   // its centre above the floor line, feet on the ground
+
         private static void CreateHunter() {
             StageRect("dark", Color.black, stageSize.x - 0.06f, stageSize.y - 0.06f, 504);
             Crew("sher", DemoOrange);
-            StagePic("hunter", UCAssets.HunterSkinSprite, 0.42f, 506);
+            // Since 2026-07-31 the Hunter is a HAT over the ordinary crewmate, not a full-figure skin -
+            // so the demo keeps the sheriff's own bean visible and only puts the costume on top.
+            float bodyH = (UCAssets.OverlayCrewBody != null ? UCAssets.OverlayCrewBody.bounds.size.y : 2.56f) * 0.19f;
+            hunterHatH = bodyH * HatSpriteH / (HatBeanBottom - HatBeanTop);
+            hunterHatMidY = hunterHatH * (HatSpriteH / 2f - (HatSpriteH - HatBeanBottom)) / HatSpriteH;
+            StagePic("hunter", UCAssets.HunterHatSprite, hunterHatH, 508);
             Crew("wolf", WolfFur, 0.26f);
             StageDot("eye", WolfEye, 0.05f);
             StageSprite("torch", UCFx.Dot, Silver, 1f, 505);
@@ -146,8 +159,10 @@ namespace UnknownsCollection {
             float sherX = -0.95f;
 
             FigPut("sher", sherX, 0f, false, 0f);
-            FigCol("sher", DemoOrange, (1f - promote) * fade);
-            Put("hunter", sherX, FloorY + 0.21f);
+            // The sheriff STAYS visible under the costume - that is the whole point of the hat: his
+            // own colour keeps telling the crew who is under there.
+            FigCol("sher", DemoOrange, fade);
+            Put("hunter", sherX, FloorY + hunterHatMidY);
             ColA("hunter", Color.white, promote * fade);
 
             // His own, brighter light: the carve-out from the wolf's blanket darkness.

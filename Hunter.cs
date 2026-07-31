@@ -14,9 +14,15 @@
  *              a cheap 1 Hz host poll that also catches a DISCONNECT of the last other Impostor. Fires
  *              exactly once per round (hostFired) and is broadcast with SubSetHunter, so every client
  *              applies the same promotion from one message.
- *   SKIN       Crew-visible: the Sheriff's cosmetics are replaced by the hand-drawn hunter flipbook
- *              (HunterFx -> UCCharacterSkin, the same renderer-swap mechanic the wolf skin uses),
- *              tinted with the player's own colour so the crew still recognises "our sheriff".
+ *   COSTUME    Crew-visible: the Sheriff puts on the full-body "Monster Hunter" hat (HunterFx through
+ *              TOR's own setLook, the same mechanic the beast uses) - hat, coat, quiver and crossbow
+ *              over his OWN colour, so the crew still recognises "our sheriff". Option 1508 switches
+ *              the costume off; the hat is then an ordinary shop cosmetic (UCHats hat lock reads the
+ *              same option). Until 2026-07-31 this was a renderer swap (UCCharacterSkin flipbook).
+ *   GUESSPROOF Whoever can SEE the costume cannot guess the Hunter any more - the role vanishes from
+ *              that client's guess grid (UCGuesser -> KnowsHunter below). Lovers and a jackal's
+ *              sidekick inherit the knowledge, so in practice only the living beast, the one player
+ *              the costume is hidden from, may still hunt him by guess.
  *   DEPUTY     Option 1506: a living Deputy is promoted into the vacated Sheriff slot through TOR'S OWN
  *              RPCProcedure.deputyPromotes() path - the crew does not lose its sheriff, it gains a
  *              hunter. Deterministic on every client (Deputy.deputy is synced state), so this needs no
@@ -62,7 +68,7 @@
  *    one-entry list around TOR's private guesserOnClick (reflection patch, Finalizer restores even if
  *    the original throws). TOR builds that grid by iterating exactly that list (MeetingPatch.cs:415).
  *
- * Options: 1502-1507 (see ID-Registry.md), all parented to the Werewolf spawn rate - without a
+ * Options: 1502-1508 (see ID-Registry.md), all parented to the Werewolf spawn rate - without a
  * Werewolf there is no Hunter.
  * RPC: SubSetHunter = 3 on the SHARED Werewolf module byte 211 (UCRpc channel 230). There is
  * deliberately no second subtype: the granted-guesser shot budget is decremented on every client by
@@ -90,13 +96,14 @@ namespace UnknownsCollection {
         // Cold silver-steel, deliberately NOT Sheriff gold: the crew should read "something changed".
         public static readonly Color Color = new Color(0.82f, 0.86f, 0.94f, 1f);
 
-        // ---- Options (1502-1507) ----
+        // ---- Options (1502-1508) ----
         public static CustomOption Enabled;               // 1502
         public static CustomOption OnlyOriginalSheriff;   // 1503
         public static CustomOption FlashlightMultiplier;  // 1504
         public static CustomOption CanKillNeutralKillers; // 1505
         public static CustomOption DeputyPromotes;        // 1506
         public static CustomOption Guessing;              // 1507
+        public static CustomOption HatCostume;            // 1508
 
         // ---- Runtime state (synced by SubSetHunter, therefore identical on every client) ----
         public static PlayerControl hunter;
@@ -169,6 +176,12 @@ namespace UnknownsCollection {
                 Guessing = CustomOption.Create(1507, Types.Impostor, "Hunter Guessing",
                     new string[] { "Full Menu If Already Guesser", "Only The Werewolf", "No Hunter Guessing" },
                     parent);
+                // The visible half of the role. OFF means: no costume, so the promotion is invisible,
+                // the "Monster Hunter" hat stays an ordinary cosmetic anybody may wear (UCHats reads
+                // this option for its hat lock) and the guess protection below lapses with it - there
+                // is no public knowledge left to protect.
+                HatCostume = CustomOption.Create(1508, Types.Impostor, "Hunter Wears The Monster Hunter Hat",
+                    true, parent);
 
                 HunterFx.Init(); // force the FX static ctor (UCFx tick/reset registration)
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Hunter] Options created.");
@@ -233,6 +246,60 @@ namespace UnknownsCollection {
         private static bool GrantedGuesser(byte playerId) =>
             active && hunter != null && hunter.PlayerId == playerId
             && !wasNaturalGuesser && GuessMode() != GuessOff && !HandleGuesser.isGuesserGm;
+
+        // ====================================================================
+        // Guess protection (user decision 2026-07-31)
+        // ====================================================================
+        // The costume makes the Hunter's role PUBLIC to everyone who can see it, so guessing him would
+        // be a free kill on knowledge the whole room already has. Therefore anybody who can see the
+        // costume loses the Hunter entry from their guess grid entirely (UCGuesser.HunterGuessable):
+        // they can neither guess him nor burn the role on somebody else.
+        //
+        // Nobody has to be TOLD any of this, so none of it needs an RPC: HunterFx.LookVisibleTo() is
+        // computed from state every client already has (who the werewolf is, who is dead), so each
+        // client can answer "can player X see the costume?" for every X. That is what makes the two
+        // knowledge-sharing rules free:
+        //   LOVERS      - one pair, one secret. If either half can see the costume, both count as
+        //                 knowing ("gilt auch fuer Lover, sofern mind. einer ihn sehen kann").
+        //   JACKAL TEAM - jackal (former jackals included) and sidekick are one team from the moment
+        //                 the sidekick exists, and their knowledge is shared in both directions. That
+        //                 covers the case the user named - a jackal who saw the Hunter and only
+        //                 AFTERWARDS recruited a sidekick - without timestamping anything: the moment
+        //                 the sidekick joins the team he inherits what his jackal can see.
+        //
+        // In practice the only player who cannot see the costume is the LIVING werewolf, so the rules
+        // boil down to: the beast may hunt the Hunter by guess - unless its own lover or its jackal
+        // partner can see him, because then that knowledge is shared too. With option 1508 off there is
+        // no costume, nothing is public, and the protection lapses completely.
+        public static bool KnowsHunter(PlayerControl viewer) {
+            try {
+                if (!active || hunter == null || viewer == null || viewer.Data == null) return false;
+                if (!HunterFx.CostumeEnabled()) return false;
+                if (HunterFx.LookVisibleTo(viewer)) return true;
+                return KnowsThroughTeam(viewer);
+            } catch { return false; }
+        }
+
+        private static bool KnowsThroughTeam(PlayerControl viewer) {
+            // Lovers
+            var l1 = Lovers.lover1;
+            var l2 = Lovers.lover2;
+            if (l1 != null && l2 != null) {
+                if (viewer.PlayerId == l1.PlayerId && HunterFx.LookVisibleTo(l2)) return true;
+                if (viewer.PlayerId == l2.PlayerId && HunterFx.LookVisibleTo(l1)) return true;
+            }
+
+            // Jackal team. Only a team that actually EXISTS shares anything - a lone jackal without a
+            // sidekick has nobody to be told by.
+            var team = new List<PlayerControl>();
+            if (Jackal.jackal != null) team.Add(Jackal.jackal);
+            if (Jackal.formerJackals != null)
+                foreach (var fj in Jackal.formerJackals) if (fj != null) team.Add(fj);
+            if (Sidekick.sidekick != null) team.Add(Sidekick.sidekick);
+            if (team.Count < 2) return false;
+            if (!team.Any(p => p.PlayerId == viewer.PlayerId)) return false;
+            return team.Any(p => p.PlayerId != viewer.PlayerId && HunterFx.LookVisibleTo(p));
+        }
 
         private static bool HuntIsOn() =>
             active && IsAlive(hunter) && Werewolf.active && Werewolf.werewolf != null

@@ -78,11 +78,19 @@ namespace UnknownsCollection {
         // Rate-based like every other entry here, so his presence in the grid never leaks whether the
         // promotion already happened. (TOR filters its own Deputy entry by the sheriff rate the same
         // way, MeetingPatch.cs:429 - a Hunter without a Sheriff is just as impossible.)
+        // Plus the guess protection (user decision 2026-07-31): once the promotion has happened, the
+        // Hunter's costume tells everyone who can see it exactly who he is - guessing him would be a
+        // free kill on public knowledge. So for THIS client the whole entry disappears as soon as the
+        // local player (or a lover / jackal partner of his) can see the costume; see Hunter.KnowsHunter
+        // for the sharing rules. Removing the entry instead of just blocking the one target also stops
+        // the role from being burned on somebody else, and it leaks nothing: the only players who lose
+        // the entry are the ones who can already SEE that there is a Hunter.
         private static bool HunterGuessable() =>
             Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0
             && Hunter.Enabled != null && Hunter.Enabled.getBool()
             && CustomOptionHolder.sheriffSpawnRate != null && CustomOptionHolder.sheriffSpawnRate.getSelection() > 0
-            && TeslaVersionHandshake.EveryoneHasMod();
+            && TeslaVersionHandshake.EveryoneHasMod()
+            && !Hunter.KnowsHunter(PlayerControl.LocalPlayer);
         // Paket W4. The Werewolf is a plain Impostor until his one endgame move, so he is guessable
         // exactly like every other impostor tag (WEREWOLF_PLAN.md 4.7 item 3: "meeting silver works").
         private static bool WerewolfGuessable() =>

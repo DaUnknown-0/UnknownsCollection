@@ -293,6 +293,7 @@
  "uc.option.hunter.guessing.choice.full": "Volles Menü, wenn bereits Guesser",
  "uc.option.hunter.guessing.choice.wolf": "Nur der Werewolf",
  "uc.option.hunter.guessing.choice.off": "Kein Raten für den Hunter",
+ "uc.option.hunter.hat_costume": "Hunter trägt den Monsterjäger-Hut",
  "uc.ui.hunter.button_kill": "JAGD",
  "uc.ui.hunter.promote_flash": "Die Jagd beginnt!",
  "uc.hunter.flavor.crew1": "Ein Schauer läuft dir über den Rücken... die Bestie ist nah.",
@@ -306,7 +307,7 @@
  "uc.hunter.flavor.hunter1": "Deine Silberbolzen summen. Die Jagd ist eröffnet - wieder einmal.",
  "uc.hunter.flavor.hunter2": "Die alte Narbe an deiner Schulter schmerzt. Du erinnerst dich an ihre Zähne.",
  "uc.hunter.flavor.hunter3": "Einmal hast du danebengeschossen, vor langer Zeit. Heute Nacht nicht.",
- "uc.help.hunter": "Keine Rolle, die spawnen kann - das Endspiel des Sheriffs. Sobald alle Impostor außer dem Werewolf tot sind und die Bestie noch lebt, wird der Sheriff zum Hunter: Alle sehen die Verwandlung AUSSER der Bestie selbst, für die er weiter wie ein gewöhnlicher Crewmate aussieht und die erst herausfinden muss, wer sie jagt. Ein lebender Deputy übernimmt den Sheriff-Stern, und in der Wolfsdunkelheit sieht er weiter als der Rest der Crew. Sein Silber-Kill-Button folgt den Sheriff-Regeln (die Bestie und jeder Impostor sterben, neutrale Killer nur wenn der Host es erlaubt, ein Schuss auf Unschuldige tötet ihn selbst), und in Wolfsform überlebt die Bestie weiterhin den ersten Bolzen und stirbt am zweiten. Im Meeting darf er raten: War er vorher schon Guesser, behält er sein volles Menü, sonst bekommt er einen Versuch, bei dem nur der Werewolf zur Auswahl steht.",
+ "uc.help.hunter": "Keine Rolle, die spawnen kann - das Endspiel des Sheriffs. Sobald alle Impostor außer dem Werewolf tot sind und die Bestie noch lebt, wird der Sheriff zum Hunter: Alle sehen die Verwandlung AUSSER der Bestie selbst, für die er weiter wie ein gewöhnlicher Crewmate aussieht und die erst herausfinden muss, wer sie jagt. Ein lebender Deputy übernimmt den Sheriff-Stern, und in der Wolfsdunkelheit sieht er weiter als der Rest der Crew. Sein Silber-Kill-Button folgt den Sheriff-Regeln (die Bestie und jeder Impostor sterben, neutrale Killer nur wenn der Host es erlaubt, ein Schuss auf Unschuldige tötet ihn selbst), und in Wolfsform überlebt die Bestie weiterhin den ersten Bolzen und stirbt am zweiten. Im Meeting darf er raten: War er vorher schon Guesser, behält er sein volles Menü, sonst bekommt er einen Versuch, bei dem nur der Werewolf zur Auswahl steht. Sein Kostüm schützt ihn außerdem: Wer es sehen kann, kann den Hunter überhaupt nicht mehr erraten (Lover und der Sidekick eines Jackals erben dieses Wissen), sodass nur die Bestie - die das Kostüm nicht sieht - ihn noch per Raten jagen kann. Der Host kann das Kostüm ganz abschalten; dann bleibt die Beförderung unsichtbar, der Hut wird zur gewöhnlichen Kosmetik und der Schutz entfällt mit ihm.",
  "uc.role.pelican.name": "Pelican",
  "uc.role.pelican.desc": "Verschlucke sie alle und sei der letzte Überlebende",
  "uc.role.pelican.intro": "Verschlucke sie alle und sei der letzte Überlebende",
@@ -462,5 +463,6 @@
  "uc.helpui.header_ghost": "GEIST",
  "uc.helpui.header_modifier": "MODIFIKATOR",
  "uc.helpui.search": "Suche",
+ "uc.helpui.no_matches": "Keine Rolle passt zu deiner Suche.",
  "uc.helpui.lang_label": "Sprache"
 }

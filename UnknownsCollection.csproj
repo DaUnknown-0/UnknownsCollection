@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.1.4.32</Version>
+        <Version>1.1.4.33</Version>
         <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade (Impostor); Siphoner, Witness, Scout, Beacon (Crewmate); Bug, Follower, Copycat (Neutral); Poltergeist (ghost, keeps its team).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
@@ -90,9 +90,9 @@
         <EmbeddedResource Include="Resources\shade_vanish.ogg" />
         <EmbeddedResource Include="Resources\follower_shift.ogg" />
         <EmbeddedResource Include="Resources\copycat_learn.ogg" />
-        <!-- Werewolf (Paket W1): button icons, world sprites + role sounds/music. The wolf-form
-             skin frames and the two button flipbooks live under Resources\anim\ and are already
-             covered by the anim wildcard below. -->
+        <!-- Werewolf (Paket W1): button icons, world sprites + role sounds/music. The two button
+             flipbooks live under Resources\anim\ and are already covered by the anim wildcard below
+             (the wolf-form skin frames are gone - the beast is a custom hat since 2026-07-28). -->
         <EmbeddedResource Include="Resources\werewolf_transform.png" />
         <EmbeddedResource Include="Resources\werewolf_revert.png" />
         <EmbeddedResource Include="Resources\werewolf_form.png" />
@@ -117,11 +117,12 @@
              covered by the anim wildcard below. -->
         <EmbeddedResource Include="Resources\werewolf_moon.png" />
         <EmbeddedResource Include="Resources\werewolf_victory.png" />
-        <!-- Hunter (Paket W2): kill-button icon, the two flipbook stills and the W4 kill-overlay prop.
-             The hunter_skin/hunter_shoot/werewolf_death FRAMES live under Resources\anim\ and are
-             already covered by the anim wildcard below; werewolf_silver.ogg is embedded by W1 above. -->
+        <!-- Hunter (Paket W2): kill-button icon, the death-flipbook still and the W4 kill-overlay prop.
+             The hunter_shoot/werewolf_death FRAMES live under Resources\anim\ and are already covered
+             by the anim wildcard below; werewolf_silver.ogg is embedded by W1 above. The hunter_skin /
+             werewolf_skin flipbooks are GONE since 2026-07-31: both roles wear a custom hat now
+             (HunterFx / WerewolfFx), so nothing loaded those frames any more. -->
         <EmbeddedResource Include="Resources\hunter_shoot.png" />
-        <EmbeddedResource Include="Resources\hunter_skin.png" />
         <EmbeddedResource Include="Resources\werewolf_death.png" />
         <EmbeddedResource Include="Resources\overlay_silverbolt.png" />
         <!-- Pelican (Paket W3): swallow-button icon, belly HUD sprite, the W4 kill-overlay prop and
@@ -185,8 +186,8 @@
         <EmbeddedResource Include="Resources\overlay_claw.png" />
         <EmbeddedResource Include="Resources\overlay_wanted.png" />
         <EmbeddedResource Include="Resources\overlay_coin.png" />
-        <!-- Custom hats (UCHats): "Virus", "Werbetafel" (6 blink frames + climb) and "Werewolf"
-             (full-body: 6 eye-glow frames + back + climb). Explicit LogicalName so the lookup
+        <!-- Custom hats (UCHats): "Virus", "Werbetafel" (6 blink frames + climb), "Werewolf" and
+             "Monster Hunter" (both full-body: 6 glint frames + back + climb). Explicit LogicalName so the lookup
              never depends on the root-namespace default. UCHats extracts only the files TOR
              itself has to read (main/back/climb per hat) into <Among Us>\TheOtherHats; the
              remaining animation frames are only ever read from here. -->

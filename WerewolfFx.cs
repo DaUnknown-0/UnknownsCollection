@@ -191,6 +191,46 @@ namespace UnknownsCollection {
             UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] wolf look failed (logged once): {e}");
         }
 
+        // ---- the beast is NAMELESS (user decision 2026-07-31) --------------------------------
+        //
+        // The costume alone did not hide who the beast is: the black body carries the player's normal
+        // name tag, so anybody who saw the wolf could simply read it off. Now the tag is blanked for
+        // the duration of the form.
+        //
+        // WHY A LOW-PRIORITY POSTFIX AND NOT setLook():
+        // setLook writes the name exactly once (Helpers.cs:371), but TOR REWRITES the tag of every
+        // player in its own HudManager.Update postfix, every single frame:
+        //     nameText.text = Helpers.hidePlayerName(localPlayer, player) ? "" : playerName;
+        // (UpdatePatch.cs:39, called from UpdatePatch.Postfix -> setNameColors, followed by
+        // setNameTags which appends the Mafia letters and the lovers' heart). Anything we write
+        // earlier is gone one frame later. So we run LAST: same method, Priority.Low, which HarmonyX
+        // orders after TOR's own postfix - the same trick Werewolf.MurderPatch and the beast's scale
+        // patch already use. Blanking the text also drops the heart/letter suffixes that were appended
+        // to it, which is intended: they identify the player just as well as the name does.
+        //
+        // WHO STILL SEES IT: the werewolf on his OWN client (nothing is given away, and a player whose
+        // own tag vanishes just files a bug report), and the dead - ghosts are shown every role anyway,
+        // hiding it from them buys nothing. Lovers are deliberately NOT exempt: a heart floating over
+        // the beast would name it just as loudly.
+        //
+        // The name comes back on its own: the moment lookPhase returns to None (revert, meeting, death,
+        // reset) this postfix stops touching the tag and TOR's own line writes the real name again.
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        [HarmonyPriority(Priority.Low)]
+        private static class WolfNameHidePatch {
+            public static void Postfix() {
+                try {
+                    if (lookPhase == LookPhase.None || lookOwner == null || lookOwner.cosmetics == null) return;
+                    var me = PlayerControl.LocalPlayer;
+                    if (me == null || me.Data == null) return;
+                    if (me.Data.IsDead) return;                            // ghosts see everything
+                    if (me.PlayerId == lookOwner.PlayerId) return;         // his own tag stays for him
+                    var tag = lookOwner.cosmetics.nameText;
+                    if (tag != null && !string.IsNullOrEmpty(tag.text)) tag.text = "";
+                } catch { }   // a broken frame must never take the HUD down with it
+            }
+        }
+
         private static void TickLook() {
             if (lookPhase == LookPhase.None) return;
             if (lookOwner == null || lookOwner.Data == null

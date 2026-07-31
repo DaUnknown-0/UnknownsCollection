@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.1.4.32";
+    public const string PluginVersion = "1.1.4.33";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -89,7 +89,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public static ConfigEntry<bool> HelpMenuGerman { get; set; }
     public static ConfigEntry<bool> KillAnimationsUC { get; set; }
     public static ConfigEntry<bool> KillAnimationsTOR { get; set; }
-    public static ConfigEntry<string> WerewolfPreviousHat { get; set; }
+    public static ConfigEntry<string> PreviousHatBeforeLock { get; set; }
 
     internal static Assembly TORAssembly;
 
@@ -179,11 +179,12 @@ public class UnknownsCollectionPlugin : BasePlugin
             "Play the hunt music during the pelican's final chase.");
         MusicReactor = Config.Bind("Music", "Reactor Music", true,
             "Play the reactor/seismic sabotage score (only ever heard if the host enabled it in the game options).");
-        // Bookkeeping for the Werewolf hat lock (UCHats.TickHatLock): the last hat this player wore
-        // that was NOT the Werewolf hat, so an enabled Werewolf role can swap it back - even across
-        // a game restart. Written by the mod, not meant to be edited by hand.
-        WerewolfPreviousHat = Config.Bind("Cosmetics", "Last Hat Before Werewolf", "",
-            "Internal: the hat worn before the Werewolf hat, restored while the Werewolf role is enabled.");
+        // Bookkeeping for the role-costume hat locks (UCHats.TickHatLock): the last hat this player
+        // wore that is NOT a role costume (Werewolf / Monster Hunter), so a lobby that locks one can
+        // swap it back - even across a game restart. Written by the mod, not meant to be edited by
+        // hand. The config KEY still says "Werewolf" so an existing entry keeps working.
+        PreviousHatBeforeLock = Config.Bind("Cosmetics", "Last Hat Before Werewolf", "",
+            "Internal: the hat worn before a role-costume hat, restored while that role is enabled.");
 
         // The Bug role (Neutral). Survive until the end and win with the winning team.
         Bug.CreateOptions();

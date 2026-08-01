@@ -3,8 +3,8 @@
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherHats), GPL-3.0.
 
 /*
- * UCHats - three OWN custom hats ("Virus", "Werbetafel", "Werewolf") added to TOR's hat shop
- * from the outside, WITHOUT a single change to The Other Roles.
+ * UCHats - four OWN custom hats ("Virus", "Werbetafel", "Werewolf", "Monster Hunter") added to TOR's
+ * hat shop from the outside, WITHOUT a single change to The Other Roles.
  *
  * ---------------------------------------------------------------------------------------------
  * WHY THE DETOUR (disk extraction + reflection) IS NECESSARY
@@ -84,6 +84,7 @@
 
 using AmongUs.Data;
 using HarmonyLib;
+using PowerTools;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -94,12 +95,21 @@ using UnityEngine;
 
 namespace UnknownsCollection {
     public static class UCHats {
-        // The role-costume hats' ProductIds, exactly as CreateHatBehaviour derives them ("hat_" + Name,
-        // CustomHatManager.cs:97). Shared with WerewolfFx / HunterFx, which put these hats on the
-        // transformed beast resp. the promoted sheriff via setLook - which is also WHY the hat locks
-        // at the bottom of this file exist.
-        public const string WerewolfHatId = "hat_Werewolf";
-        public const string HunterHatId = "hat_Monster Hunter";
+        // The role-costume hats' ProductIds. DERIVED, never written out by hand: CreateHatBehaviour
+        // builds them as `"hat_" + ch.Name.Replace(' ', '_')` (CustomHatManager.cs:97), and that
+        // underscore cost a playtest - "hat_Monster Hunter" matched nothing, so setLook put NO hat on
+        // the promoted sheriff (he lost the one he was wearing) and the wardrobe lock never recognised
+        // its own chip. The Werewolf hat has no space in its name and was therefore unaffected, which
+        // is exactly why the bug only showed up with the second costume.
+        // Shared with WerewolfFx / HunterFx, which put these hats on the transformed beast resp. the
+        // promoted sheriff via setLook - which is also WHY the hat locks at the bottom of this file exist.
+        public static string HatIdOf(string hatName) =>
+            "hat_" + (hatName ?? string.Empty).Replace(' ', '_');
+
+        public const string WerewolfHatName = "Werewolf";
+        public const string HunterHatName = "Monster Hunter";
+        public static readonly string WerewolfHatId = HatIdOf(WerewolfHatName);
+        public static readonly string HunterHatId = HatIdOf(HunterHatName);
 
         // Embedded PNGs: Resources\hats\*.png, pinned to this logical name in the csproj.
         private const string ResourcePrefix = "UnknownsCollection.Resources.hats.";
@@ -135,6 +145,7 @@ namespace UnknownsCollection {
             public string AnimPattern;              // "{0}" = 1-based frame index
             public AnimTarget Target;
             public bool LockFlip;                   // true = never mirror (pure-text hats)
+            public bool FollowBody;                 // true = ride the body's walk animation (see below)
             // --- runtime state ---
             public bool DiskOk, BackOk, ClimbOk;
             public Sprite[] Frames;
@@ -165,7 +176,7 @@ namespace UnknownsCollection {
                 LockFlip = true,
             },
             new HatDef {
-                Name = "Werewolf", Behind = true,   // forced by BackResource anyway
+                Name = WerewolfHatName, Behind = true,   // forced by BackResource anyway
                 MainFile = "UC_Werewolf.png", MainRes = "werewolf_1.png",
                 BackFile = "UC_Werewolf_back.png", BackRes = "werewolf_back.png",
                 ClimbFile = "UC_Werewolf_climb.png", ClimbRes = "werewolf_climb.png",
@@ -175,6 +186,7 @@ namespace UnknownsCollection {
                 // BackImage present -> BOTH layers active; the eye lives on the FrontLayer.
                 Target = AnimTarget.Front,
                 LockFlip = false,                   // the profile mirrors with the walk direction
+                FollowBody = true,
             },
             new HatDef {
                 // The Hunter's costume (Paket W2): unlike the beast this hat does NOT hide the player -
@@ -183,7 +195,7 @@ namespace UnknownsCollection {
                 // under the hunter's garb (the same rule the old flipbook skin followed).
                 // Name deliberately not "Hunter": the official TheOtherHats repository is not readable
                 // offline, and a name collision would silently drop our hat (Register skips duplicates).
-                Name = "Monster Hunter", Behind = true,   // forced by BackResource anyway
+                Name = HunterHatName, Behind = true,   // forced by BackResource anyway
                 MainFile = "UC_Hunter.png", MainRes = "hunter_1.png",
                 BackFile = "UC_Hunter_back.png", BackRes = "hunter_back.png",
                 ClimbFile = "UC_Hunter_climb.png", ClimbRes = "hunter_climb.png",
@@ -192,6 +204,7 @@ namespace UnknownsCollection {
                 AnimFrames = 6, AnimFps = 6f, AnimPattern = "hunter_{0}.png",
                 Target = AnimTarget.Front,
                 LockFlip = false,                   // the profile mirrors with the walk direction
+                FollowBody = true,
             },
         };
 
@@ -244,7 +257,11 @@ namespace UnknownsCollection {
 
                     var ch = new CustomHat {
                         Name = def.Name, Author = Author, Package = Package,
-                        Resource = def.MainFile, Adaptive = false, Bounce = false,
+                        // Bounce feeds HatData.NoBounce (CreateHatBehaviour inverts it). The per-frame
+                        // NoBounce read lives in the vanilla LateUpdate that TOR skips, so the real
+                        // driver is SetBounceNode below - this flag just keeps any vanilla path that
+                        // DOES run (uncached frames) from contradicting it.
+                        Resource = def.MainFile, Adaptive = false, Bounce = def.FollowBody,
                         Behind = back || (def.BackRes == null && def.Behind),
                     };
                     if (back) ch.BackResource = def.BackFile;
@@ -263,7 +280,7 @@ namespace UnknownsCollection {
 
                 // Step 5: the role-costume hat locks (see the section at the bottom of this file).
                 // Only armed when at least one lockable hat actually made it into the shop.
-                if (pending.Any(h => h != null && IsRoleHat("hat_" + h.Name)))
+                if (pending.Any(h => h != null && IsRoleHat(HatIdOf(h.Name))))
                     UCFx.RegisterTick(TickHatLock);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
@@ -405,6 +422,47 @@ namespace UnknownsCollection {
                 AccessTools.Method(typeof(UCHats), nameof(LateUpdatePostfix))));
         }
 
+        // ---- walk bounce for the full-body costumes (playtest 2026-07-31, 2nd attempt) --------
+        //
+        // A crewmate's walk cycle lives INSIDE its body sprite (AU swaps frames), and the head bobs a
+        // few pixels doing so. Vanilla keeps the hat glued to the head with the SpriteAnimNodeSync
+        // component on the HatParent: it positions the hat at an animation NODE each frame, NodeId 0
+        // being the bobbing head node and NodeId 1 the static one. HatParent.LateUpdate re-asserts
+        // `NodeId = Hat.NoBounce ? 1 : 0` per frame - and exactly that never runs for our hats,
+        // because TOR's LateUpdatePrefix ends in `return false` for every cached custom hat
+        // (HatParentPatches.cs). TOR itself still drives the component in its climb branch via
+        // GetComponent<SpriteAnimNodeSync>(), which is also the proof that it exists and works on
+        // custom hats.
+        //
+        // First attempt here was a hand-rolled offset from the body sprite's bounds. That fought the
+        // real mechanism and mis-anchored itself as soon as a walk frame stood taller than the frame
+        // it calibrated on (screenshots 2026-07-31: brim on the visor in one walk direction). Gone -
+        // we now simply do for the idle pose what TOR already does for the climb pose: point the sync
+        // node at the head (NodeId 0) and let the game's own animation data move the hat.
+        private static void SetBounceNode(HatParent parentHat) {
+            try {
+                var sync = parentHat.SpriteSyncNode != null
+                    ? parentHat.SpriteSyncNode
+                    : parentHat.GetComponent<SpriteAnimNodeSync>();
+                if (sync != null && sync.NodeId != 0) sync.NodeId = 0;
+
+                // The sync component does NOT move the HatParent: its `Renderer` field points at the
+                // FRONT layer and only that transform is snapped to the head node. A one-layer hat
+                // never notices; on ours the back layer (coat back + quiver) stayed put while the
+                // front bobbed - playtest screenshots 2026-07-31, "der Rucksack ragt beim Laufen
+                // raus". So the back layer simply copies the front layer's local X/Y each frame
+                // (keeping its own Z - that is the front/back sorting). One frame of lag against the
+                // sync is possible depending on component order, invisible at walk-bob amplitudes.
+                var front = parentHat.FrontLayer;
+                var back = parentHat.BackLayer;
+                if (front == null || back == null || !back.enabled) return;
+                var f = front.transform.localPosition;
+                var b = back.transform.localPosition;
+                if (Mathf.Abs(b.x - f.x) > 0.0005f || Mathf.Abs(b.y - f.y) > 0.0005f)
+                    back.transform.localPosition = new Vector3(f.x, f.y, b.z);
+            } catch { }
+        }
+
         // Runs AFTER TOR's LateUpdatePrefix, which returns false for cached custom hats. HarmonyX
         // still executes postfixes when a prefix skips the original, so this is the last writer of
         // the sprite in the frame and cannot be overwritten by TOR's flip handling.
@@ -413,6 +471,8 @@ namespace UnknownsCollection {
                 if (__instance == null) return;
                 var hat = __instance.Hat;
                 if (hat == null || !AnimByName.TryGetValue(hat.name, out var def)) return;
+
+                if (def.FollowBody) SetBounceNode(__instance);
 
                 var renderer = def.Target == AnimTarget.Front ? __instance.FrontLayer : __instance.BackLayer;
                 if (renderer == null || !renderer.enabled) return;
@@ -624,6 +684,26 @@ namespace UnknownsCollection {
             }
         }
 
+        // Which hat a wardrobe chip stands for. TOR REBUILDS the whole tab in its own OnEnable prefix
+        // and stamps the HatData onto ColorChip.Tag there (HatsTabPatches.cs:138) - that is the only
+        // field it fills. The first version of this lock read chip.Inner.Hat instead, which AU never
+        // populates on a TOR-built chip: the loop found nothing, no chip was ever greyed out and the
+        // Werewolf hat was silently wearable too (playtest 2026-07-31). Tag first, Inner.Hat only as
+        // a fallback for a future TOR that stops setting it.
+        private static HatData ChipHat(ColorChip chip) {
+            if (chip == null) return null;
+            try {
+                var tagged = chip.Tag;
+                if (tagged != null) {
+                    var hat = tagged.TryCast<HatData>();
+                    if (hat != null) return hat;
+                }
+            } catch { }
+            try { return chip.Inner != null ? chip.Inner.Hat : null; } catch { return null; }
+        }
+
+        private static bool loggedTabLock;
+
         // Layer 1: grey the chip out. SetUnavailable is the vanilla "locked cosmetic" treatment;
         // disabling the PassiveButton kills the hover/click listeners TOR wired up in its own
         // OnEnable prefix (HatsTabPatches.cs:100-109).
@@ -632,11 +712,24 @@ namespace UnknownsCollection {
             public static void Postfix(HatsTab __instance) {
                 try {
                     if (__instance == null || __instance.ColorChips == null) return;
+                    int chips = 0, identified = 0, locked = 0;
                     foreach (ColorChip chip in __instance.ColorChips) {
-                        var hat = chip != null && chip.Inner != null ? chip.Inner.Hat : null;
-                        if (hat == null || !IsHatLocked(hat.ProductId)) continue;
+                        chips++;
+                        var hat = ChipHat(chip);
+                        if (hat == null) continue;
+                        identified++;
+                        if (!IsHatLocked(hat.ProductId)) continue;
+                        locked++;
                         try { chip.SetUnavailable(); } catch { }
                         try { if (chip.Button != null) chip.Button.enabled = false; } catch { }
+                    }
+                    // Once per session: the silent failure above cost a playtest, so the next one is
+                    // diagnosable straight from the log.
+                    if (!loggedTabLock) {
+                        loggedTabLock = true;
+                        UnknownsCollectionPlugin.Logger?.LogInfo(
+                            $"[Hats] wardrobe: {chips} chip(s), {identified} identified, {locked} locked " +
+                            $"(werewolf={WerewolfHatLocked()}, hunter={HunterHatLocked()}).");
                     }
                 } catch (Exception ex) {
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] hat lock (tab) failed: {ex.Message}");

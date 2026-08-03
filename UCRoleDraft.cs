@@ -57,6 +57,7 @@ namespace UnknownsCollection {
         // 216/217 are as free and as stable as 200 was.
         public const byte WerewolfDraftId = 216;
         public const byte PelicanDraftId = 217;
+        public const byte AuditorDraftId = 218;
         // NO Hunter entry, deliberately: the Hunter is not a rolled role at all. He is an EVENT inside
         // a Werewolf round - the living original Sheriff is promoted the moment the beast is the last
         // Impostor standing (Hunter.cs, host-authoritative trigger). He has no spawn rate to inject
@@ -117,6 +118,8 @@ namespace UnknownsCollection {
                 // plain Crewmate - exactly like the Bug/Follower/Copycat/Collector entries above.
                 Make(PelicanDraftId,     "Pelican",     Pelican.Color,       "Swallow them all and be the last one standing",
                      false, () => Pelican.SpawnRate,    () => Pelican.SpawnMinPlayers,    Pelican.MarkFromDraft),
+                Make(AuditorDraftId,     "Auditor",     Palette.ImpostorRed, "Undo the tasks the crew completes",
+                     true,  () => Auditor.SpawnRate,    () => Auditor.SpawnMinPlayers,    Auditor.MarkFromDraft),
             };
             return entries;
         }

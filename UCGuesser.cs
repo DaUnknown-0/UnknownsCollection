@@ -21,6 +21,7 @@
  */
 
 using HarmonyLib;
+using UnityEngine;
 using TheOtherRoles;
 using static TheOtherRoles.TheOtherRoles;
 
@@ -104,6 +105,17 @@ namespace UnknownsCollection {
         private static bool ManipulatorGuessable() =>
             Manipulator.SpawnRate != null && Manipulator.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
+        private static bool AuditorGuessable() =>
+            Auditor.SpawnRate != null && Auditor.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+
+        // The Auditor watches every completed crew task go by, so he can read off who is racing
+        // through their list - which is exactly how you spot the Snitch. Option 1608 therefore drops
+        // the SNITCH entry from HIS grid (user decision): removing the entry instead of blocking the
+        // one target also stops him from burning the guess on somebody else. Only the Auditor's own
+        // client is affected, so nothing leaks to anyone else.
+        private static bool HideSnitchFromLocalAuditor() =>
+            Auditor.IsLocalAuditor() && (Auditor.CannotGuessSnitch?.getBool() ?? true);
 
         private static void Sync(bool add) {
             // Impostor roles — insert after the base Impostor entry
@@ -115,6 +127,7 @@ namespace UnknownsCollection {
             SetEntry(Maniac.ManiacInfo(),     add && ManiacGuessable(),      RoleInfo.impostor);
             SetEntry(Shade.ShadeInfo(),       add && ShadeGuessable(),        RoleInfo.impostor);
             SetEntry(Manipulator.ManipulatorInfo(), add && ManipulatorGuessable(), RoleInfo.impostor);
+            SetEntry(Auditor.AuditorInfo(),   add && AuditorGuessable(),    RoleInfo.impostor);
             SetEntry(Werewolf.WerewolfInfo(), add && WerewolfGuessable(),   RoleInfo.impostor);
             // Crew / Neutral roles — insert after the base Crewmate entry
             SetEntry(Siphoner.SiphonerInfo(), add && SiphonerGuessable(),   RoleInfo.crewmate);
@@ -127,6 +140,33 @@ namespace UnknownsCollection {
             SetEntry(Collector.CollectorInfo(), add && CollectorGuessable(), RoleInfo.crewmate);
             SetEntry(Hunter.HunterInfo(),     add && HunterGuessable(),     RoleInfo.crewmate);
             SetEntry(Pelican.PelicanInfo(),   add && PelicanGuessable(),    RoleInfo.crewmate);
+            SyncSnitchHide(add);
+        }
+
+        // TOR's own Snitch entry, temporarily pulled out of the list for the local Auditor. Its
+        // original index is remembered so the list is restored EXACTLY as it was - allRoleInfos is a
+        // long-lived static, and re-inserting it "somewhere in the crew half" would silently reorder
+        // TOR's guess grid for the rest of the session.
+        private static int snitchIndex = -1;
+
+        private static void SyncSnitchHide(bool meetingOpen) {
+            try {
+                var snitch = RoleInfo.snitch;
+                if (snitch == null) return;
+                bool hide = meetingOpen && HideSnitchFromLocalAuditor();
+                int at = RoleInfo.allRoleInfos.IndexOf(snitch);
+                if (hide) {
+                    if (at < 0) return;
+                    snitchIndex = at;
+                    RoleInfo.allRoleInfos.RemoveAt(at);
+                } else if (at < 0 && snitchIndex >= 0) {
+                    int insert = Mathf.Clamp(snitchIndex, 0, RoleInfo.allRoleInfos.Count);
+                    RoleInfo.allRoleInfos.Insert(insert, snitch);
+                    snitchIndex = -1;
+                }
+            } catch (System.Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCGuesser] SyncSnitchHide failed: {e}");
+            }
         }
 
         private static void SetEntry(RoleInfo ri, bool want, RoleInfo after) {

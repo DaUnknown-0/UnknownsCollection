@@ -354,6 +354,13 @@ namespace UnknownsCollection {
         // this class's standard convention - verified against the csproj, no path deviation needed).
         public static void PlayBugGlitch(float volume = VolSoft) => Play("Glitch", volume);
 
+        // ---- Sounds: Auditor ----
+        // Both are self-only: the stamp fires when a crew completion lands in his queue, the rewind
+        // when a revert goes through. Bystanders must never hear either (info-leak rule), so there is
+        // deliberately no PlayAt variant.
+        public static void PlayAuditorStamp(float volume = VolSoft) => Play("auditor_stamp", volume);
+        public static void PlayAuditorRevert(float volume = VolStd) => Play("auditor_revert", volume);
+
         // ---- Sounds: UI / meta ----
         public static void PlayUcReveal(float volume = VolStd) => Play("uc_reveal", volume);
 

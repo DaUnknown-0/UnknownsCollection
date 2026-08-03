@@ -48,6 +48,14 @@ modified**. The plugin only takes a hard dependency on TheOtherRoles.
   players as alive. Works with whatever devices the map has (Skeld/Mira: admin; Fungle: vitals;
   Polus/Airship: both); comms sabotage keeps its normal "signal lost" look. *Options:* cooldown,
   duration, fake admin, fake vitals.
+- **The Auditor** — Every task a **living** crewmate finishes drops into the Auditor's own task list. Doing
+  it himself **resets that exact task** for that exact crewmate — server-authoritatively, so the task bar
+  really falls. His queue holds only a few tasks at once (further completions are lost), each with its own
+  lifetime that freezes while he is working on it, and a task is untouchable once its owner is known to be
+  dead. His **kill cooldown scales with the number of reverts**: punished at the start, dangerous once he
+  has put in the shifts. *Options:* queue size, task lifetime, cooldown multiplier at 0 / at full reverts,
+  reverts for full effect, sees-who-completed-it (auto-off when a Spy could exist), can't-guess-the-Snitch,
+  victim notification.
 
 ### Crewmate
 

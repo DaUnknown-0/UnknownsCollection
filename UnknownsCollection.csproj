@@ -1,8 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.1.4.33</Version>
-        <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade (Impostor); Siphoner, Witness, Scout, Beacon (Crewmate); Bug, Follower, Copycat (Neutral); Poltergeist (ghost, keeps its team).</Description>
+        <Version>1.1.4.35</Version>
+        <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade, Manipulator, Werewolf, Auditor (Impostor); Siphoner, Witness, Scout, Beacon, Hunter (Crewmate); Bug, Follower, Copycat, Collector, Pelican (Neutral); Poltergeist (ghost, keeps its team).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -49,6 +49,10 @@
         <EmbeddedResource Include="Resources\tesla_select.ogg" />
         <EmbeddedResource Include="Resources\uc_reveal.ogg" />
         <EmbeddedResource Include="Resources\witness_note.ogg" />
+        <!-- Auditor: the stamp when a stolen task enters his queue and the tape-rewind when a
+             revert lands. Both self-only cues (info-leak rule), so no positional variants. -->
+        <EmbeddedResource Include="Resources\auditor_stamp.ogg" />
+        <EmbeddedResource Include="Resources\auditor_revert.ogg" />
         <EmbeddedResource Include="Resources\Glitch.ogg" />
         <!-- Own button icons (PNG) + synthesized role sounds (same raw PCM format), loaded by UCAssets. -->
         <EmbeddedResource Include="Resources\poltergeist_manifest.png" />

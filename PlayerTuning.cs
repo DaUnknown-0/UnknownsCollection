@@ -44,6 +44,7 @@
 
 using System;
 using System.Collections.Generic;
+using AmongUs.GameOptions;
 using HarmonyLib;
 using Hazel;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
@@ -57,6 +58,8 @@ namespace UnknownsCollection {
         private const byte SubClear     = 1;  // [pid] (255 = alle)
         private const byte SubSetTasks  = 2;  // [pid][count][taskIndexBytes...]
         private const byte SubScrubRole = 3;  // [pid] - leftover TOR role statics (see ScrubTorRoles)
+        private const byte SubSetFaction = 4; // [pid][impostor bool] - vanilla faction, applied locally everywhere
+        private const byte SubRevive    = 5;  // [pid] - revive a dead player (outside meetings)
 
         public struct Tune {
             public float Speed;      // 1 = normal
@@ -318,6 +321,84 @@ namespace UnknownsCollection {
             }
         }
 
+        // ====================================================================
+        // Vanilla faction + revive (host tooling; applied LOCALLY on every client)
+        //
+        // WHY NOT vanilla RpcSetRole: its receiving path did not reliably apply a mid-game faction
+        // change on the affected client (observed: a lobby-assigned crew role left the player a
+        // vanilla Impostor on his OWN screen - kill button, impostor count - while the host saw the
+        // change). TOR's own faction switches (Thief steals an impostor role RPC.cs:1140, Sidekick
+        // promote :702) never use RpcSetRole either: they run RoleManager.Instance.SetRole locally
+        // inside their OWN rpc handler on every client. These two subtypes are exactly that pattern,
+        // exposed for the host tooling.
+        // ====================================================================
+        public static bool SendSetFaction(byte pid, bool impostor) {
+            try {
+                if (!MaySend(out string reason)) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[PlayerTuning] SendSetFaction refused: {reason}.");
+                    return false;
+                }
+                var w = BeginRpc(SubSetFaction);
+                w.Write(pid);
+                w.Write(impostor);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplySetFaction(pid, impostor); // synchronous local apply - callers read Data.Role right after
+                return true;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[PlayerTuning] SendSetFaction failed: {e}");
+                return false;
+            }
+        }
+
+        public static bool SendRevive(byte pid) {
+            try {
+                if (!MaySend(out string reason)) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[PlayerTuning] SendRevive refused: {reason}.");
+                    return false;
+                }
+                var w = BeginRpc(SubRevive);
+                w.Write(pid);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyRevive(pid);
+                return true;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[PlayerTuning] SendRevive failed: {e}");
+                return false;
+            }
+        }
+
+        private static void ApplySetFaction(byte pid, bool impostor) {
+            try {
+                var p = Helpers.playerById(pid);
+                if (p == null || p.Data == null) return;
+                RoleManager.Instance.SetRole(p, impostor ? RoleTypes.Impostor : RoleTypes.Crewmate);
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[PlayerTuning] faction of {p.Data.PlayerName} -> {(impostor ? "Impostor" : "Crewmate")}.");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[PlayerTuning] ApplySetFaction failed: {e}");
+            }
+        }
+
+        private static void ApplyRevive(byte pid) {
+            try {
+                var p = Helpers.playerById(pid);
+                if (p == null || p.Data == null || !p.Data.IsDead) return;
+                // Faction BEFORE Revive: the ghost role still carries IsImpostor, afterwards we
+                // re-issue the matching LIVING vanilla role (Revive alone leaves the ghost role).
+                bool wasImp = p.Data.Role != null && p.Data.Role.IsImpostor;
+                p.Revive();
+                RoleManager.Instance.SetRole(p, wasImp ? RoleTypes.Impostor : RoleTypes.Crewmate);
+                // The corpse must not stay reportable after its owner walks again.
+                foreach (var body in UnityEngine.Object.FindObjectsOfType<DeadBody>())
+                    if (body != null && body.ParentId == pid)
+                        UnityEngine.Object.Destroy(body.gameObject);
+                try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[PlayerTuning] revived {p.Data.PlayerName}.");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[PlayerTuning] ApplyRevive failed: {e}");
+            }
+        }
+
         private static void ApplySetTuning(byte pid, float speed, float cooldown, bool noVent, bool canVent) {
             tunes[pid] = new Tune { Speed = speed, Cooldown = cooldown, NoVent = noVent, CanVent = canVent };
             UnknownsCollectionPlugin.Logger?.LogInfo($"[PlayerTuning] tune #{pid}: {DescribeTune(pid)}.");
@@ -366,6 +447,15 @@ namespace UnknownsCollection {
                     }
                     case SubScrubRole:
                         ApplyScrubTorRoles(reader.ReadByte());
+                        break;
+                    case SubSetFaction: {
+                        byte pid = reader.ReadByte();
+                        bool imp = reader.ReadBoolean();
+                        ApplySetFaction(pid, imp);
+                        break;
+                    }
+                    case SubRevive:
+                        ApplyRevive(reader.ReadByte());
                         break;
                     default:
                         UnknownsCollectionPlugin.Logger?.LogWarning($"[PlayerTuning] unknown subtype {subtype}.");

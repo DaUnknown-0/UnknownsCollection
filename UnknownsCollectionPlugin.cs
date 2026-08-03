@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.1.4.33";
+    public const string PluginVersion = "1.1.4.35";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -52,7 +52,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     // so logs, comments and ID-Registry.md still line up; they no longer occupy anything in TOR's
     // callId space, they only have to be unique WITHIN this mod.
     //
-    // The block currently in use is 190-211.
+    // The block currently in use is 190-214.
     //
     // Consequence: only ONE byte (230) has to stay free globally instead of 18. TOR's CustomRPC enum
     // currently runs 100-183 and keeps growing; the watchdog in Load() below shouts if it ever gets
@@ -79,6 +79,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte WerewolfRpcId = 211;
     public const byte PelicanRpcId = 212;
     public const byte PlayerTuningRpcId = 213; // host tooling: per-player speed/cooldown/vent/tasks
+    public const byte AuditorRpcId = 214;
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -246,6 +247,12 @@ public class UnknownsCollectionPlugin : BasePlugin
         // a public countdown, no meetings, no reports, no vents, no abilities - eat or lose.
         Pelican.CreateOptions();
         Pelican.TryPatch(harmony);
+
+        // The Auditor (Impostor). Every task a living crewmate finishes lands in his own task list;
+        // doing it himself resets that exact task for that exact crewmate (server-authoritative, so
+        // the task bar really drops). His kill cooldown scales with the number of reverts.
+        Auditor.CreateOptions();
+        Auditor.TryPatch(harmony);
 
         // Reactor music (Paket R) - not a role: a score for the reactor/seismic sabotage that is
         // written against the REAL ICriticalSabotage countdown, so the blast in its finale lands on

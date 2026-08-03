@@ -20,7 +20,7 @@
  *
  * UC's roles/options are TEXT-KEYED rather than field-mapped: the English reference table
  * knows every original string, so Apply() matches RoleInfo entries (via the sentinel
- * RoleIds 200+) and CustomOptions (id range 1400-1598) by their pristine English text and
+ * RoleIds 200+) and CustomOptions (id range 1400-1699) by their pristine English text and
  * swaps in the translation. Originals are captured on first sight so switching languages
  * (including back to English) always re-derives from the pristine text. Dynamic strings
  * (chat, HUD, buttons) go through Tr() at their call sites. Community overrides: uc.* keys
@@ -162,7 +162,7 @@ namespace UnknownsCollection {
             var optToKey = EnToKey("uc.option.", "");
             var valueToKey = EnToKey("uc.", ""); // per-element selection match (any uc.* text)
             foreach (var opt in CustomOption.options.ToArray()) {
-                if (opt == null || opt.id < 1400 || opt.id > 1598) continue;
+                if (opt == null || opt.id < 1400 || opt.id > 1699) continue;
                 if (!optionOriginals.TryGetValue(opt, out var orig)) {
                     orig = (opt.name, opt.selections);
                     optionOriginals[opt] = orig;

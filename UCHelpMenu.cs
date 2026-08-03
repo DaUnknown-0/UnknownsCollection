@@ -56,6 +56,7 @@ namespace UnknownsCollection {
                 E("Maniac", Faction.Impostor, () => Maniac.Color, () => Maniac.SpawnRate, "uc.help.maniac"),
                 E("Shade", Faction.Impostor, () => Palette.ImpostorRed, () => Shade.SpawnRate, "uc.help.shade"),
                 E("Manipulator", Faction.Impostor, () => Palette.ImpostorRed, () => Manipulator.SpawnRate, "uc.help.manipulator"),
+                E("Auditor", Faction.Impostor, () => Palette.ImpostorRed, () => Auditor.SpawnRate, "uc.help.auditor"),
                 E("Werewolf", Faction.Impostor, () => Werewolf.Color, () => Werewolf.SpawnRate, "uc.help.werewolf"),
 
                 E("Siphoner", Faction.Crew, () => Siphoner.Color, () => Siphoner.SpawnRate, "uc.help.siphoner"),
@@ -1264,6 +1265,14 @@ namespace UnknownsCollection {
                     StageDot("d0", DemoBlue, 0.12f); StageDot("d1", DemoGreen, 0.12f); StageDot("d2", DemoRed, 0.12f);
                     StageDot("g0", DemoBlue, 0.12f); StageDot("g1", DemoGreen, 0.12f); StageDot("g2", DemoRed, 0.12f);
                     break;
+                case "Auditor":
+                    Crew("crew", DemoBlue); Crew("aud", DemoRed);
+                    StageRect("console", new Color(0.55f, 0.6f, 0.68f), 0.22f, 0.34f, 504);
+                    StageRect("barBg", new Color(1f, 1f, 1f, 0.12f), 1.7f, 0.08f);
+                    StageRect("bar", DemoGreen, 1.7f, 0.06f);
+                    StageCap("undo", "UNDO", 0.8f, Accent);
+                    StageSprite("fx", UCFx.Ring, Accent, 0.1f, 508);
+                    break;
                 case "Siphoner":
                     Crew("sip", DemoCyan); Crew("imp", DemoRed);
                     MakeBtn("killBtn", KillButtonSprite(UCAssets.SiphonerIcon));
@@ -1550,6 +1559,38 @@ namespace UnknownsCollection {
                         Put("g" + i, tx[i], ty[i]);
                         ColA("g" + i, cols[i], 0.15f * lie);
                     }
+                    break;
+                }
+                case "Auditor": {
+                    // a crewmate finishes a task at the console (the bar ticks up), the Auditor comes
+                    // to the SAME console and does it again - the bar falls right back
+                    float p = P(8f);
+                    const float ConsoleX = -0.15f, WorkX = -0.55f;
+                    Put("console", ConsoleX, FigMidY);
+
+                    float cIn = Seg(p, 0.02f, 0.16f), cOut = Seg(p, 0.30f, 0.46f);
+                    float cx = p < 0.30f ? Move(-1.55f, WorkX, cIn) : Move(WorkX, 1.6f, cOut);
+                    bool cWorking = p > 0.16f && p < 0.30f;
+                    FigPut("crew", cx + (cWorking ? 0.015f * Mathf.Sin(t * 22f) : 0f), 0f,
+                           false, (Mid(cIn) || Mid(cOut)) ? 1f : 0f); // in from the left, out to the right
+                    FigCol("crew", DemoBlue, 1f);
+
+                    float aIn = Seg(p, 0.48f, 0.64f), aOut = Seg(p, 0.82f, 0.98f);
+                    float ax = p < 0.82f ? Move(-1.55f, WorkX, aIn) : Move(WorkX, -1.6f, aOut);
+                    bool aWorking = p > 0.64f && p < 0.82f;
+                    FigPut("aud", ax + (aWorking ? 0.015f * Mathf.Sin(t * 22f) : 0f), 0f,
+                           p >= 0.82f, (Mid(aIn) || Mid(aOut)) ? 1f : 0f);
+                    FigCol("aud", DemoRed, 1f);
+
+                    // one notch up while the crewmate works, the same notch back down when he undoes it
+                    float fill = 0.35f + 0.22f * Seg(p, 0.18f, 0.28f) - 0.22f * Seg(p, 0.68f, 0.78f);
+                    BarLeft("barBg", -0.85f, 0.36f, 1.7f, 0.08f);
+                    BarLeft("bar", -0.85f, 0.36f, 1.7f * fill, 0.06f);
+                    ColA("bar", Color.Lerp(DemoGreen, Accent, Seg(p, 0.68f, 0.78f) * (1f - Seg(p, 0.9f, 1f))), 0.95f);
+
+                    PutCap("undo", ConsoleX, 0.26f);
+                    CapA("undo", Seg(p, 0.7f, 0.76f) * (1f - Seg(p, 0.88f, 0.96f)));
+                    Burst("fx", ConsoleX, FigMidY, Seg(p, 0.68f, 0.8f), 0.55f, Accent);
                     break;
                 }
                 case "Siphoner": {

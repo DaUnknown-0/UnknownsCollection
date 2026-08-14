@@ -322,7 +322,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetTesla: ApplySetTesla(reader.ReadByte()); break;
+                    case SubSetTesla: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Tesla.SetTesla")) ApplySetTesla(id); break; }
                     case SubSetCharges: {
                         byte p = reader.ReadByte();
                         byte m = reader.ReadByte();

@@ -297,7 +297,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetSaboteur: ApplySetSaboteur(reader.ReadByte()); break;
+                    case SubSetSaboteur: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Saboteur.SetSaboteur")) ApplySetSaboteur(id); break; }
                     case SubClear: ApplyClear(); break;
                     case SubSetSabotagedConsole: {
                         float x = reader.ReadSingle();

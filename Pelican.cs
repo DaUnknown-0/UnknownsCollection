@@ -302,7 +302,9 @@ namespace UnknownsCollection {
                     case SubSetPelican: {
                         byte id = reader.ReadByte();
                         byte variant = reader.ReadByte();
-                        ApplySetPelican(id, variant);
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Pelican.SetPelican")) ApplySetPelican(id, variant);
                         break;
                     }
                     case SubStartHunt: ApplyStartHunt(reader.ReadSingle()); break;

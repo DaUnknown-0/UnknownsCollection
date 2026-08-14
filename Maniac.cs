@@ -433,7 +433,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetManiac: ApplySetManiac(reader.ReadByte()); break;
+                    case SubSetManiac: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Maniac.SetManiac")) ApplySetManiac(id); break; }
                     case SubPlantBomb: ApplyPlantBomb(reader.ReadByte()); break;
                     case SubWarnBomb: ApplyWarnBomb(reader.ReadByte()); break;
                     case SubPassBomb: {

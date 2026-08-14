@@ -244,7 +244,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetWitness: ApplySetWitness(reader.ReadByte()); break;
+                    case SubSetWitness: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Witness.SetWitness")) ApplySetWitness(id); break; }
                     case SubWitnessed: { byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyWitnessed(k, v); break; }
                     case SubReveal: { byte r = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyReveal(r, k, v); break; }
                     case SubNote: { byte rc = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyNote(rc, k, v); break; }

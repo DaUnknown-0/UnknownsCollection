@@ -193,7 +193,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetSilencer: ApplySetSilencer(reader.ReadByte()); break;
+                    case SubSetSilencer: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Silencer.SetSilencer")) ApplySetSilencer(id); break; }
                     case SubSilence: ApplySilence(reader.ReadByte()); break;
                     case SubClear: ApplyClearSilences(); break;
                 }

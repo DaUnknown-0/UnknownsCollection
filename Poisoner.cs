@@ -235,7 +235,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetPoisoner: ApplySetPoisoner(reader.ReadByte()); break;
+                    case SubSetPoisoner: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Poisoner.SetPoisoner")) ApplySetPoisoner(id); break; }
                     case SubMarkBody: ApplyMarkBody(reader.ReadByte()); break;
                     case SubPoisonReporter: ApplyPoisonReporter(reader.ReadByte()); break;
                     case SubAntidote: ApplyAntidote(reader.ReadByte()); break;

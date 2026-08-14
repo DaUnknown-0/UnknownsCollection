@@ -203,7 +203,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetIllusionist: ApplySetIllusionist(reader.ReadByte()); break;
+                    case SubSetIllusionist: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Illusionist.SetIllusionist")) ApplySetIllusionist(id); break; }
                     case SubSpawnClone: {
                         bool first = reader.ReadBoolean();
                         bool last = reader.ReadBoolean();

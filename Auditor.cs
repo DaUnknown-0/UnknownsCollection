@@ -279,7 +279,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetAuditor: ApplySetAuditor(reader.ReadByte()); break;
+                    case SubSetAuditor: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Auditor.SetAuditor")) ApplySetAuditor(id); break; }
                     case SubEnqueue: {
                         byte entryId = reader.ReadByte();
                         byte victim = reader.ReadByte();

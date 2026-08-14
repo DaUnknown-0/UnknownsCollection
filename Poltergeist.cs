@@ -247,7 +247,11 @@ namespace UnknownsCollection {
             hexes.Clear();
             hauntedDoors.Clear();
             handChanneling = false;
-            speedHexApplied = false;
+            // Must RESTORE, not just clear the flag: hexes.Clear() above already took the hex away, so
+            // the per-frame driver will never undo the x1.4 - and on a withdrawal (id 255) it stops
+            // running entirely at the !active exit below. Without this the victim stays fast for the
+            // rest of the round and the next hex compounds on top of it.
+            RestoreSpeedHex();
 
             poltergeist = Helpers.playerById(id);
             active = poltergeist != null;
@@ -290,6 +294,28 @@ namespace UnknownsCollection {
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] ApplyDoorHaunt failed: {e}");
             }
+        }
+
+        // Central undo for the local speed hex. EVERY path that ends a speed hex must go through here:
+        // setting speedHexApplied = false on its own leaves MyPhysics.Speed multiplied forever, and the
+        // next hex then captures the already-boosted value as its base (1.4 -> 1.96 -> 2.74 -> ...).
+        // Idempotent - a call while nothing is applied is a no-op, so reset paths may call it freely.
+        private static void RestoreSpeedHex() {
+            if (!speedHexApplied) return;
+            // Cleared FIRST: if the write below ever throws, the per-frame driver must not retry forever.
+            speedHexApplied = false;
+            try {
+                var lp = PlayerControl.LocalPlayer;
+                // speedHexBase > 0: writing back a 0 base would freeze the player. It can only be 0 if
+                // the speed was already 0 when the hex landed - then 0 * 1.4 changed nothing anyway.
+                // MyPhysics null-check matters here (unlike in the old inline restore): this now also
+                // runs from resetVariables and MeetingHud.Start, i.e. from shakier lifecycle phases.
+                if (lp != null && lp.MyPhysics != null && speedHexBase > 0f)
+                    lp.MyPhysics.Speed = speedHexBase;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] speed-hex restore failed: {e}");
+            }
+            speedHexBase = 0f;
         }
 
         private static void ApplyHex(byte targetId, byte mode, float duration) {
@@ -444,7 +470,9 @@ namespace UnknownsCollection {
             hexes.Clear();
             hauntedDoors.Clear();
             handChanneling = false;
-            speedHexApplied = false;
+            // Restore before the driver dies: active = false above means the per-frame undo in
+            // HudUpdatePatch never runs again, so clearing the flag alone would strand MyPhysics.Speed.
+            RestoreSpeedHex();
             hexMode = HexSpeed;
             // Button statics deliberately kept: resetVariables runs AFTER HudManager.Start at round
             // start - nulling them orphans the live buttons (energy labels died; see Collector.cs).
@@ -464,22 +492,36 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetPoltergeist: ApplySetPoltergeist(reader.ReadByte()); break;
+                    case SubSetPoltergeist: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Poltergeist.SetPoltergeist")) ApplySetPoltergeist(id); break; }
+                    // The three haunt abilities are OWNER-authored, not host-authored: the Poltergeist's
+                    // own client presses the button and broadcasts. So they cannot use RequireHost -
+                    // that would reject every legitimate hex. RequireOwnerOrHost accepts the ghost
+                    // itself (and the host, for its disconnect fallbacks) and drops everyone else, so a
+                    // forged hex can no longer blind or speed up an arbitrary player (AUDIT H-3).
                     case SubDoorHaunt: {
                         int doorId = reader.ReadInt32();
                         float dur = reader.ReadSingle();
-                        ApplyDoorHaunt(doorId, dur);
+                        if (UCRpc.RequireOwnerOrHost(poltergeist, "Poltergeist.DoorHaunt"))
+                            ApplyDoorHaunt(doorId, dur);
                         break;
                     }
                     case SubHex: {
                         byte target = reader.ReadByte();
                         byte mode = reader.ReadByte();
                         float dur = reader.ReadSingle();
-                        ApplyHex(target, mode, dur);
+                        if (UCRpc.RequireOwnerOrHost(poltergeist, "Poltergeist.Hex"))
+                            ApplyHex(target, mode, dur);
                         break;
                     }
-                    case SubHandStart: ApplyHandStart(); break;
-                    case SubHandStop: ApplyHandStop(); break;
+                    case SubHandStart:
+                        if (UCRpc.RequireOwnerOrHost(poltergeist, "Poltergeist.HandStart")) ApplyHandStart();
+                        break;
+                    case SubHandStop:
+                        if (UCRpc.RequireOwnerOrHost(poltergeist, "Poltergeist.HandStop")) ApplyHandStop();
+                        break;
                     default: PoltergeistManifest.HandleRpc(subtype, reader); break;
                 }
             } catch (Exception e) {
@@ -662,11 +704,7 @@ namespace UnknownsCollection {
                         bool stillHexed = PlayerControl.LocalPlayer != null
                             && hexes.TryGetValue(PlayerControl.LocalPlayer.PlayerId, out var h)
                             && h.mode == HexSpeed;
-                        if (!stillHexed || inMeeting) {
-                            if (PlayerControl.LocalPlayer != null && speedHexBase > 0)
-                                PlayerControl.LocalPlayer.MyPhysics.Speed = speedHexBase;
-                            speedHexApplied = false;
-                        }
+                        if (!stillHexed || inMeeting) RestoreSpeedHex();
                     }
 
                     // Haunted-door reopen (plain/mushroom doors; auto doors reopen themselves).
@@ -747,6 +785,11 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     hexes.Clear();
+                    // While a poltergeist is active the per-frame driver already undoes the speed hex
+                    // here (its "|| inMeeting" clause). This closes the one gap it cannot cover: if
+                    // `active` flipped false in the same frame, the driver is gone and hexes.Clear()
+                    // above would otherwise strand the x1.4. Idempotent, so the overlap is free.
+                    RestoreSpeedHex();
                     hauntedDoors.Clear();
                     if (handChanneling && IsLocalPoltergeist()) StopGhostHand(releaseConsole: false);
                     else handChanneling = false;
@@ -760,21 +803,25 @@ namespace UnknownsCollection {
 
         // ---- Hex vision effects (each client's own light only) ----
 
-        [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.CalculateLightRadius))]
-        static class LightPatch {
-            public static void Postfix(ref float __result, ShipStatus __instance, [HarmonyArgument(0)] NetworkedPlayerInfo p) {
-                try {
-                    if (!active || p == null || hexes.Count == 0) return;
-                    if (!hexes.TryGetValue(p.PlayerId, out var hex)) return;
-                    if (hex.mode == HexBlind)
-                        __result *= 0.35f;
-                    else if (hex.mode == HexNightVision)
-                        __result = __instance.MaxLightRadius * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] LightPatch failed: {e}");
-                }
-            }
+        // ---- Light radius: contributed to the central UC vision pipeline (UCVision.cs) ----
+        // Was an own CalculateLightRadius postfix until 2026-08-11 (AUDIT-2026-08-11.md, M-5).
+        // Split into its two halves so the pipeline can order them correctly: the Blind hex is a
+        // multiplicative damper (applied first), Night Vision is a full-vision grant (applied as Max).
+        public static float VisionDamp(NetworkedPlayerInfo p) {
+            try {
+                if (!active || p == null || hexes.Count == 0) return 1f;
+                if (!hexes.TryGetValue(p.PlayerId, out var hex)) return 1f;
+                return hex.mode == HexBlind ? 0.35f : 1f;
+            } catch { return 1f; }
         }
+
+        public static bool WantsFullVision(NetworkedPlayerInfo p) {
+            try {
+                if (!active || p == null || hexes.Count == 0) return false;
+                return hexes.TryGetValue(p.PlayerId, out var hex) && hex.mode == HexNightVision;
+            } catch { return false; }
+        }
+
 
         // ---- Task-win accounting: without KeepsTasks, a crew Poltergeist's tasks leave the pool ----
 

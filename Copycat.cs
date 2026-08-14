@@ -97,6 +97,12 @@ namespace UnknownsCollection {
         private static readonly List<Ability> learnedAbilities = new();
         private static readonly HashSet<Ability> usedAbilities = new();
 
+        // Vent promotion bookkeeping (HOST ONLY - only the host ever calls RpcSetRole, see LearnAbility).
+        // RpcSetRole REPLACES Data.Role with a fresh RoleBehaviour and saves nothing, so the value the
+        // Copycat had before the promotion has to be captured here or it is gone for good.
+        private static RoleTypes ventPromotionPrevRole = RoleTypes.Crewmate;
+        private static bool ventPromotionActive;
+
         // Effect state (kept in sync on every client; each client times out its own copy).
         public static bool shielded;
         private static float shieldEndTime;
@@ -278,6 +284,11 @@ namespace UnknownsCollection {
             active = copycat != null;
             if (active) UCPromotion.Claim(id);
             learnedAbilities.Clear();
+            // A fresh Copycat assignment means no promotion of OURS is outstanding for this player.
+            // Not a revoke: `copycat` already points at the new player above, so revoking here would
+            // target the wrong one. In practice unreachable anyway - SubSetCopycat is sent exactly once
+            // per round (IntroEndPatch / MarkFromDraft).
+            ventPromotionActive = false;
             usedAbilities.Clear();
             shielded = camouflaged = isMorphed = false;
             morphTargetId = byte.MaxValue;
@@ -433,6 +444,11 @@ namespace UnknownsCollection {
                 var oldest = learnedAbilities[0];
                 learnedAbilities.RemoveAt(0);
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Dropped oldest ability {oldest} for {ability}.");
+                // Losing Vent has to undo the AU-role promotion too. Without this the Copycat stays an
+                // AU Engineer, and Helpers.roleCanUseVents keeps returning true through its VANILLA
+                // branch (Data.Role.CanVent is true for Engineer) - so the vent stays fully usable
+                // without the ability, and TOR's setRole tail (RPC.cs:405) re-promotes forever.
+                if (oldest == Ability.Vent) RevokeVentPromotion();
             }
             learnedAbilities.Add(ability);
             // Learn blip only for the Copycat itself - nobody else should hear what it just picked up.
@@ -445,8 +461,44 @@ namespace UnknownsCollection {
             // button appears. Host-authoritative + broadcast, so it's consistent on every client.
             if (ability == Ability.Vent && AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost
                 && copycat != null && copycat.Data?.Role != null && !copycat.Data.Role.IsImpostor) {
+                // Capture what we are about to overwrite, so RevokeVentPromotion can hand it back.
+                // Only on the FIRST promotion: a re-promotion (TOR's setRole tail fires again while the
+                // ability is still held) must not cache Engineer as its own "previous" role.
+                if (!ventPromotionActive) {
+                    ventPromotionPrevRole = copycat.Data.Role.Role;
+                    ventPromotionActive = true;
+                }
                 copycat.RpcSetRole(RoleTypes.Engineer);
                 copycat.CoSetRole(RoleTypes.Engineer, true);
+            }
+        }
+
+        // Undo the Vent promotion from LearnAbility. Host-only, like the promotion itself.
+        //
+        // This deliberately does NOT blindly write back the cached role: between promotion and revoke
+        // several other writers can own Data.Role (Chaos Mode via TOR's setRole, Role Control's
+        // PlayerTuning.ApplySetFaction/ApplyRevive, a death handing the player a ghost role). Writing a
+        // stale cached value over any of those would flip the Copycat's TEAM or resurrect a corpse.
+        // So we only take the role back while it is still provably the one WE wrote - otherwise the
+        // current owner keeps it and we just drop our bookkeeping.
+        private static void RevokeVentPromotion() {
+            if (!ventPromotionActive) return;
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+            // Cleared unconditionally: once someone else owns the role (or the player died) the cached
+            // value is stale forever, so a later revoke must not try again.
+            ventPromotionActive = false;
+            try {
+                if (copycat == null || copycat.Data == null || copycat.Data.Role == null) return;
+                // Dead/gone: the ghost role belongs to the game now - writing a LIVING role would undo it.
+                if (copycat.Data.IsDead || copycat.Data.Disconnected) return;
+                // Ownership check: still the Engineer we set? If not, another writer took over.
+                if (copycat.Data.Role.Role != RoleTypes.Engineer) return;
+                copycat.RpcSetRole(ventPromotionPrevRole);
+                copycat.CoSetRole(ventPromotionPrevRole, true);
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Copycat] Vent ability dropped - AU role restored to {ventPromotionPrevRole}.");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] Vent promotion revoke failed: {e}");
             }
         }
 
@@ -459,7 +511,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetCopycat: ApplySetCopycat(reader.ReadByte()); break;
+                    case SubSetCopycat: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Copycat.SetCopycat")) ApplySetCopycat(id); break; }
                     case SubUseAbility: {
                         var ability = (Ability)reader.ReadByte();
                         byte targetId = reader.ReadByte();
@@ -588,12 +643,32 @@ namespace UnknownsCollection {
                 copycat = null;
                 active = false;
                 learnedAbilities.Clear();
+                // Plain bool, safe to reset here (unlike the button dictionary below): a stale `true`
+                // would make a round-2 revoke write a round-1 role value. Nothing to restore at this
+                // point - vanilla reassigns every RoleType at round start anyway.
+                ventPromotionActive = false;
                 usedAbilities.Clear();
                 shielded = camouflaged = isMorphed = false;
                 morphTargetId = byte.MaxValue;
                 shieldEndTime = camoEndTime = morphEndTime = 0f;
                 lastRealCamoTimer = 0f;
-                abilityButtons.Clear();
+                // Safe to null here - and note the contrast with abilityButtons right below, which is
+                // the exact opposite case: HudUpdatePatch re-derives both targets from scratch EVERY
+                // FRAME, while the buttons are built once per round in HudManager.Start (i.e. before
+                // this reset runs). Not a live bug either way - every read path is gated on `active`,
+                // which is false after this reset - purely hygiene so no PlayerControl of the previous
+                // round is kept alive.
+                currentTarget = null;
+                currentMorphTarget = null;
+                // abilityButtons deliberately NOT cleared: TOR runs resetVariables at ROUND START,
+                // AFTER HudManager.Start created the buttons (proof: resetVariables itself calls
+                // setCustomButtonCooldowns/CustomButton.ReloadHotkeys, which dereference finished
+                // button instances - RPC.cs:192-193, Buttons.cs:93). Clearing here took OnAbilityClick
+                // its only cooldown start - our buttons use the HasEffect=false overload, which never
+                // resets its own Timer, so every ability became spammable (Shoot every frame,
+                // permanent Shield). It also killed the MaxTimer refresh that compensates for the
+                // creation-time cooldown being read before clearAndReloadRoles reloads the options.
+                // Same rule as Collector/Poltergeist/Werewolf/... - see Collector.cs:299.
                 // NOTE: winnerCopycatId is intentionally NOT reset here (see its declaration).
             }
         }

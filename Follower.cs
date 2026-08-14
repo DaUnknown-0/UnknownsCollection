@@ -160,6 +160,11 @@ namespace UnknownsCollection {
         private static void HandleModuleRpc(MessageReader reader) {
             try {
                 byte subtype = reader.ReadByte();
+                // HOST-ONLY, both subtypes: SubSetFollower declares who the Follower is (host pick in
+                // IntroCutscene.OnDestroy), SubShiftRole hands a player an ARBITRARY TOR role via
+                // erasePlayerRoles + setRole (host-side first-death detection). Neither has a legitimate
+                // non-host sender (AUDIT-2026-08-11.md, H-3).
+                if (!UCRpc.RequireHost($"Follower.subtype{subtype}")) return;
                 switch (subtype) {
                     case SubSetFollower: ApplySetFollower(reader.ReadByte()); break;
                     case SubShiftRole: {

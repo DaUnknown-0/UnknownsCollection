@@ -227,7 +227,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetScout: ApplySetScout(reader.ReadByte()); break;
+                    case SubSetScout: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Scout.SetScout")) ApplySetScout(id); break; }
                     case SubActivate: ApplyActivate(); break;
                     case SubDeactivate: ApplyDeactivate(); break;
                     case SubTransparency: ApplyTransparency(reader.ReadSingle()); break;
@@ -394,19 +397,16 @@ namespace UnknownsCollection {
         }
 
         // ---- Light radius: Scout with active ability has full vision ----
-        [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.CalculateLightRadius))]
-        static class LightPatch {
-            public static void Postfix(ref float __result, ShipStatus __instance, [HarmonyArgument(0)] NetworkedPlayerInfo p) {
-                try {
-                    if (!active || scout == null || p == null) return;
-                    if (p.PlayerId == scout.PlayerId && abilityActive && IsAlive(scout)) {
-                        __result = __instance.MaxLightRadius * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
-                    }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Scout] LightPatch failed: {e}");
-                }
-            }
+        // ---- Light radius: contributed to the central UC vision pipeline (UCVision.cs) ----
+        // Was an own CalculateLightRadius postfix until 2026-08-11; five of those raced each other
+        // with absolute assignments and no priorities (AUDIT-2026-08-11.md, M-5).
+        public static bool WantsFullVision(NetworkedPlayerInfo p) {
+            try {
+                return active && scout != null && p != null
+                       && p.PlayerId == scout.PlayerId && abilityActive && IsAlive(scout);
+            } catch { return false; }
         }
+
 
         // ---- Role identity ----
         [HarmonyPatch(typeof(RoleInfo), nameof(RoleInfo.getRoleInfoForPlayer))]

@@ -237,9 +237,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetShade:
-                        ApplySetShade(reader.ReadByte());
-                        break;
+                    case SubSetShade: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Shade.SetShade")) ApplySetShade(id); break; }
                     case SubHideBody: {
                         byte vid = reader.ReadByte();
                         float x = reader.ReadSingle();

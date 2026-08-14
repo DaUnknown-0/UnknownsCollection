@@ -251,7 +251,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetSiphoner: ApplySetSiphoner(reader.ReadByte()); break;
+                    case SubSetSiphoner: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Siphoner.SetSiphoner")) ApplySetSiphoner(id); break; }
                     case SubDrain: {
                         byte impostorId = reader.ReadByte();
                         float penalty = reader.ReadSingle();

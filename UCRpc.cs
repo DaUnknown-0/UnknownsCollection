@@ -86,6 +86,47 @@ namespace UnknownsCollection {
 
         public static int RegisteredCount => handlers.Count;
 
+        // True while dispatching a message that arrived FROM THE HOST. Valid only inside a handler
+        // call (Sender is null outside one). Same rule ChanceMod applies to its own host-only RPCs,
+        // see Chance.cs:666-673.
+        public static bool SenderIsHost =>
+            Sender != null && AmongUsClient.Instance != null
+            && Sender.OwnerId == AmongUsClient.Instance.HostId;
+
+        // Guard for HOST-AUTHORITATIVE messages: returns false (and logs) when the message did not come
+        // from the host, so the handler can drop it. Without this, any client running a modified UC
+        // build could assign roles, change factions or revive players (AUDIT-2026-08-11.md, H-3).
+        //
+        // Deliberately NOT enforced centrally in the dispatcher: UC modules mix host-authored subtypes
+        // (role assignment) with subtypes the ROLE OWNER legitimately sends (abilities, FX), and the
+        // dispatcher has not read the subtype byte yet. So the check belongs where the subtype is known.
+        //
+        // Note the host itself never trips this: every Send* applies its payload locally through
+        // Apply* and never receives its own RPC, so this only ever sees remote traffic.
+        public static bool RequireHost(string what) {
+            if (SenderIsHost) return true;
+            UnknownsCollectionPlugin.Logger?.LogWarning(
+                $"[UCRpc] host-only message '{what}' from non-host player " +
+                $"{Sender?.PlayerId.ToString() ?? "?"} (owner {Sender?.OwnerId.ToString() ?? "?"}) - ignored.");
+            return false;
+        }
+
+        // Guard for messages only the ROLE OWNER may send - abilities a role triggers on its own
+        // client (Poltergeist hex, Copycat ability, Werewolf transform, ...). These can NOT be gated
+        // with RequireHost: they legitimately originate from the owner, not the host.
+        //
+        // The host is accepted as well, on purpose: several roles have a host-side fallback that acts
+        // on the owner's behalf (e.g. Scout's deactivate when the Scout disconnects), and an
+        // owner-only rule would silently drop those.
+        public static bool RequireOwnerOrHost(PlayerControl owner, string what) {
+            if (SenderIsHost) return true;
+            if (owner != null && Sender != null && Sender.PlayerId == owner.PlayerId) return true;
+            UnknownsCollectionPlugin.Logger?.LogWarning(
+                $"[UCRpc] owner-only message '{what}' from player {Sender?.PlayerId.ToString() ?? "?"} " +
+                $"(owner is {owner?.PlayerId.ToString() ?? "none"}) - ignored.");
+            return false;
+        }
+
         // Single dispatcher. Runs BEFORE TOR's own HandleRpc handler (Priority.High) and always
         // consumes callId 230 - the channel belongs to us, nobody else may parse it.
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]

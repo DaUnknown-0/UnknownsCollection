@@ -425,6 +425,11 @@ namespace UnknownsCollection {
         private static void HandleModuleRpc(MessageReader reader) {
             try {
                 byte subtype = reader.ReadByte();
+                // HOST-ONLY, no exceptions: every subtype of this module is host tooling (Role Control)
+                // that rewrites another player's speed, cooldown, vent access, tasks, TOR role, FACTION
+                // or even revives them. There is no legitimate non-host sender, so the whole module is
+                // gated here rather than per case (AUDIT-2026-08-11.md, H-3).
+                if (!UCRpc.RequireHost($"PlayerTuning.subtype{subtype}")) return;
                 switch (subtype) {
                     case SubSetTuning: {
                         byte pid = reader.ReadByte();

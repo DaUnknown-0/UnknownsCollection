@@ -159,7 +159,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetManipulator: ApplySetManipulator(reader.ReadByte()); break;
+                    case SubSetManipulator: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Manipulator.SetManipulator")) ApplySetManipulator(id); break; }
                     case SubManipulate: {
                         int seed = reader.ReadInt32();
                         float dur = reader.ReadSingle();

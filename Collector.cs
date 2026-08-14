@@ -257,7 +257,10 @@ namespace UnknownsCollection {
             try {
                 byte subtype = reader.ReadByte();
                 switch (subtype) {
-                    case SubSetCollector: ApplySetCollector(reader.ReadByte()); break;
+                    case SubSetCollector: { byte id = reader.ReadByte();
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Collector.SetCollector")) ApplySetCollector(id); break; }
                     case SubSpawnRelics: {
                         int count = reader.ReadByte();
                         var positions = new List<Vector2>(count);
@@ -592,14 +595,27 @@ namespace UnknownsCollection {
 
         // ---- Win: survive mode hijacks team wins like the Bug (reason 19 instead of 18) ----
 
+        // True when a Survive-To-End Collector is in a position to steal the incoming team win.
+        //
+        // PRECEDENCE (user decision 2026-08-11): the Collector BEATS the Bug. Its win condition
+        // contains the Bug's (stay alive to the end) and adds collecting every relic on top, so the
+        // strictly harder achievement wins. Public because Bug.RpcEndGameHijackPatch reads this to
+        // stand down - that keeps the rule independent of Harmony patch order, which used to decide
+        // it by accident (see AUDIT-2026-08-11.md, M-3).
+        //
+        // The hijack prefix below uses this very predicate, so the two can never drift apart.
+        public static bool WouldHijackTeamWin() =>
+            (WinMode?.getSelection() ?? 0) == 1 && active && HasAllRelics() && IsAlive(collector);
+
         [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
+        [HarmonyPriority(Priority.High)] // ahead of Bug's Priority.Low - belt and braces on top of
+                                         // the explicit stand-down in Bug.RpcEndGameHijackPatch.
         static class RpcEndGameHijackPatch {
             private const int TeamJackalWinReason = 11; // see Bug.cs
             public static void Prefix(ref GameOverReason endReason) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if ((WinMode?.getSelection() ?? 0) != 1) return; // only in Survive-To-End mode
-                    if (!active || !HasAllRelics() || !IsAlive(collector)) return;
+                    if (!WouldHijackTeamWin()) return; // Survive-To-End mode, full, alive
                     int r = (int)endReason;
                     if (r >= 10 && r != TeamJackalWinReason) return; // team wins only (never solo neutrals)
                     endReason = (GameOverReason)CollectorWinReason;

@@ -421,7 +421,9 @@ namespace UnknownsCollection {
                     case SubSetWerewolf: {
                         byte id = reader.ReadByte();
                         byte variant = reader.ReadByte();
-                        ApplySetWerewolf(id, variant);
+                        // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                        if (UCRpc.RequireHost("Werewolf.SetWerewolf")) ApplySetWerewolf(id, variant);
                         break;
                     }
                     case SubSetForm: {
@@ -938,43 +940,45 @@ namespace UnknownsCollection {
 
         // POSTFIX - see the file header: TOR's own CalculateLightRadius prefix (ShipStatusPatch.cs:17)
         // returns false, so only a postfix can have the last word.
-        [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.CalculateLightRadius))]
-        static class LightPatch {
-            public static void Postfix(ref float __result, ShipStatus __instance,
-                                       [HarmonyArgument(0)] NetworkedPlayerInfo p) {
-                try {
-                    if (!WolfDarkActive() || p == null || __instance == null) return;
-                    // The beast owns the dark: full impostor vision - but never LESS than the torch the
-                    // crew is walking around with. With the torch set to 2x or infinite the crew's
-                    // circle would otherwise out-reach the wolf's, and the hunted would spot the hunter
-                    // first. Max() keeps "the wolf sees at least as far as his prey" true at every
-                    // setting while leaving the usual (torch < impostor vision) case untouched.
-                    if (werewolf != null && p.PlayerId == werewolf.PlayerId) {
-                        float imp = __instance.MaxLightRadius
-                                    * GameOptionsManager.Instance.currentNormalGameOptions.ImpostorLightMod;
-                        __result = Mathf.Max(imp, TorchRadius(__instance));
-                        return;
-                    }
-                    // The Lighter keeps whatever TOR just computed for him (explicit carve-out).
-                    if (Lighter.lighter != null && p.PlayerId == Lighter.lighter.PlayerId) return;
-                    // Paket W2: the Hunter is exempted from the blanket flashlight too - he gets the
-                    // SAME crew radius as everyone else, scaled up by his own multiplier (option 1504,
-                    // 1.0-2.5x; 1.0 = same as the crew, 2.5x = well beyond it) instead of a flat value,
-                    // so he stays meaningfully ahead of the crew without matching the wolf's full sight.
-                    // At "Infinite" there is nothing left to scale - everyone already sees to the edge
-                    // of the screen - so his multiplier simply has no effect there.
-                    if (Hunter.active && Hunter.hunter != null && p.PlayerId == Hunter.hunter.PlayerId) {
-                        __result = FlashlightInfinite()
-                            ? TorchRadius(__instance)
-                            : CrewBaseRadius(__instance) * FlashlightFactor() * Hunter.FlashlightMultiplierValue();
-                        return;
-                    }
-                    __result = TorchRadius(__instance);
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] LightPatch failed: {e}");
+        // ---- Light radius: contributed to the central UC vision pipeline (UCVision.cs) ----
+        // Was an own CalculateLightRadius postfix until 2026-08-11 (AUDIT-2026-08-11.md, M-5).
+        //
+        // This is NOT a per-role bonus like Scout/Beacon/NightVision - it is a whole-map lighting
+        // regime: while the wolf night is up, EVERY player's radius is redefined here. That is why the
+        // pipeline runs it LAST and lets it overwrite whatever the grants above produced; a Scout
+        // ability lighting up the map would defeat the entire point of the night.
+        // Returns true when it took over, so the pipeline can log/behave accordingly.
+        public static bool ApplyNightOverride(ref float result, ShipStatus ship, NetworkedPlayerInfo p) {
+            try {
+                if (!WolfDarkActive() || p == null || ship == null) return false;
+                // The beast owns the dark: full impostor vision - but never LESS than the torch the
+                // crew is walking around with. With the torch set to 2x or infinite the crew's circle
+                // would otherwise out-reach the wolf's, and the hunted would spot the hunter first.
+                if (werewolf != null && p.PlayerId == werewolf.PlayerId) {
+                    float imp = ship.MaxLightRadius
+                                * GameOptionsManager.Instance.currentNormalGameOptions.ImpostorLightMod;
+                    result = Mathf.Max(imp, TorchRadius(ship));
+                    return true;
                 }
+                // The Lighter keeps whatever TOR just computed for him (explicit carve-out).
+                if (Lighter.lighter != null && p.PlayerId == Lighter.lighter.PlayerId) return true;
+                // Paket W2: the Hunter is exempted from the blanket flashlight too - he gets the SAME
+                // crew radius as everyone else, scaled up by his own multiplier (option 1504, 1.0-2.5x)
+                // instead of a flat value. At "Infinite" there is nothing left to scale.
+                if (Hunter.active && Hunter.hunter != null && p.PlayerId == Hunter.hunter.PlayerId) {
+                    result = FlashlightInfinite()
+                        ? TorchRadius(ship)
+                        : CrewBaseRadius(ship) * FlashlightFactor() * Hunter.FlashlightMultiplierValue();
+                    return true;
+                }
+                result = TorchRadius(ship);
+                return true;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] night override failed: {e}");
+                return false;
             }
         }
+
 
         // ---- The flashlight CONE (the other half of "flashlight") ----
         //

@@ -158,7 +158,12 @@ namespace UnknownsCollection {
         private static void HandleModuleRpc(MessageReader reader) {
             try {
                 byte subtype = reader.ReadByte();
-                if (subtype == SubSetBeacon) ApplySetBeacon(reader.ReadByte());
+                if (subtype == SubSetBeacon) {
+                    byte id = reader.ReadByte();
+                    // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                    if (UCRpc.RequireHost("Beacon.SetBeacon")) ApplySetBeacon(id);
+                }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Beacon] HandleRpc failed: {e}");
             }
@@ -196,40 +201,25 @@ namespace UnknownsCollection {
         }
 
         // ---- Light radius: Beacon always has full vision; nearby crewmates share it. ----
-        [HarmonyPatch(typeof(ShipStatus), nameof(ShipStatus.CalculateLightRadius))]
-        static class LightPatch {
-            public static void Postfix(ref float __result, ShipStatus __instance, [HarmonyArgument(0)] NetworkedPlayerInfo p) {
-                try {
-                    if (!active || beacon == null || p == null || !IsAlive(beacon)) return;
-
-                    float fullRadius = __instance.MaxLightRadius
-                        * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
-
-                    if (p.PlayerId == beacon.PlayerId) {
-                        __result = fullRadius;
-                        return;
-                    }
-
-                    // Boost nearby non-impostor crewmates - only while they actually have a clear line of
-                    // sight to the Beacon (not just in range), so a wall between them still blocks it.
-                    if (p.Role != null && !p.Role.IsImpostor && !p.IsDead && !p.Disconnected) {
-                        var crew = Helpers.playerById(p.PlayerId);
-                        if (crew != null) {
-                            // TOR neutrals (Jackal, Jester, Arsonist, Vulture, ...) run on crewmate base
-                            // roles too, so IsImpostor alone doesn't exclude them - mirrors Witness.cs's
-                            // crew/neutral split via RoleInfo.isNeutral.
-                            var info = RoleInfo.getRoleInfoForPlayer(crew, false).FirstOrDefault();
-                            bool isNeutral = info != null && info.isNeutral;
-                            if (!isNeutral && CanSeeBeacon(crew)) {
-                                __result = Mathf.Max(__result, fullRadius);
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Beacon] LightPatch failed: {e}");
-                }
-            }
+        // ---- Light radius: contributed to the central UC vision pipeline (UCVision.cs) ----
+        // Was an own CalculateLightRadius postfix until 2026-08-11 (AUDIT-2026-08-11.md, M-5).
+        // Covers both cases the old patch had: the Beacon itself, and nearby non-impostor,
+        // non-neutral crewmates with an unobstructed line of sight to it.
+        public static bool WantsFullVision(NetworkedPlayerInfo p) {
+            try {
+                if (!active || beacon == null || p == null || !IsAlive(beacon)) return false;
+                if (p.PlayerId == beacon.PlayerId) return true;
+                if (p.Role == null || p.Role.IsImpostor || p.IsDead || p.Disconnected) return false;
+                var crew = Helpers.playerById(p.PlayerId);
+                if (crew == null) return false;
+                // TOR neutrals (Jackal, Jester, Arsonist, Vulture, ...) run on crewmate base roles too,
+                // so IsImpostor alone doesn't exclude them - mirrors Witness.cs's crew/neutral split.
+                var info = RoleInfo.getRoleInfoForPlayer(crew, false).FirstOrDefault();
+                bool isNeutral = info != null && info.isNeutral;
+                return !isNeutral && CanSeeBeacon(crew);
+            } catch { return false; }
         }
+
 
         // ---- Role identity ----
         [HarmonyPatch(typeof(RoleInfo), nameof(RoleInfo.getRoleInfoForPlayer))]

@@ -103,11 +103,24 @@ namespace UnknownsCollection {
         // Jackal team (11). Neutral solo wins (Jester, Arsonist, Vulture, Lovers, Prosecutor, Mini) are
         // left untouched, so the Bug never steals those.
         [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
+        [HarmonyPriority(Priority.Low)] // behind Collector's Priority.High; the real rule is the
+                                        // explicit stand-down below, this is only reinforcement.
         static class RpcEndGameHijackPatch {
             public static void Prefix(ref GameOverReason endReason) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!BugIsAliveAndActive()) return;
+                    // PRECEDENCE (user decision 2026-08-11): a full, living Collector in Survive-To-End
+                    // mode beats the Bug - its win contains the Bug's (survive to the end) and adds
+                    // every relic on top. Checked EXPLICITLY rather than left to Harmony patch order:
+                    // previously whichever prefix ran first won, and the loser only backed off as a
+                    // side effect of the "don't steal neutral solo wins" guard below, which is not a
+                    // rule anybody could read as one (AUDIT-2026-08-11.md, M-3).
+                    if (Collector.WouldHijackTeamWin()) {
+                        UnknownsCollectionPlugin.Logger?.LogInfo(
+                            "[Bug] Standing down - a full Collector survived and takes the win (documented precedence).");
+                        return;
+                    }
                     int r = (int)endReason;
                     if (r >= 10 && r != TeamJackalWinReason) return; // only Crew/Impostor (<10) or Jackal (11)
                     // Encode the stolen reason instead of the flat legacy 18, so every client can
@@ -180,7 +193,12 @@ namespace UnknownsCollection {
         private static void HandleModuleRpc(MessageReader reader) {
             try {
                 byte subtype = reader.ReadByte();
-                if (subtype == SubSetBug) ApplySetBug(reader.ReadByte());
+                if (subtype == SubSetBug) {
+                    byte id = reader.ReadByte();
+                    // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
+                    // forged one would let any client declare any player this role (AUDIT H-3).
+                    if (UCRpc.RequireHost("Bug.SetBug")) ApplySetBug(id);
+                }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Bug] HandleRpc failed: {e}");
             }

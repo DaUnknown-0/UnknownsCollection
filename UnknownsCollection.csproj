@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.1.4.35</Version>
+        <Version>1.1.4.40</Version>
         <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade, Manipulator, Werewolf, Auditor (Impostor); Siphoner, Witness, Scout, Beacon, Hunter (Crewmate); Bug, Follower, Copycat, Collector, Pelican (Neutral); Poltergeist (ghost, keeps its team).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
@@ -69,6 +69,7 @@
         <EmbeddedResource Include="Resources\collector_relic.png" />
         <EmbeddedResource Include="Resources\saboteur_selflimp.png" />
         <EmbeddedResource Include="Resources\collector_collect.png" />
+        <EmbeddedResource Include="Resources\gambler_bet.png" />
         <EmbeddedResource Include="Resources\manipulator_fake.png" />
         <EmbeddedResource Include="Resources\collector_pickup.ogg" />
         <EmbeddedResource Include="Resources\collector_win.ogg" />

@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.1.4.35";
+    public const string PluginVersion = "1.1.4.40";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -80,6 +80,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte PelicanRpcId = 212;
     public const byte PlayerTuningRpcId = 213; // host tooling: per-player speed/cooldown/vent/tasks
     public const byte AuditorRpcId = 214;
+    public const byte GamblerRpcId = 215;  // crew MODIFIER, no draft entry (rides on top of a role)
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -253,6 +254,12 @@ public class UnknownsCollectionPlugin : BasePlugin
         // the task bar really drops). His kill cooldown scales with the number of reverts.
         Auditor.CreateOptions();
         Auditor.TryPatch(harmony);
+
+        // The Gambler (crew MODIFIER, the first one in this mod). Predicts what the round will do;
+        // every bet is settled inside a meeting so a win never leaks information early. Tier decides
+        // the stake: speed, own tasks, and at the top the impostors' kill cooldown.
+        Gambler.CreateOptions();
+        Gambler.TryPatch(harmony);
 
         // Reactor music (Paket R) - not a role: a score for the reactor/seismic sabotage that is
         // written against the REAL ICriticalSabotage countdown, so the blast in its finale lands on

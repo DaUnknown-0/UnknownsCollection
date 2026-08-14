@@ -59,6 +59,8 @@ namespace UnknownsCollection {
                 E("Auditor", Faction.Impostor, () => Palette.ImpostorRed, () => Auditor.SpawnRate, "uc.help.auditor"),
                 E("Werewolf", Faction.Impostor, () => Werewolf.Color, () => Werewolf.SpawnRate, "uc.help.werewolf"),
 
+                E("Gambler", Faction.Modifier, () => Gambler.Color, () => Gambler.SpawnRate, "uc.help.gambler"),
+
                 E("Siphoner", Faction.Crew, () => Siphoner.Color, () => Siphoner.SpawnRate, "uc.help.siphoner"),
                 E("Witness", Faction.Crew, () => Witness.Color, () => Witness.SpawnRate, "uc.help.witness"),
                 E("Scout", Faction.Crew, () => Scout.Color, () => Scout.SpawnRate, "uc.help.scout"),

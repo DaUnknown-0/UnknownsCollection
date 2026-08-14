@@ -428,7 +428,11 @@ namespace UnknownsCollection {
         //
         // Straight out of vanilla's PlayerControl.CoSetTasks: instantiate the ShipStatus prototype,
         // give it an id/owner, Initialize() (which picks its consoles and builds the arrow) and drop
-        // it into myTasks. Console.CanUse reads myTasks, so the consoles open for him.
+        // it into myTasks. NOTE: myTasks alone does NOT open the consoles for him - the Auditor is
+        // an IMPOSTOR, and Console.CanUse refuses impostors outright (AllowImpostor) before it ever
+        // looks at the task list. The CanUse postfix further down reopens exactly the consoles that
+        // belong to an open stolen task; without it the role could hold tasks but never work them
+        // (playtest 2026-08-15).
         // ====================================================================
         private static NormalPlayerTask BuildLocalTask(byte typeId, byte entryId) {
             try {
@@ -461,6 +465,46 @@ namespace UnknownsCollection {
                 UnityEngine.Object.Destroy(e.localTask.gameObject);
             } catch { }
             finally { if (e != null) e.localTask = null; }
+        }
+
+        // Reopen the consoles of his stolen tasks. Console.CanUse turns impostors away via
+        // AllowImpostor before consulting myTasks, so the local copies alone changed nothing - the
+        // Auditor could hold a task but never start it. This postfix recomputes a normal
+        // distance-based usability, but ONLY for a console that one of his OPEN local tasks
+        // considers valid (ValidConsole = the exact per-step console matching vanilla itself uses,
+        // so step order and per-room consoles behave like a crewmate's). Same pattern as
+        // UsefulTORStuff's SwapperLightsFix, which reopens TOR-blocked panels the same way.
+        [HarmonyPatch(typeof(Console), nameof(Console.CanUse))]
+        static class ConsoleCanUsePatch {
+            public static void Postfix(ref float __result, Console __instance,
+                                       [HarmonyArgument(0)] NetworkedPlayerInfo pc,
+                                       [HarmonyArgument(1)] ref bool canUse,
+                                       [HarmonyArgument(2)] ref bool couldUse) {
+                try {
+                    if (canUse) return;                                  // already usable - nothing to fix
+                    if (!IsLocalAuditor()) return;
+                    if (pc == null || pc.Object == null || pc.Object != PlayerControl.LocalPlayer) return;
+
+                    bool mine = false;
+                    foreach (var e in queue) {
+                        var t = e?.localTask;
+                        if (t == null || t.IsComplete) continue;
+                        if (t.ValidConsole(__instance)) { mine = true; break; }
+                    }
+                    if (!mine) return;
+
+                    var po = pc.Object;
+                    if (po.Data == null || po.Data.IsDead || !po.CanMove) return;
+
+                    float dist = UnityEngine.Vector2.Distance(po.GetTruePosition(),
+                                                              (UnityEngine.Vector2)__instance.transform.position);
+                    __result = dist;
+                    couldUse = true;
+                    canUse = dist <= __instance.UsableDistance;
+                } catch (Exception ex) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Auditor] Console.CanUse postfix failed: {ex}");
+                }
+            }
         }
 
         // Local-only variant of Helpers.clearAllTasks: destroys the task OBJECTS but leaves the synced

@@ -377,45 +377,10 @@ public class UnknownsCollectionPlugin : BasePlugin
     [HarmonyPriority(Priority.Low)] // after TOR's own PingTracker postfix
     public static class VersionDisplayPatch
     {
-        private const string LinkId = "unknownsCollectionVersion";
-        // Shared with the other DaUnknown mods - keep this string identical everywhere. Clicking any
-        // mod's name flips the same flag, so the "Modded by DaUnknown" credit appears at most once.
-        private const string CreditKey = "TORMods.DaUnknownCreditVisible";
-
-        private static bool CreditVisible() =>
-            AppDomain.CurrentDomain.GetData(CreditKey) is bool b && b;
-
-        // Click-decode animation on the mod name: for a short moment the letters show as random
-        // glyphs that resolve left-to-right into "Unknown's Collection" - a text-only effect that
-        // fits the name. Purely cosmetic, driven by the per-frame line rebuild below.
+        // The mod name, localized - the click-driven letter-decode animation this line used to play
+        // on its own click is retired along with the rest of the old per-mod click handling below;
+        // UnknownsCollective.Render() now owns the click entirely (toggle/expand + shared credit).
         private static string ModName => UCLocalization.Tr("uc.ui.modname");
-        private const string ScrambleGlyphs = "#%&?$@*<>!/=+";
-        private const float ScrambleDuration = 0.9f;
-        private static float scrambleStart = -1f;
-
-        private static string NameMarkup()
-        {
-            string modName = ModName;
-            if (scrambleStart >= 0f && Time.time - scrambleStart >= ScrambleDuration) scrambleStart = -1f;
-            if (scrambleStart < 0f) return $"<color=#1FB8FF>{modName}</color>";
-            float p = (Time.time - scrambleStart) / ScrambleDuration;
-            // slight overshoot so the last letters resolve before the effect ends
-            int resolved = Mathf.Clamp((int)(p * (modName.Length + 3)), 0, modName.Length);
-            var sb = new System.Text.StringBuilder(64);
-            sb.Append("<color=#1FB8FF>").Append(modName, 0, resolved).Append("</color>");
-            if (resolved < modName.Length)
-            {
-                sb.Append("<color=#C9F2FF>");
-                for (int i = resolved; i < modName.Length; i++)
-                {
-                    char c = modName[i];
-                    // keep spaces/apostrophe so the line width barely moves while decoding
-                    sb.Append(c == ' ' || c == '\'' ? c : ScrambleGlyphs[UnityEngine.Random.Range(0, ScrambleGlyphs.Length)]);
-                }
-                sb.Append("</color>");
-            }
-            return sb.ToString();
-        }
 
         public static void Postfix(PingTracker __instance)
         {
@@ -423,57 +388,9 @@ public class UnknownsCollectionPlugin : BasePlugin
             string text = __instance.text.text;
             if (string.IsNullOrEmpty(text)) return;
 
-            // Click the mod name to play the decode animation and toggle the shared credit line.
-            // PingTracker.text is a world-space TextMeshPro (no canvas), so the link raycast needs
-            // the rendering camera.
-            if (Input.GetMouseButtonDown(0))
-            {
-                Camera cam = Camera.main;
-                var canvas = __instance.text.canvas;
-                if (canvas != null)
-                    cam = canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null
-                        : (canvas.worldCamera != null ? canvas.worldCamera : Camera.main);
-                int link = TMPro.TMP_TextUtilities.FindIntersectingLink(__instance.text, Input.mousePosition, cam);
-                if (link != -1 && __instance.text.textInfo.linkInfo[link].GetLinkID() == LinkId)
-                {
-                    AppDomain.CurrentDomain.SetData(CreditKey, !CreditVisible());
-                    scrambleStart = Time.time;
-                }
-            }
-
-            // Insert our version line - or, if it is already present (and possibly mid-animation),
-            // replace it so the decoding name rewrites every frame.
-            string line = $"<link=\"{LinkId}\">{NameMarkup()} v{VersionDisplay.FormatRich(Version)}</link>";
-            int linkStart = text.IndexOf($"<link=\"{LinkId}\">");
-            if (linkStart >= 0)
-            {
-                int linkEnd = text.IndexOf("</link>", linkStart);
-                if (linkEnd >= 0)
-                    text = text.Substring(0, linkStart) + line + text.Substring(linkEnd + "</link>".Length);
-            }
-            else
-            {
-                int nl = text.IndexOf('\n');
-                text = nl >= 0
-                    ? text.Substring(0, nl + 1) + line + "\n" + text.Substring(nl + 1)
-                    : text + "\n" + line;
-            }
-
-            // Insert the shared credit under TOR's "Design by Bavari" line - but only if no other mod
-            // already added it this frame, so "Modded by DaUnknown" appears at most once.
-            if (CreditVisible() && !text.Contains("DaUnknown"))
-            {
-                string credit = "\n<size=70%>"
-                    + UCLocalization.Tr("uc.ui.credit").Replace("DaUnknown", "<color=#FCCE03FF>DaUnknown</color>")
-                    + "</size>";
-                int anchor = text.IndexOf("Bavari");
-                if (anchor >= 0)
-                {
-                    int lineEnd = text.IndexOf('\n', anchor);
-                    text = lineEnd >= 0 ? text.Substring(0, lineEnd) + credit + text.Substring(lineEnd) : text + credit;
-                }
-                else text += credit;
-            }
+            string line = $"<color=#1FB8FF>{ModName}</color> v{VersionDisplay.FormatRich(UnknownsCollectionPlugin.Version)}";
+            UnknownsCollective.Contribute(UnknownsCollectionPlugin.PluginGuid, line);
+            text = UnknownsCollective.Render(__instance.text, text);
 
             __instance.text.text = text;
         }

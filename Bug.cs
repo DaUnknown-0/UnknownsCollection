@@ -69,7 +69,7 @@ namespace UnknownsCollection {
 
         // "Stolen win" end-screen dramaturgy: the screen shows the ORIGINAL team win for TakeoverDelay
         // seconds, then the Bug hijacks it (glitch burst, win-text morph, podium swap). Fixed constants
-        // by user decision (2026-07-25), not config.
+        // by design, not config.
         private const float TakeoverDelay = 3.0f;
         private const float MorphDuration = 1.2f;
 
@@ -110,7 +110,7 @@ namespace UnknownsCollection {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!BugIsAliveAndActive()) return;
-                    // PRECEDENCE (user decision 2026-08-11): a full, living Collector in Survive-To-End
+                    // PRECEDENCE: a full, living Collector in Survive-To-End
                     // mode beats the Bug - its win contains the Bug's (survive to the end) and adds
                     // every relic on top. Checked EXPLICITLY rather than left to Harmony patch order:
                     // previously whichever prefix ran first won, and the loser only backed off as a

@@ -465,7 +465,7 @@ namespace UnknownsCollection {
                 if (def == null) return;
                 if (def.NeedsTarget) {
                     var t = Helpers.playerById(target);
-                    // Betting on yourself is out (the user's decision: no self-bets), and a dead or
+                    // Betting on yourself is out (no self-bets), and a dead or
                     // missing target has no story left to tell.
                     if (t == null || !IsAlive(t) || t.PlayerId == gambler.PlayerId) return;
                 } else {
@@ -877,7 +877,7 @@ namespace UnknownsCollection {
                     lastReporter = byte.MaxValue;
                     bets.RemoveAll(b => b.Settled);
 
-                    // He may bet again right away (user decision), cooldown reset at every meeting.
+                    // He may bet again right away, cooldown reset at every meeting.
                     betCooldownLeft = 0f;
 
                     if (!AmHost()) return;

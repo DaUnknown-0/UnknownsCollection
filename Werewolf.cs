@@ -582,7 +582,7 @@ namespace UnknownsCollection {
         // Shared entry point of the two TRAP sources (Trapper + UC Saboteur). Only the werewolf's own
         // client reacts, so the wound is broadcast exactly once.
         //
-        // Traps ALWAYS wound, never kill - not even in silver mode "Kills" (user decision 2026-07-25).
+        // Traps ALWAYS wound, never kill - not even in silver mode "Kills".
         // A trap normally just holds someone in place and the trapper cannot know who walks into it;
         // turning it into the deadliest weapon in the game on a mode switch made an environmental
         // hazard outclass the aimed silver shot. "Kills" therefore applies to the sheriff only.
@@ -1242,7 +1242,7 @@ namespace UnknownsCollection {
                     bool wasWolf = wolfForm;
                     Vector2 pos = werewolf.GetTruePosition();
 
-                    // THE HUNTER ALWAYS KILLS (user decision 2026-07-25), in either form and in every
+                    // THE HUNTER ALWAYS KILLS, in either form and in every
                     // silver mode - his silver bolts are the whole point of the role, and the toughness
                     // below is what the crew promoted him to overcome. Only the sheriff's stray shot is
                     // survivable.

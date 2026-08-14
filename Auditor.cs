@@ -189,7 +189,7 @@ namespace UnknownsCollection {
         public static bool ShowsCompleterName() =>
             (ShowCompleter?.getBool() ?? true) && !SpyPossible();
 
-        // Linear between the two configured multipliers, frozen at the endpoint (user decision).
+        // Linear between the two configured multipliers, frozen at the endpoint.
         public static float CooldownMultiplier() {
             float atZero = CooldownAtZero?.getFloat() ?? 2f;
             float atFull = CooldownAtFull?.getFloat() ?? 0.5f;
@@ -335,7 +335,7 @@ namespace UnknownsCollection {
             ClearQueue();
             if (!active) return;
             UCPromotion.Claim(id);
-            // His vanilla impostor fake-task list is replaced by the revert targets (user decision),
+            // His vanilla impostor fake-task list is replaced by the revert targets,
             // so tear the local objects down. Deliberately NOT Helpers.clearAllTasks: that also empties
             // the SYNCED Data.Tasks, and we have no reason to touch synced state for a role whose
             // tasks count for nothing anyway.

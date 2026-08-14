@@ -69,7 +69,7 @@
  *    leave Countdown at 10000 and IsActive false), so the last countdown value seen while the
  *    sabotage was still live is what decides which finale keeps playing.
  *
- * Option: 1483 (General tab, default OFF - user decision). No RPC of its own. See ID-Registry.md.
+ * Option: 1483 (General tab, default OFF). No RPC of its own. See ID-Registry.md.
  */
 
 using System;

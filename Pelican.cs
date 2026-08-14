@@ -725,7 +725,7 @@ namespace UnknownsCollection {
             if (!active || huntEnded) return;
 
             if (!huntActive) {
-                // Trigger: exactly two players alive and one of them is the Pelican (user decision).
+                // Trigger: exactly two players alive and one of them is the Pelican.
                 if (IsAlive(pelican) && AliveCount() == 2 && !InMeeting()
                     && AmongUsClient.Instance.IsGameStarted) {
                     SendStartHunt(HuntSeconds());

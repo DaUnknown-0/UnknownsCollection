@@ -597,7 +597,7 @@ namespace UnknownsCollection {
 
         // True when a Survive-To-End Collector is in a position to steal the incoming team win.
         //
-        // PRECEDENCE (user decision 2026-08-11): the Collector BEATS the Bug. Its win condition
+        // PRECEDENCE: the Collector BEATS the Bug. Its win condition
         // contains the Bug's (stay alive to the end) and adds collecting every relic on top, so the
         // strictly harder achievement wins. Public because Bug.RpcEndGameHijackPatch reads this to
         // stand down - that keeps the rule independent of Harmony patch order, which used to decide

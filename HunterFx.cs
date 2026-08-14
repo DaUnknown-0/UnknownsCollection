@@ -10,7 +10,7 @@
  * the rest of the round.
  *
  * ---------------------------------------------------------------------------------------------
- * WHY THIS IS A HAT AND NO LONGER A RENDERER SWAP (user decision 2026-07-31)
+ * WHY THIS IS A HAT AND NO LONGER A RENDERER SWAP
  * ---------------------------------------------------------------------------------------------
  * The first implementation hid the real cosmetics and played a hand-drawn idle/walk flipbook on a
  * child SpriteRenderer (UCCharacterSkin, deleted with this change - it had no callers left). That

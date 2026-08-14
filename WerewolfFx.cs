@@ -8,7 +8,7 @@
  * VICTIM's animation). Werewolf.cs owns the rules, this file owns the pixels. Effects, all of them
  * deliberately PUBLIC (visible to every client):
  *
- *  1. WOLF LOOK (the beast itself; user decision 2026-07-28, replaces the old UCCharacterSkin
+ *  1. WOLF LOOK (the beast itself; replaces the old UCCharacterSkin
  *     flipbook). The transformation is a LOOK CHANGE through TOR's own setLook pipeline:
  *       a) the moment the form flips, the werewolf turns pitch black - exactly the Camouflager
  *          look, setLook("", 6, "", "", "", "") (RPC.cs:644) - while the transform flare burns,
@@ -108,7 +108,7 @@ namespace UnknownsCollection {
         private const float TransformDarkSecs = 0.55f;
         private const float RevertDarkSecs = 0.35f;
 
-        // 1.5x the vanilla crewmate (user decision 2026-07-28). 0.7 is what TOR's playerSizeUpdate
+        // 1.5x the vanilla crewmate. 0.7 is what TOR's playerSizeUpdate
         // stamps on every non-Mini player each frame (PlayerControlPatch.cs:467).
         private const float VanillaScale = 0.7f;
         private const float WolfScaleFactor = 1.5f;
@@ -191,7 +191,7 @@ namespace UnknownsCollection {
             UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] wolf look failed (logged once): {e}");
         }
 
-        // ---- the beast is NAMELESS (user decision 2026-07-31) --------------------------------
+        // ---- the beast is NAMELESS --------------------------------
         //
         // The costume alone did not hide who the beast is: the black body carries the player's normal
         // name tag, so anybody who saw the wolf could simply read it off. Now the tag is blanked for

@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.1.4.41";
+    public const string PluginVersion = "1.1.4.42";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -164,7 +164,7 @@ public class UnknownsCollectionPlugin : BasePlugin
         ButtonPulseEnabled = Config.Bind("Buttons", "Button Ready Pulse", false,
             "Gently pulse ability buttons in size while the ability is usable (the animated icons are unaffected). Off by default - some players find the size wobble distracting.");
         // Custom kill cutscenes (pure local cosmetics -> per-player config, NOT host-synced).
-        // UC roles keep their overlays by default; the TOR-role pack is opt-in (user decision).
+        // UC roles keep their overlays by default; the TOR-role pack is opt-in.
         KillAnimationsUC = Config.Bind("KillAnimations", "UC Role Kill Animations", true,
             "Custom kill cutscenes for Unknown's Collection roles (Tesla, Saboteur task kills, Poisoner, Shade, Maniac bomb). Off = vanilla kill overlay.");
         KillAnimationsTOR = Config.Bind("KillAnimations", "TOR Role Kill Animations", false,

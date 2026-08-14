@@ -79,7 +79,7 @@ namespace UnknownsCollection {
         // Rate-based like every other entry here, so his presence in the grid never leaks whether the
         // promotion already happened. (TOR filters its own Deputy entry by the sheriff rate the same
         // way, MeetingPatch.cs:429 - a Hunter without a Sheriff is just as impossible.)
-        // Plus the guess protection (user decision 2026-07-31): once the promotion has happened, the
+        // Plus the guess protection: once the promotion has happened, the
         // Hunter's costume tells everyone who can see it exactly who he is - guessing him would be a
         // free kill on public knowledge. So for THIS client the whole entry disappears as soon as the
         // local player (or a lover / jackal partner of his) can see the costume; see Hunter.KnowsHunter
@@ -111,7 +111,7 @@ namespace UnknownsCollection {
 
         // The Auditor watches every completed crew task go by, so he can read off who is racing
         // through their list - which is exactly how you spot the Snitch. Option 1608 therefore drops
-        // the SNITCH entry from HIS grid (user decision): removing the entry instead of blocking the
+        // the SNITCH entry from HIS grid: removing the entry instead of blocking the
         // one target also stops him from burning the guess on somebody else. Only the Auditor's own
         // client is affected, so nothing leaks to anyone else.
         private static bool HideSnitchFromLocalAuditor() =>

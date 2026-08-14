@@ -578,7 +578,7 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Step 5: the role-costume hat locks (user decisions 2026-07-28 / 2026-07-31) ------
+        // ---- Step 5: the role-costume hat locks ------
         //
         // A hat that a ROLE wears as its costume must not be wearable as an ordinary cosmetic while
         // that role can still turn up in a round:

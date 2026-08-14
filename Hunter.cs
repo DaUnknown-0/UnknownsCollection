@@ -248,7 +248,7 @@ namespace UnknownsCollection {
             && !wasNaturalGuesser && GuessMode() != GuessOff && !HandleGuesser.isGuesserGm;
 
         // ====================================================================
-        // Guess protection (user decision 2026-07-31)
+        // Guess protection
         // ====================================================================
         // The costume makes the Hunter's role PUBLIC to everyone who can see it, so guessing him would
         // be a free kill on knowledge the whole room already has. Therefore anybody who can see the

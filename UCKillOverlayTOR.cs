@@ -14,9 +14,9 @@
  *    for the victim, exactly like the UC roles' FX-RPC arming.
  *  - showAnimation==0 ("masked") kills (Vampire bite death, Warlock curse proxy kill, bomb
  *    deaths) get their cutscene at the DEATH, never at the bite/spell moment - a marked player
- *    who is still alive must not learn what is coming (user decision). The killer figure IS
+ *    who is still alive must not learn what is coming. The killer figure IS
  *    shown to the dead victim: TOR reveals every role to ghosts anyway, so nothing new leaks
- *    (user decision). Because ShowKillAnimation only sees (victim, victim) for masked kills,
+ *   . Because ShowKillAnimation only sees (victim, victim) for masked kills,
  *    the REAL killer color travels through the arming side (ArmVictim killerColor). The Witch's
  *    spell death resolves at meeting end via Exiled() and uses the Poisoner-style direct
  *    PlayFor + queue instead (WitchSpellDeath, hooked at uncheckedExilePlayer - RPC 110 is
@@ -207,7 +207,7 @@ namespace UnknownsCollection {
 
                 // The killer figure shows in the death variants too: TOR reveals every role to
                 // ghosts anyway, so the dead victim learns nothing it would not see regardless
-                // (user decision). The REAL killer color travels via the arming side.
+                //. The REAL killer color travels via the arming side.
                 case Kind.VampireKill:
                 case Kind.VampireBiteDeath:   // bite death: same scene, just no garlic on stage
                     duration = 1.65f;

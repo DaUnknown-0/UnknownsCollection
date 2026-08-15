@@ -614,9 +614,12 @@ namespace UnknownsCollection {
         }
 
         // The Auditor's task ids exist ONLY on his machine, so the vanilla completion RPC would hand
-        // every other client an id its FindTaskById cannot resolve. Suppress it entirely: the visual
-        // strike-through in the task list hangs off taskStep (set by NextStep before Complete runs),
-        // not off this call.
+        // every other client an id its FindTaskById cannot resolve. Suppress the NETWORK half - but
+        // run the LOCAL half ourselves: vanilla only ever calls task.Complete() from the RPC apply
+        // path being suppressed here. The first build swallowed the whole call, so the stolen task
+        // finished visually (taskStep) while Complete() never ran - and with it TaskCompletePatch,
+        // the hook that sends the revert request. Playtest symptom 2026-08-15: "der Auditor kann
+        // die Task machen, aber der Crewmate verliert sie nicht".
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.RpcCompleteTask))]
         [HarmonyPriority(Priority.First)]
         static class SuppressSyntheticCompletePatch {
@@ -624,7 +627,13 @@ namespace UnknownsCollection {
                 try {
                     if (idx < SyntheticIdBase) return true;
                     if (__instance == null || !IsLocalAuditor()) return true;
-                    return __instance.PlayerId != auditor.PlayerId;
+                    if (__instance.PlayerId != auditor.PlayerId) return true;
+                    foreach (var t in __instance.myTasks) {
+                        if (t == null || t.Id != idx) continue;
+                        t.Complete();   // fires TaskCompletePatch -> SendRequest -> host executes the revert
+                        break;
+                    }
+                    return false;
                 } catch { return true; }
             }
         }

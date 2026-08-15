@@ -558,6 +558,13 @@ namespace UnknownsCollection {
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
             if (!armed || promoted || target == null || target.Data == null) return;
             if (byExile && !(ExileCounts?.getBool() ?? false)) return; // exiles don't consume the trigger
+            // Mutual exclusion with the Necromancer (option 1634): both roles feed on the round's
+            // first deaths, and a corpse that rises as the Poltergeist's ghost AND as a thrall would
+            // be two contradictory afterlives. The armed trigger stands down for the whole round.
+            if (Necromancer.BlocksPoltergeist()) {
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Poltergeist] standing down - a Necromancer is in play.");
+                return;
+            }
             promoted = true;
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Poltergeist] First death: {target.Data?.PlayerName} ({(byExile ? "exile" : "kill")}).");

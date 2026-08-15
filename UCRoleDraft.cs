@@ -58,6 +58,7 @@ namespace UnknownsCollection {
         public const byte WerewolfDraftId = 216;
         public const byte PelicanDraftId = 217;
         public const byte AuditorDraftId = 218;
+        public const byte NecromancerDraftId = 219;
         // NO Hunter entry, deliberately: the Hunter is not a rolled role at all. He is an EVENT inside
         // a Werewolf round - the living original Sheriff is promoted the moment the beast is the last
         // Impostor standing (Hunter.cs, host-authoritative trigger). He has no spawn rate to inject
@@ -120,6 +121,9 @@ namespace UnknownsCollection {
                      false, () => Pelican.SpawnRate,    () => Pelican.SpawnMinPlayers,    Pelican.MarkFromDraft),
                 Make(AuditorDraftId,     "Auditor",     Palette.ImpostorRed, "Undo the tasks the crew completes",
                      true,  () => Auditor.SpawnRate,    () => Auditor.SpawnMinPlayers,    Auditor.MarkFromDraft),
+                // Neutral over a plain Crewmate, drafted from the crew pool like Bug/Collector/Pelican.
+                Make(NecromancerDraftId, "Necromancer", Necromancer.Color,   "Raise fresh corpses into your silent army",
+                     false, () => Necromancer.SpawnRate, () => Necromancer.SpawnMinPlayers, Necromancer.MarkFromDraft),
             };
             return entries;
         }

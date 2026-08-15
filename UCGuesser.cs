@@ -108,6 +108,11 @@ namespace UnknownsCollection {
         private static bool AuditorGuessable() =>
             Auditor.SpawnRate != null && Auditor.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
+        // Only the NECROMANCER himself is guessable - his thralls keep their original role
+        // everywhere, so a guess on a thrall resolves against that role, exactly as intended.
+        private static bool NecromancerGuessable() =>
+            Necromancer.SpawnRate != null && Necromancer.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
 
         // The Auditor watches every completed crew task go by, so he can read off who is racing
         // through their list - which is exactly how you spot the Snitch. Option 1608 therefore drops
@@ -140,6 +145,7 @@ namespace UnknownsCollection {
             SetEntry(Collector.CollectorInfo(), add && CollectorGuessable(), RoleInfo.crewmate);
             SetEntry(Hunter.HunterInfo(),     add && HunterGuessable(),     RoleInfo.crewmate);
             SetEntry(Pelican.PelicanInfo(),   add && PelicanGuessable(),    RoleInfo.crewmate);
+            SetEntry(Necromancer.NecromancerInfo(), add && NecromancerGuessable(), RoleInfo.crewmate);
             SyncSnitchHide(add);
         }
 

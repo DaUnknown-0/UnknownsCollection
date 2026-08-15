@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.0.1";
+    public const string PluginVersion = "1.2.1.1";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -81,6 +81,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte PlayerTuningRpcId = 213; // host tooling: per-player speed/cooldown/vent/tasks
     public const byte AuditorRpcId = 214;
     public const byte GamblerRpcId = 215;  // crew MODIFIER, no draft entry (rides on top of a role)
+    public const byte NecromancerRpcId = 216;  // neutral; raises corpses (Sub 0 set, Sub 1 raise)
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -260,6 +261,12 @@ public class UnknownsCollectionPlugin : BasePlugin
         // the stake: speed, own tasks, and at the top the impostors' kill cooldown.
         Gambler.CreateOptions();
         Gambler.TryPatch(harmony);
+
+        // The Necromancer (Neutral): raises fresh corpses into a silent army - thralls look alive,
+        // vote with weight zero, cannot guess; he wins when enough of "the living" are his. Dies he,
+        // dies the army. Mutually exclusive with the Poltergeist (option), see Necromancer.cs.
+        Necromancer.CreateOptions();
+        Necromancer.TryPatch(harmony);
 
         // Reactor music (Paket R) - not a role: a score for the reactor/seismic sabotage that is
         // written against the REAL ICriticalSabotage countdown, so the blast in its finale lands on

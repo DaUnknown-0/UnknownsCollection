@@ -71,6 +71,7 @@
         <EmbeddedResource Include="Resources\collector_collect.png" />
         <EmbeddedResource Include="Resources\gambler_bet.png" />
         <EmbeddedResource Include="Resources\manipulator_fake.png" />
+        <EmbeddedResource Include="Resources\necromancer_raise.png" />
         <EmbeddedResource Include="Resources\collector_pickup.ogg" />
         <EmbeddedResource Include="Resources\collector_win.ogg" />
         <EmbeddedResource Include="Resources\manipulator_warp.ogg" />

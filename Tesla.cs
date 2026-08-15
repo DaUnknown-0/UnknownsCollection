@@ -329,14 +329,23 @@ namespace UnknownsCollection {
                     case SubSetCharges: {
                         byte p = reader.ReadByte();
                         byte m = reader.ReadByte();
-                        ApplySetCharges(p, m);
+                        // Owner-authored (TeslaMeetingUI.Confirm) - a forged pair would let any client
+                        // arm HostCountdown() against a pair the real Tesla never charged (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(tesla, "Tesla.SetCharges")) ApplySetCharges(p, m);
                         break;
                     }
-                    case SubClear: ApplyClear(); break;
+                    case SubClear:
+                        // Owner-authored (or host fallback, e.g. HostCountdown/ForceImpostor's
+                        // PreClearUcResidues) - unauthenticated clears just no-op the charge, but the
+                        // sender check keeps the RPC consistent with its siblings (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(tesla, "Tesla.Clear")) ApplyClear();
+                        break;
                     case SubKillFx: {
                         byte p = reader.ReadByte();
                         byte m = reader.ReadByte();
-                        ApplyKillFx(p, m);
+                        // Host-only: only ever sent from TriggerDeath, itself only reachable from the
+                        // host-gated HostCountdown() (AUDIT-2026-08-15).
+                        if (UCRpc.RequireHost("Tesla.KillFx")) ApplyKillFx(p, m);
                         break;
                     }
                 }

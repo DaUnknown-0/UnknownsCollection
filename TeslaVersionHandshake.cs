@@ -33,8 +33,32 @@ namespace UnknownsCollection {
                 Assembly.GetExecutingAssembly().ManifestModule.ModuleVersionId.Equals(guid);
         }
 
+        // AUDIT-2026-08-15: EveryoneHasMod() used to go through BuildMismatchMessage(), which
+        // allocates a fresh allClients.ToArray() copy and formats localized strings for every
+        // client on every lobby frame (GameStartManagerUpdatePatch.Postfix runs each frame while a
+        // UC role is enabled), even though this caller only ever wants a yes/no answer. Walk
+        // allClients by index (no array copy) and bail out on the first mismatch. Must stay in
+        // lockstep with BuildMismatchMessage()'s mismatch cases: missing entry, older/newer 3-part
+        // version, mismatched module GUID.
         public static bool EveryoneHasMod() {
-            try { return BuildMismatchMessage() == ""; } catch { return false; }
+            try {
+                if (AmongUsClient.Instance == null) return true;
+                var localV = UnknownsCollectionPlugin.Version;
+                var local3 = new Version(localV.Major, localV.Minor, localV.Build);
+                var allClients = AmongUsClient.Instance.allClients;
+                if (allClients == null) return true;
+                for (int i = 0; i < allClients.Count; i++) {
+                    InnerNet.ClientData client = allClients[i];
+                    if (client == null || client.Character == null) continue;
+                    if (client.Id == AmongUsClient.Instance.ClientId) continue;
+                    if (client.Character == PlayerControl.LocalPlayer) continue;
+
+                    if (!playerVersions.TryGetValue(client.Id, out PlayerVersion pv)) return false;
+                    if (local3.CompareTo(pv.version) != 0) return false;
+                    if (!pv.GuidMatches()) return false;
+                }
+                return true;
+            } catch { return false; }
         }
 
         // True if any of the mod-gated Unknown's Collection roles is enabled. Used to scope the

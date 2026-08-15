@@ -309,7 +309,10 @@ namespace UnknownsCollection {
                     }
                     case SubRequest: {
                         byte entryId = reader.ReadByte();
-                        if (AmHost()) HostHandleRequest(entryId);
+                        // AUDIT-2026-08-15: AmHost() alone only picked the executor, not the sender - any
+                        // client could fire a real RpcSetTasks revert against the victim without the
+                        // Auditor ever having handled the minigame. Owner check added.
+                        if (AmHost() && UCRpc.RequireOwnerOrHost(auditor, "Auditor.Request")) HostHandleRequest(entryId);
                         break;
                     }
                     case SubLock: {

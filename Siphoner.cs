@@ -258,11 +258,25 @@ namespace UnknownsCollection {
                     case SubDrain: {
                         byte impostorId = reader.ReadByte();
                         float penalty = reader.ReadSingle();
-                        ApplyDrain(impostorId, penalty);
+                        // Host-only: the drain pulse comes from the host's own proximity detection
+                        // (AUDIT-2026-08-15). A forged one would let any client push back any Impostor's
+                        // kill timer at will.
+                        if (UCRpc.RequireHost("Siphoner.Drain")) ApplyDrain(impostorId, penalty);
                         break;
                     }
-                    case SubSabotageHold: ApplySabotageHold(reader.ReadSingle()); break;
-                    case SubToggleDrain: ApplyToggleDrain(reader.ReadBoolean()); break;
+                    case SubSabotageHold: {
+                        float seconds = reader.ReadSingle();
+                        // Host-only for the same reason as SubDrain (AUDIT-2026-08-15).
+                        if (UCRpc.RequireHost("Siphoner.SabotageHold")) ApplySabotageHold(seconds);
+                        break;
+                    }
+                    case SubToggleDrain: {
+                        bool on = reader.ReadBoolean();
+                        // Only the Siphoner itself (or the host) may toggle its own drain state
+                        // (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(siphoner, "Siphoner.ToggleDrain")) ApplyToggleDrain(on);
+                        break;
+                    }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Siphoner] HandleRpc failed: {e}");

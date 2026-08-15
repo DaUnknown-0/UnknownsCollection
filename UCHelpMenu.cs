@@ -79,6 +79,11 @@ namespace UnknownsCollection {
                 E("Copycat", Faction.Neutral, () => Copycat.Color, () => Copycat.SpawnRate, "uc.help.copycat"),
                 E("Collector", Faction.Neutral, () => Collector.Color, () => Collector.SpawnRate, "uc.help.collector"),
                 E("Pelican", Faction.Neutral, () => Pelican.Color, () => Pelican.SpawnRate, "uc.help.pelican"),
+                // AUDIT-2026-08-15: Necromancer was missing from the guide entirely despite being a
+                // spawnable Neutral role. "uc.help.necromancer" has no localization table entry yet;
+                // T()/TrIn() falls back to the raw key string rather than crashing, so this is safe
+                // to ship ahead of the localization pass (see concerns).
+                E("Necromancer", Faction.Neutral, () => Necromancer.Color, () => Necromancer.SpawnRate, "uc.help.necromancer"),
 
                 E("Poltergeist", Faction.Ghost, () => Poltergeist.Color, () => Poltergeist.SpawnRate, "uc.help.poltergeist"),
             };

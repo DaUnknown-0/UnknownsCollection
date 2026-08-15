@@ -137,7 +137,14 @@ namespace UnknownsCollection {
         // ---- Custom RPC subtypes: module byte 216 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = UnknownsCollectionPlugin.NecromancerRpcId;
         private const byte SubSetNecromancer = 0;  // playerId (255 = clear)
-        private const byte SubRaise = 1;           // thrallId
+        private const byte SubRaise = 1;           // thrallId (host -> everyone: confirmed raise)
+        // AUDIT-2026-08-15: the meeting-gate decision used to run per-client (ApplyRaise checked
+        // InMeeting() locally), so a raise could land on some clients and be dropped on others
+        // depending on RPC arrival order - same player alive here, dead there. SubRaiseRequest is
+        // the Necromancer's client asking the host to arbitrate; only the host's InMeeting() counts
+        // now, and SubRaise (above) then applies unconditionally everywhere (Saboteur's
+        // SubRequestKill/HostHandleRequestKill pattern).
+        private const byte SubRaiseRequest = 2;    // thrallId (Necromancer -> host: request only)
 
         private static readonly System.Random rnd = new System.Random();
 
@@ -236,6 +243,20 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Necromancer] SendSet failed: {e}"); }
         }
 
+        // Owner's channel completed -> ask the host to arbitrate (AUDIT-2026-08-15). Applies NOTHING
+        // locally anymore: the old code called ApplyRaise here too, so the Necromancer's own client
+        // basically always won the race against a differently-ordered SubRaise from someone else.
+        private static void SendRaiseRequest(byte thrallId) {
+            try {
+                var w = BeginRpc(SubRaiseRequest);
+                w.Write(thrallId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                HostHandleRaiseRequest(thrallId); // host==sender path; no-op for non-host (Saboteur pattern)
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Necromancer] SendRaiseRequest failed: {e}"); }
+        }
+
+        // Host -> everyone: the request passed validation, broadcast the confirmed raise (and apply
+        // it locally, since the host never gets its own RPC back).
         private static void SendRaise(byte thrallId) {
             try {
                 var w = BeginRpc(SubRaise);
@@ -243,6 +264,21 @@ namespace UnknownsCollection {
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 ApplyRaise(thrallId);
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Necromancer] SendRaise failed: {e}"); }
+        }
+
+        // Host-authoritative arbitration (AUDIT-2026-08-15): every plausibility check that used to
+        // live in ApplyRaise (chiefly InMeeting()) now runs exactly once, here, on the host's own
+        // view of the world - not once per client with whatever view each happened to have.
+        private static void HostHandleRaiseRequest(byte pid) {
+            if (!AmHost()) return;
+            if (!active) return;
+            if (InMeeting()) {
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Necromancer] raise request rejected (meeting on host).");
+                return;
+            }
+            var p = Helpers.playerById(pid);
+            if (p == null || p.Data == null) return;
+            SendRaise(pid);
         }
 
         private static void HandleModuleRpc(MessageReader reader) {
@@ -255,11 +291,22 @@ namespace UnknownsCollection {
                         if (UCRpc.RequireHost("Necromancer.SetNecromancer")) ApplySetNecromancer(id);
                         break;
                     }
-                    case SubRaise:
-                        // Sent by the Necromancer's client (the channel completes there), like every
-                        // UC role action. No host gate: the trust model is "everyone runs the mods".
-                        ApplyRaise(reader.ReadByte());
+                    case SubRaise: {
+                        byte pid = reader.ReadByte();
+                        // Host-confirmed raise (AUDIT-2026-08-15): the meeting gate already ran once,
+                        // host-side, in HostHandleRaiseRequest - every client just applies the same
+                        // outcome now, no more local InMeeting() re-check that could disagree.
+                        if (UCRpc.RequireHost("Necromancer.Raise")) ApplyRaise(pid);
                         break;
+                    }
+                    case SubRaiseRequest: {
+                        byte pid = reader.ReadByte();
+                        // Necromancer's client -> host request only (the channel still completes on
+                        // his client, but the host now decides whether it lands) (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(necromancer, "Necromancer.RaiseRequest"))
+                            HostHandleRaiseRequest(pid); // no-op unless we are the host
+                        break;
+                    }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Necromancer] HandleRpc failed: {e}");
@@ -276,17 +323,13 @@ namespace UnknownsCollection {
                 $"[Necromancer] The Necromancer is {necromancer.Data?.PlayerName}.");
         }
 
-        // Runs on EVERY client - the PlayerTuning revive pattern (Revive + living vanilla role from
-        // the ghost's faction + destroy the corpse + task recompute), plus the raise-specific parts:
-        // snap the thrall (owner client only) back onto their own corpse, and record the allegiance.
+        // Runs on EVERY client, only once the host has confirmed the raise via SubRaise (the meeting
+        // gate was already decided host-side in HostHandleRaiseRequest - AUDIT-2026-08-15) - the
+        // PlayerTuning revive pattern (Revive + living vanilla role from the ghost's faction +
+        // destroy the corpse + task recompute), plus the raise-specific parts: snap the thrall
+        // (owner client only) back onto their own corpse, and record the allegiance.
         private static void ApplyRaise(byte pid) {
             try {
-                // Report race: if the channel's completion crosses a meeting start, the meeting UI
-                // would show a dead player popping alive mid-vote - the raise is simply void.
-                if (InMeeting()) {
-                    UnknownsCollectionPlugin.Logger?.LogInfo("[Necromancer] raise ignored (meeting started).");
-                    return;
-                }
                 var p = Helpers.playerById(pid);
                 if (p == null || p.Data == null) return;
 
@@ -471,7 +514,7 @@ namespace UnknownsCollection {
                     else if (bodyGone && !blocked) Helpers.showFlash(new Color(0.35f, 0.55f, 1f, 0.3f), 0.2f);
                 } else if (progress >= 1f) {
                     channeling = false;
-                    SendRaise(channelTargetId);
+                    SendRaiseRequest(channelTargetId);
                     float cd = RaiseCooldown?.getFloat() ?? 20f;
                     if (raiseButton != null && cd > 0f) {
                         raiseButton.MaxTimer = cd;

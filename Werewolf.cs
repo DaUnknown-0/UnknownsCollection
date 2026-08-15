@@ -429,16 +429,21 @@ namespace UnknownsCollection {
                     case SubSetForm: {
                         bool wolf = reader.ReadByte() != 0;
                         float secs = reader.ReadSingle();
-                        ApplySetForm(wolf, secs);
+                        // Owner-authored: the werewolf's own client decides its transformation (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(werewolf, "Werewolf.SetForm")) ApplySetForm(wolf, secs);
                         break;
                     }
-                    case SubWound: ApplyWound(); break;
+                    case SubWound:
+                        // Owner-authored: only the wolf itself can report taking a wound (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(werewolf, "Werewolf.Wound")) ApplyWound();
+                        break;
                     // Paket W2: the Hunter's own subtype, dispatched here because it shares this module
                     // byte (see the file-header note above and Hunter.cs's own RPC section).
                     case Hunter.SubSetHunter: {
                         byte id = reader.ReadByte();
                         byte naturalGuesser = reader.ReadByte();
-                        Hunter.ApplySetHunter(id, naturalGuesser != 0);
+                        // Host-authoritative role assignment, same as SetWerewolf above (AUDIT-2026-08-15).
+                        if (UCRpc.RequireHost("Hunter.SetHunter")) Hunter.ApplySetHunter(id, naturalGuesser != 0);
                         break;
                     }
                 }

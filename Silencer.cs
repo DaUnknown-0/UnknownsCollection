@@ -55,6 +55,12 @@ namespace UnknownsCollection {
         public static PlayerControl silencer;
         public static bool active;
         public static int marksLeftThisRound;
+        // AUDIT-2026-08-15: server-side mirror of the budget above. marksLeftThisRound is only ever
+        // decremented in the local Silencer's button OnClick (client-trusted), so a forged SubSilence
+        // RPC could mark unlimited targets. This counter is incremented in ApplySilence itself (which
+        // runs on every client from the RPC, including the sender's own local apply) and is reset at
+        // every point marksLeftThisRound is reset, so it always reflects marks actually applied this round.
+        private static int marksAppliedThisRound;
         // Players muted for the CURRENT/NEXT meeting (set when marked, cleared at meeting end).
         public static readonly HashSet<byte> silencedIds = new();
 
@@ -168,10 +174,21 @@ namespace UnknownsCollection {
             if (active) UCPromotion.Claim(id);
             silencedIds.Clear();
             marksLeftThisRound = TargetsPerRoundValue();
+            marksAppliedThisRound = 0;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Silencer] The Silencer is {silencer.Data?.PlayerName}.");
         }
 
         private static void ApplySilence(byte targetId) {
+            // AUDIT-2026-08-15: enforce the "Targets Per Round" budget here too, not just in the
+            // button OnClick, so a forged/duplicated RPC can't mark more than the configured amount.
+            // A repeat mark for the same player is a no-op (already in silencedIds) rather than a
+            // second charge against the budget.
+            if (silencedIds.Contains(targetId)) return;
+            if (marksAppliedThisRound >= TargetsPerRoundValue()) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Silencer] Ignored silence for {targetId}: round budget already spent.");
+                return;
+            }
+            marksAppliedThisRound++;
             silencedIds.Add(targetId);
             // Quiet, private confirmation cue for the Silencer only - the mark otherwise had no
             // feedback besides the button's own cooldown reset (mirrors Maniac's plant-confirm cue).
@@ -197,7 +214,10 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Silencer.SetSilencer")) ApplySetSilencer(id); break; }
-                    case SubSilence: ApplySilence(reader.ReadByte()); break;
+                    case SubSilence: { byte id = reader.ReadByte();
+                        // AUDIT-2026-08-15: unlike SubSetSilencer above, this had no guard at all - any
+                        // client could mute any player. Only the Silencer (or the host) may mark a target.
+                        if (UCRpc.RequireOwnerOrHost(silencer, "Silencer.Silence")) ApplySilence(id); break; }
                     case SubClear: ApplyClearSilences(); break;
                 }
             } catch (Exception e) {
@@ -214,6 +234,7 @@ namespace UnknownsCollection {
                 silencer = null;
                 active = false;
                 marksLeftThisRound = 0;
+                marksAppliedThisRound = 0;
                 silencedIds.Clear();
                 currentTarget = null;
                 wasInMeeting = false;
@@ -265,6 +286,7 @@ namespace UnknownsCollection {
                     if (wasInMeeting && !nowMeeting) {
                         silencedIds.Clear();              // mute lasts exactly one meeting
                         marksLeftThisRound = TargetsPerRoundValue();
+                        marksAppliedThisRound = 0;
                         markerRevealStart.Clear();         // next meeting's reveals start fresh
                     }
                     // The mute becomes visible at meeting start - a "shh" tells the victim right away.

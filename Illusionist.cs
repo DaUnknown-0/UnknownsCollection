@@ -208,6 +208,9 @@ namespace UnknownsCollection {
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Illusionist.SetIllusionist")) ApplySetIllusionist(id); break; }
                     case SubSpawnClone: {
+                        // Owner-authored (AUDIT-2026-08-15): the payload is read in full regardless of the
+                        // guard, since this arrives chunked across several messages and a forged packet must
+                        // not desync the reader for the legitimate ones that follow it.
                         bool first = reader.ReadBoolean();
                         bool last = reader.ReadBoolean();
                         int count = reader.ReadInt32();
@@ -217,18 +220,27 @@ namespace UnknownsCollection {
                             rxVnt.Add(reader.ReadBoolean());
                         }
                         if (last) {
-                            IllusionistClone.Spawn(new List<Vector2>(rxPts), new List<bool>(rxVnt), SampleInterval);
+                            if (UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.SpawnClone"))
+                                IllusionistClone.Spawn(new List<Vector2>(rxPts), new List<bool>(rxVnt), SampleInterval);
                             rxPts.Clear(); rxVnt.Clear();
                         }
                         break;
                     }
                     case SubFlash:
-                        IllusionistClone.Flash(0.4f);
-                        // Sound is Illusionist-only: on non-Illusionist clients this is skipped, so the
-                        // block ping no longer leaks the clone-hit to bystanders. Flash stays public.
-                        if (IsLocalIllusionist()) UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position());
+                        // Owner-authored (AUDIT-2026-08-15): a forged flash is a minor visual/sound spoof, but
+                        // it stays gated to keep the module's threat model consistent with SpawnClone/Despawn.
+                        if (UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.Flash")) {
+                            IllusionistClone.Flash(0.4f);
+                            // Sound is Illusionist-only: on non-Illusionist clients this is skipped, so the
+                            // block ping no longer leaks the clone-hit to bystanders. Flash stays public.
+                            if (IsLocalIllusionist()) UCAssets.PlayIllusionistDenyAt(IllusionistClone.Position());
+                        }
                         break;
-                    case SubDespawn: IllusionistClone.DespawnWithFx(); break;
+                    case SubDespawn:
+                        // Owner-authored (AUDIT-2026-08-15): a forged Despawn at the moment of a kill attempt
+                        // would strip the role's shield mechanic out from under it - guard like SpawnClone.
+                        if (UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.Despawn")) IllusionistClone.DespawnWithFx();
+                        break;
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] HandleRpc failed: {e}");

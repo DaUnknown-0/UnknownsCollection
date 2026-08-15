@@ -307,9 +307,27 @@ namespace UnknownsCollection {
                         if (UCRpc.RequireHost("Pelican.SetPelican")) ApplySetPelican(id, variant);
                         break;
                     }
-                    case SubStartHunt: ApplyStartHunt(reader.ReadSingle()); break;
-                    case SubHuntSync: ApplyHuntSync(reader.ReadSingle()); break;
-                    case SubEndHunt: ApplyEndHunt(); break;
+                    case SubStartHunt: {
+                        float seconds = reader.ReadSingle();
+                        // Host-authoritative (HostTickHunt) - a forged one would restart the hunt
+                        // timer for everyone at will (AUDIT-2026-08-15).
+                        if (UCRpc.RequireHost("Pelican.StartHunt")) ApplyStartHunt(seconds);
+                        break;
+                    }
+                    case SubHuntSync: {
+                        float secondsRemaining = reader.ReadSingle();
+                        // Host-authoritative (HostTickHunt) - see SubStartHunt above (AUDIT-2026-08-15).
+                        if (UCRpc.RequireHost("Pelican.HuntSync")) ApplyHuntSync(secondsRemaining);
+                        break;
+                    }
+                    case SubEndHunt: {
+                        // Host-authoritative (HostTickHunt). ApplyEndHunt only bails out on
+                        // "!huntActive && huntEnded" - a forged one right after role draft would
+                        // latch huntEnded=true forever and disable EndGameGuardPatch for the whole
+                        // round (AUDIT-2026-08-15).
+                        if (UCRpc.RequireHost("Pelican.EndHunt")) ApplyEndHunt();
+                        break;
+                    }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] HandleRpc failed: {e}");

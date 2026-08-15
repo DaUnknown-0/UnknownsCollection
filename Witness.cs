@@ -248,9 +248,15 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Witness.SetWitness")) ApplySetWitness(id); break; }
-                    case SubWitnessed: { byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyWitnessed(k, v); break; }
-                    case SubReveal: { byte r = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyReveal(r, k, v); break; }
-                    case SubNote: { byte rc = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte(); ApplyNote(rc, k, v); break; }
+                    // All three below are sent exclusively from host-only AmHost gates (MurderPatch/ReportPatch/
+                    // MeetingStartPatch) - a forged sender could otherwise post an arbitrary public accusation
+                    // via SubReveal with a freely chosen reporter/killer/victim (AUDIT-2026-08-15).
+                    case SubWitnessed: { byte k = reader.ReadByte(); byte v = reader.ReadByte();
+                        if (UCRpc.RequireHost("Witness.Witnessed")) ApplyWitnessed(k, v); break; }
+                    case SubReveal: { byte r = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte();
+                        if (UCRpc.RequireHost("Witness.Reveal")) ApplyReveal(r, k, v); break; }
+                    case SubNote: { byte rc = reader.ReadByte(); byte k = reader.ReadByte(); byte v = reader.ReadByte();
+                        if (UCRpc.RequireHost("Witness.Note")) ApplyNote(rc, k, v); break; }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Witness] HandleRpc failed: {e}");

@@ -303,6 +303,10 @@ namespace UnknownsCollection {
 
         private static void ApplyUseAbility(Ability ability, byte targetId) {
             if (!active || copycat == null || !IsAlive(copycat)) return;
+            // AUDIT-2026-08-15: IsAbilityVisible's learnedAbilities check was client-side only (button
+            // visibility) - a forged RPC could still reach here and fire an ability the Copycat never
+            // learned. Mirror that gate here too, and leave quietly like every other guard in this file.
+            if (!learnedAbilities.Contains(ability)) return;
 
             switch (ability) {
                 case Ability.Camouflage: StartCamouflage(); break;
@@ -518,10 +522,18 @@ namespace UnknownsCollection {
                     case SubUseAbility: {
                         var ability = (Ability)reader.ReadByte();
                         byte targetId = reader.ReadByte();
-                        ApplyUseAbility(ability, targetId);
+                        // AUDIT-2026-08-15: was unguarded - any client could force any ability to fire.
+                        if (UCRpc.RequireOwnerOrHost(copycat, "Copycat.UseAbility"))
+                            ApplyUseAbility(ability, targetId);
                         break;
                     }
-                    case SubLearn: LearnAbility((Ability)reader.ReadByte()); break;
+                    case SubLearn: {
+                        var ability = (Ability)reader.ReadByte();
+                        // AUDIT-2026-08-15: was unguarded - any client could grant the Copycat any ability.
+                        if (UCRpc.RequireOwnerOrHost(copycat, "Copycat.Learn"))
+                            LearnAbility(ability);
+                        break;
+                    }
                     case SubShootMiss: ApplyShootMiss(); break;
                 }
             } catch (Exception e) {

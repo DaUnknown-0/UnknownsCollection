@@ -71,6 +71,11 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, (Kind kind, float until, int killerColor)> armedVictims = new();
         private static Kind windowKind = Kind.None;
         private static float windowUntil;
+        // AUDIT-2026-08-15: ArmWindow has no victim binding at all (SendExplode's blast-victim list
+        // is host-only, see Maniac.cs), so it captures WHICH Maniac scheduled the window here. SelectRaw
+        // uses it as a plausibility check instead of handing the cutscene to any kill in the timeframe.
+        private const byte NoManiacId = byte.MaxValue;
+        private static byte windowManiacId = NoManiacId;
         private static int lastArmedKillerColor = -1;   // set by SelectRaw when consuming an armed entry
 
         public static void ArmVictim(Kind kind, byte victimId, float ttl = 5f, int killerColor = -1) {
@@ -79,6 +84,7 @@ namespace UnknownsCollection {
         public static void ArmWindow(Kind kind, float ttl = 3f) {
             windowKind = kind;
             windowUntil = Time.time + ttl;
+            windowManiacId = Maniac.active && Maniac.maniac != null ? Maniac.maniac.PlayerId : NoManiacId;
         }
 
         static UCKillOverlay() {
@@ -126,10 +132,6 @@ namespace UnknownsCollection {
                     return armed.kind;
                 }
             }
-            if (windowKind != Kind.None) {
-                if (now <= windowUntil) return windowKind;
-                windowKind = Kind.None;
-            }
             // Shade: every murder BY the Shade gets the vanishing-body overlay.
             if (killer != null && victim != null && Shade.active && Shade.shade != null
                 && killer.PlayerId == Shade.shade.PlayerId && killer.PlayerId != victim.PlayerId)
@@ -147,6 +149,22 @@ namespace UnknownsCollection {
             // masked death falls back to vanilla exactly like the un-armed TOR ones.
             Kind wk = SelectWolfPack(killer, victim);
             if (wk != Kind.None) return wk;
+            // ManiacBomb: checked AFTER the identity-bound kinds above (AUDIT-2026-08-15) - a Shade/
+            // Wolf/Hunter/Pelican kill that happens to land inside the blast window must keep its own
+            // cutscene instead of being swallowed by the window. The window itself still has no victim
+            // binding (blast victims are host-only), so require the kill to at least LOOK like a blast
+            // death - every blast kill fires as a masked self-kill (RpcUncheckedMurder(vid, vid), see
+            // Maniac.cs) - and that the Maniac who armed the window is still the one actually in play.
+            if (windowKind != Kind.None) {
+                if (now <= windowUntil) {
+                    bool maskedSelfKill = killer != null && victim != null && killer.PlayerId == victim.PlayerId;
+                    bool maniacBehindIt = Maniac.active && Maniac.maniac != null
+                        && Maniac.maniac.PlayerId == windowManiacId;
+                    if (maskedSelfKill && maniacBehindIt) return windowKind;
+                } else {
+                    windowKind = Kind.None;
+                }
+            }
             // TOR meeting kills (Guesser) - identity check lives in UCKillOverlayTOR.cs.
             return SelectTorMeeting(killer, victim);
         }
@@ -258,13 +276,13 @@ namespace UnknownsCollection {
             if (root != null) {
                 // A meeting interrupts the show - except for sequences that (like the vanilla
                 // Guesser overlay) are MEANT to play on top of the meeting UI.
-                if (uiBlocked && !activePlaysInMeeting) { Clear(); return; }
+                if (uiBlocked && !activePlaysInMeeting) { EndActiveSequence(); return; }
                 float t = (Time.time - startTime) / duration;
-                if (t >= 1f) { Clear(); return; }
+                if (t >= 1f) { EndActiveSequence(); return; }
                 try { UpdateSeq(Mathf.Clamp01(t)); }
                 catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[UCKillOverlay] update failed: {e.Message}");
-                    Clear();
+                    EndActiveSequence();
                 }
                 return;
             }
@@ -279,11 +297,14 @@ namespace UnknownsCollection {
             try { Build(hud, next); }
             catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[UCKillOverlay] build failed: {e}");
-                Clear();
+                EndActiveSequence();
             }
         }
 
-        private static void Clear() {
+        // AUDIT-2026-08-15: teardown for the CURRENTLY PLAYING sequence only. Used by every Tick()
+        // exit path (sequence end, meeting abort, update/build failure) so a queued-but-not-yet-
+        // playing Pending and any armed victims survive - only the on-screen sequence is torn down.
+        private static void EndActiveSequence() {
             if (root != null) UnityEngine.Object.Destroy(root);
             root = null;
             activeKind = Kind.None;
@@ -292,8 +313,17 @@ namespace UnknownsCollection {
             dim = flash = propA = propB = propC = null;
             particles = null;
             extraFig = null;                 // TOR sequences (poster mini-fig etc.)
+        }
+
+        // Full round reset (UCFx.RegisterReset only) - also drops the queue and every armed
+        // context. Do NOT call this from the Tick() paths above: a Guesser sequence still playing
+        // in a meeting must not wipe an unrelated Poisoner death that armed itself moments earlier
+        // (AUDIT-2026-08-15).
+        private static void Clear() {
+            EndActiveSequence();
             armedVictims.Clear();
             windowKind = Kind.None;
+            windowManiacId = NoManiacId;
             pending.Clear();
         }
 

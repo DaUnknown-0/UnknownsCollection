@@ -74,10 +74,19 @@ namespace UnknownsCollection {
                 case SubManifestStart: {
                     byte template = reader.ReadByte();
                     float duration = reader.ReadSingle();
-                    ApplyStart(template, duration);
+                    // AUDIT-2026-08-15: owner-authored, dispatched from Poltergeist's default branch
+                    // without a guard - anyone could force-manifest the ghost as any template.
+                    if (UCRpc.RequireOwnerOrHost(Poltergeist.poltergeist, "Poltergeist.ManifestStart"))
+                        ApplyStart(template, duration);
                     break;
                 }
-                case SubManifestEnd: ApplyEnd(reader.ReadByte()); break;
+                case SubManifestEnd: {
+                    byte reason = reader.ReadByte();
+                    // AUDIT-2026-08-15: same gap as ManifestStart above.
+                    if (UCRpc.RequireOwnerOrHost(Poltergeist.poltergeist, "Poltergeist.ManifestEnd"))
+                        ApplyEnd(reason);
+                    break;
+                }
             }
         }
 

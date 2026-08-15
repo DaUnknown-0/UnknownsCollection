@@ -119,7 +119,16 @@ namespace UnknownsCollection {
         // Small radial-gradient texture: transparent centre, opaque toward the edges - a true vignette
         // rather than a flat full-screen tint (RawImage stretches this to fill the whole screen, so the
         // gradient reads correctly at any resolution).
+        // AUDIT-2026-08-15: cached and reused, same as PoltergeistFx.BuildVignetteSprite - EnsureVignette()
+        // rebuilds vignetteGo every round (HudManager is recreated each round), and without this cache it
+        // called BuildVignetteTex() again every time, leaking a new 64x64 RGBA32 Texture2D per round since
+        // the previous one was never destroyed. HideAndDontSave means the cached texture survives the
+        // scene change, so it stays valid across rounds and the Unity == null check below still catches
+        // an actually-destroyed texture correctly.
+        private static Texture2D vignetteTex;
+
         private static Texture2D BuildVignetteTex() {
+            if (vignetteTex != null) return vignetteTex;
             const int n = 64;
             var tex = new Texture2D(n, n, TextureFormat.RGBA32, false);
             float c = (n - 1) / 2f;
@@ -132,7 +141,8 @@ namespace UnknownsCollection {
                 }
             tex.Apply();
             tex.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
-            return tex;
+            vignetteTex = tex;
+            return vignetteTex;
         }
 
         // ---- status badge: self-only, lights up only while Lights sabotage is active AND local IS the Beacon ----

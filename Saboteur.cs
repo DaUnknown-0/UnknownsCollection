@@ -313,7 +313,10 @@ namespace UnknownsCollection {
                         byte victimId = reader.ReadByte();
                         float x = reader.ReadSingle();
                         float y = reader.ReadSingle();
-                        HostHandleRequestKill(victimId, x, y); // no-op unless we are the host
+                        // Victim -> host report ("I finished the sabotaged console"): only the named victim or
+                        // the host may trigger the kill, otherwise anyone could murder any player (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(Helpers.playerById(victimId), "Saboteur.RequestKill"))
+                            HostHandleRequestKill(victimId, x, y); // no-op unless we are the host
                         break;
                     }
                     case SubKillFx: ApplyKillFx(reader.ReadByte()); break;
@@ -321,16 +324,28 @@ namespace UnknownsCollection {
                         int id = reader.ReadInt32();
                         float x = reader.ReadSingle();
                         float y = reader.ReadSingle();
-                        SaboteurTrap.Place(id, x, y);
+                        // Owner-authored (the Saboteur places their own trap) - forging this lets anyone
+                        // plant traps anywhere for free (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(saboteur, "Saboteur.PlaceTrap"))
+                            SaboteurTrap.Place(id, x, y);
                         break;
                     }
                     case SubTriggerTrap: {
                         byte playerId = reader.ReadByte();
                         int id = reader.ReadInt32();
-                        SaboteurTrap.Trigger(playerId, id);
+                        // Same rule as SubRequestKill: only the caught player (or the host) may report a trigger,
+                        // the distance check only happens client-side in SaboteurTrap.Update() (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(Helpers.playerById(playerId), "Saboteur.TriggerTrap"))
+                            SaboteurTrap.Trigger(playerId, id);
                         break;
                     }
-                    case SubSelfLimp: SaboteurTrap.SetSelfLimping(reader.ReadByte() != 0); break;
+                    case SubSelfLimp: {
+                        bool on = reader.ReadByte() != 0;
+                        // Owner-authored (the Saboteur toggles their own limp) (AUDIT-2026-08-15).
+                        if (UCRpc.RequireOwnerOrHost(saboteur, "Saboteur.SelfLimp"))
+                            SaboteurTrap.SetSelfLimping(on);
+                        break;
+                    }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] HandleRpc failed: {e}");

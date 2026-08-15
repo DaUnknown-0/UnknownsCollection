@@ -208,6 +208,9 @@ namespace UnknownsCollection {
         }
 
         private static void ApplyPoisonDeath(byte targetId) {
+            // No poisoner ever spawned (or the round already reset) -> nothing to exile. Without this,
+            // a forged SubPoisonDeath could Exiled() anyone even with no Poisoner in play (AUDIT-2026-08-15).
+            if (!active) return;
             var target = Helpers.playerById(targetId);
             if (target != null && target.Data != null) {
                 // Apply the death LOCALLY only. SendPoisonDeath already broadcast SubPoisonDeath to every
@@ -239,10 +242,17 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Poisoner.SetPoisoner")) ApplySetPoisoner(id); break; }
-                    case SubMarkBody: ApplyMarkBody(reader.ReadByte()); break;
-                    case SubPoisonReporter: ApplyPoisonReporter(reader.ReadByte()); break;
-                    case SubAntidote: ApplyAntidote(reader.ReadByte()); break;
-                    case SubPoisonDeath: ApplyPoisonDeath(reader.ReadByte()); break;
+                    // All four remaining subtypes are host-only broadcasts (Send* gated behind AmHost in
+                    // MurderPatch/ReportPatch/MeetingClosePatch) - a forged sender could otherwise mark
+                    // bodies, arm/cure reporters or exile players at will (AUDIT-2026-08-15).
+                    case SubMarkBody: { byte id = reader.ReadByte();
+                        if (UCRpc.RequireHost("Poisoner.MarkBody")) ApplyMarkBody(id); break; }
+                    case SubPoisonReporter: { byte id = reader.ReadByte();
+                        if (UCRpc.RequireHost("Poisoner.PoisonReporter")) ApplyPoisonReporter(id); break; }
+                    case SubAntidote: { byte id = reader.ReadByte();
+                        if (UCRpc.RequireHost("Poisoner.Antidote")) ApplyAntidote(id); break; }
+                    case SubPoisonDeath: { byte id = reader.ReadByte();
+                        if (UCRpc.RequireHost("Poisoner.PoisonDeath")) ApplyPoisonDeath(id); break; }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] HandleRpc failed: {e}");

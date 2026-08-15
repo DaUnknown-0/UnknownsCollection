@@ -162,6 +162,10 @@ namespace UnknownsCollection {
                 if (persistTask.Exception != null) { hasError = true; break; }
                 yield return new WaitForEndOfFrame();
             }
+            // AUDIT-2026-08-15: Task.IsCompleted is also true for Faulted/Canceled, so a task that already
+            // failed by the very first check never enters the loop above and hasError stays false. Re-check
+            // after the loop so a write failure is never reported as a successful update.
+            if (!hasError && persistTask.IsFaulted) hasError = true;
             www.downloadHandler.Dispose(); www.Dispose();
 
             if (!hasError) {

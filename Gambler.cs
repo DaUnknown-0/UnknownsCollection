@@ -369,7 +369,31 @@ namespace UnknownsCollection {
         // ---- apply (every client) ----
         private static void ApplySetGambler(byte id) {
             var p = Helpers.playerById(id);
-            if (p == null) return;
+            if (p == null) {
+                // 255 (or a gone player) is the WITHDRAWAL. Role Control hands the modifier around
+                // mid-game, and like every UC overlay the modifier must clean its own effects up in
+                // its ApplySet (the ex-werewolf-kept-howling lesson): open bets die with the office,
+                // and the host lifts every still-running impostor cooldown effect - its expiry
+                // driver is gated on `active` and would otherwise never fire again.
+                if (gambler == null && !active) return;
+                gambler = null;
+                active = false;
+                bets.RemoveAll(b => !b.Settled);
+                betCooldownLeft = 0f;
+                if (AmHost()) {
+                    foreach (var kv in new List<KeyValuePair<byte, float>>(tuningUntil)) {
+                        tuningUntil.Remove(kv.Key);
+                        try { PlayerTuning.SendClear(kv.Key); } catch { }
+                    }
+                }
+                return;
+            }
+            // Carrier CHANGE (Role Control mid-game): the old gambler's open bets die with him,
+            // exactly like the death path - settling them would pay the wrong player.
+            if (gambler != null && gambler.PlayerId != p.PlayerId) {
+                bets.RemoveAll(b => !b.Settled);
+                betCooldownLeft = 0f;
+            }
             gambler = p;
             active = true;
             // The modifier rides on top of an existing role, so the generic promotion cue is the only
@@ -916,6 +940,9 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
+                    // A gambler forced by Role Control (set during role assignment, before the
+                    // intro ends) wins over the random pick - never overwrite him.
+                    if (active) return;
                     if (SpawnRate == null || SpawnRate.getSelection() <= 0) return;
                     if (!TeslaVersionHandshake.EveryoneHasMod()) return;
                     if (LobbyPlayerCount() < (SpawnMinPlayers?.getFloat() ?? 6f)) return;

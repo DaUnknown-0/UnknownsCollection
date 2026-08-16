@@ -4,7 +4,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using HarmonyLib;
 using UnityEngine;
 using TheOtherRoles;
@@ -143,12 +142,28 @@ namespace UnknownsCollection {
 
         // ---- Arbitration tick ----------------------------------------------------------
 
+        // AUDIT-2026-08-16: reused across ticks so the stale-cue sweep below never allocates a
+        // list on the frames where it finds nothing (or something) to release.
+        private static readonly List<string> staleScratch = new();
+
         private static void Tick() {
             float now = Time.time;
 
-            // Stale cues: owner stopped requesting without Release.
-            foreach (var stale in cues.Values.Where(c => now - c.lastRequest > StaleSecs).ToList())
-                Release(stale.id);
+            // AUDIT-2026-08-16: TickPatch.Postfix runs unconditionally off HudManager.Update, i.e.
+            // every frame of every round, even when no cue is active and none is fading out. Bail
+            // out before touching cues/LINQ in that (overwhelmingly common) case. fadingSource must
+            // still be checked even with an empty cues dict - a just-released cue keeps fading out
+            // for CrossfadeSecs after its entry is already gone.
+            if (cues.Count == 0 && fadingSource == null) return;
+
+            // Stale cues: owner stopped requesting without Release. Manual loop (no LINQ/closure) -
+            // collect ids into a reused scratch list first, then release; Release() mutates cues,
+            // so we can't remove while enumerating cues.Values directly.
+            staleScratch.Clear();
+            foreach (var kv in cues) {
+                if (now - kv.Value.lastRequest > StaleSecs) staleScratch.Add(kv.Key);
+            }
+            for (int i = 0; i < staleScratch.Count; i++) Release(staleScratch[i]);
 
             // Fade-out bookkeeping for the displaced source.
             if (fadingSource != null) {

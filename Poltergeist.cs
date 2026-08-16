@@ -70,6 +70,10 @@ namespace UnknownsCollection {
         // concerns it (own speed / own light), so purely visual clients still track state for FX.
         public static readonly Dictionary<byte, (int mode, float end)> hexes = new();
         public static bool handChanneling;
+        // Reusable scratch buffer for the per-frame expiry scan in HudUpdatePatch (AUDIT-2026-08-16):
+        // cleared and refilled every call instead of a fresh Where(...).ToList() allocation+closure
+        // each frame on every client. Pure buffer, no round state survives between calls - no reset needed.
+        private static readonly List<byte> expiredHexScratch = new();
 
         // ---- Runtime state (host only) ----
         private static bool armed;             // host rolled the spawn chance at intro
@@ -82,6 +86,8 @@ namespace UnknownsCollection {
 
         // Doors we slammed: doorId -> reopen time (every client runs the same timers from the RPC).
         private static readonly Dictionary<int, float> hauntedDoors = new();
+        // Same reuse pattern as expiredHexScratch above, for the haunted-door reopen scan.
+        private static readonly List<int> dueDoorScratch = new();
 
         public const int HexSpeed = 0;
         public const int HexBlind = 1;
@@ -106,6 +112,19 @@ namespace UnknownsCollection {
         private static TheOtherRoles.Objects.CustomButton doorButton;
         private static TheOtherRoles.Objects.CustomButton hexButton;
         private static TheOtherRoles.Objects.CustomButton handButton;
+
+        // Last-painted state for the three ghost button labels (AUDIT-2026-08-16): the rounded
+        // energy value often sits unchanged for seconds, so re-Tr()'ing (dictionary lookup +
+        // string.Format) all three labels every single frame is wasted work. Reset both at round
+        // reset and lobby change (below) - buttons are recreated with un-numbered base text at
+        // HudManager.Start, and labelsPainted=false forces the first real paint after that.
+        private static int lastLabelEnergy;
+        private static int lastLabelHexMode;
+        private static bool lastLabelHandChanneling;
+        private static bool labelsPainted;
+        // Time of the last repaint. Forces a refresh at least 4x/s so a mid-round language switch
+        // (UCLocalization polls every 0.5s) reaches these labels even while energy sits at its cap.
+        private static float lastLabelPaintAt;
 
         public static void CreateOptions() {
             try {
@@ -476,12 +495,29 @@ namespace UnknownsCollection {
             hexMode = HexSpeed;
             // Button statics deliberately kept: resetVariables runs AFTER HudManager.Start at round
             // start - nulling them orphans the live buttons (energy labels died; see Collector.cs).
+            // The label cache MUST reset here though: it runs after HudStartPatch created fresh button
+            // objects with un-numbered base text, so labelsPainted=false forces the first real paint
+            // onto them instead of the throttle mistaking "matches old cached value" for "already correct".
+            lastLabelEnergy = 0;
+            lastLabelHexMode = HexSpeed;
+            lastLabelHandChanneling = false;
+            labelsPainted = false;
+            lastLabelPaintAt = -1f;
             PoltergeistFx.Clear();
             PoltergeistManifest.Reset();
         }
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
+            public static void Postfix() { ResetAll(); }
+        }
+
+        // Lobby change (AUDIT-2026-08-16): this role previously had no OnGameJoined reset at all, so
+        // dictionary/cache state could in principle leak into a freshly joined lobby (the project's
+        // established resetVariables-lobby-leak class of bug). ResetAll() is idempotent and safe to run
+        // here - same pattern as Necromancer.cs's LobbyResetPatch calling FullReset().
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class LobbyResetPatch {
             public static void Postfix() { ResetAll(); }
         }
 
@@ -696,13 +732,22 @@ namespace UnknownsCollection {
                     // dissolve burst + chime at the target's position - the cast burst is public, so
                     // bookending it the same way (public, distance-gated) leaks nothing new.
                     if (hexes.Count > 0) {
-                        var expired = hexes.Where(kv => now >= kv.Value.end).ToList();
-                        foreach (var kv in expired) {
-                            hexes.Remove(kv.Key);
-                            var target = Helpers.playerById(kv.Key);
+                        // AUDIT-2026-08-16: no LINQ - Where(...).ToList() allocated a new list + closure
+                        // every frame on every client even when nothing was due. Scan into a reused
+                        // scratch buffer first (dictionaries can't be mutated while enumerated), then
+                        // remove/react in a second pass.
+                        expiredHexScratch.Clear();
+                        foreach (var kv in hexes) {
+                            if (now >= kv.Value.end) expiredHexScratch.Add(kv.Key);
+                        }
+                        for (int i = 0; i < expiredHexScratch.Count; i++) {
+                            byte id = expiredHexScratch[i];
+                            if (!hexes.TryGetValue(id, out var hex)) continue;
+                            hexes.Remove(id);
+                            var target = Helpers.playerById(id);
                             if (target != null) {
                                 Vector2 pos = target.GetTruePosition();
-                                PoltergeistFx.SpawnHexEndBurst(pos, kv.Value.mode);
+                                PoltergeistFx.SpawnHexEndBurst(pos, hex.mode);
                                 UCAssets.PlayPoltergeistHexEndAt(pos);
                             }
                         }
@@ -716,8 +761,13 @@ namespace UnknownsCollection {
 
                     // Haunted-door reopen (plain/mushroom doors; auto doors reopen themselves).
                     if (hauntedDoors.Count > 0 && ShipStatus.Instance != null && ShipStatus.Instance.AllDoors != null) {
-                        var due = hauntedDoors.Where(kv => now >= kv.Value).Select(kv => kv.Key).ToList();
-                        foreach (var id in due) {
+                        // AUDIT-2026-08-16: same reused-scratch-buffer fix as the hex expiry above.
+                        dueDoorScratch.Clear();
+                        foreach (var kv in hauntedDoors) {
+                            if (now >= kv.Value) dueDoorScratch.Add(kv.Key);
+                        }
+                        for (int i = 0; i < dueDoorScratch.Count; i++) {
+                            int id = dueDoorScratch[i];
                             hauntedDoors.Remove(id);
                             foreach (var d in ShipStatus.Instance.AllDoors) {
                                 if (d == null || d.Id != id || d.IsOpen) continue;
@@ -749,11 +799,30 @@ namespace UnknownsCollection {
                     // Dynamic button labels: current energy on every ghost button.
                     if (IsLocalPoltergeist()) {
                         int e = Mathf.FloorToInt(energy);
-                        if (doorButton != null) doorButton.buttonText = UCLocalization.Tr("uc.ui.poltergeist.button_door_energy", e);
-                        if (hexButton != null) hexButton.buttonText = UCLocalization.Tr("uc.ui.poltergeist.button_hex_energy", HexModeName(hexMode), e);
-                        if (handButton != null) handButton.buttonText = handChanneling
-                            ? UCLocalization.Tr("uc.ui.poltergeist.button_hand_holding", e)
-                            : UCLocalization.Tr("uc.ui.poltergeist.button_hand_energy", e);
+                        // AUDIT-2026-08-16: only re-Tr() (dict lookup + string.Format) the three labels
+                        // when the displayed state actually changed - the rounded energy value often
+                        // holds for seconds. Visible text is identical either way, just repainted less.
+                        //
+                        // The 0.25s fallback below is NOT redundant: UCLocalization polls for a language
+                        // change every 0.5s during a running round, and dynamic strings only pick that up
+                        // by calling Tr() again. Energy sits at its cap for minutes at a time, so a pure
+                        // state comparison would leave these three buttons in the OLD language for the
+                        // rest of the round after a live language switch. Repainting at least four times
+                        // a second costs nothing and keeps the visible behaviour identical.
+                        if (!labelsPainted || e != lastLabelEnergy || hexMode != lastLabelHexMode
+                            || handChanneling != lastLabelHandChanneling
+                            || Time.time - lastLabelPaintAt >= 0.25f) {
+                            if (doorButton != null) doorButton.buttonText = UCLocalization.Tr("uc.ui.poltergeist.button_door_energy", e);
+                            if (hexButton != null) hexButton.buttonText = UCLocalization.Tr("uc.ui.poltergeist.button_hex_energy", HexModeName(hexMode), e);
+                            if (handButton != null) handButton.buttonText = handChanneling
+                                ? UCLocalization.Tr("uc.ui.poltergeist.button_hand_holding", e)
+                                : UCLocalization.Tr("uc.ui.poltergeist.button_hand_energy", e);
+                            lastLabelEnergy = e;
+                            lastLabelHexMode = hexMode;
+                            lastLabelHandChanneling = handChanneling;
+                            lastLabelPaintAt = Time.time;
+                            labelsPainted = true;
+                        }
 
                         // Cycle the hex mode with the J key (shown in the label).
                         if (Input.GetKeyDown(KeyCode.J)) {

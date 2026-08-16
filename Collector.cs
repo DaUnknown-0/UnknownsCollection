@@ -583,7 +583,9 @@ namespace UnknownsCollection {
                                     collectButton.actionButtonRenderer.color = UnityEngine.Color.Lerp(
                                         Palette.EnabledColor, Color, Mathf.Clamp01(progress));
                             }
-                        } else if (collectButton != null) {
+                        } else if (collectButton != null && UCLabelThrottle.Due("collector.relics")) {
+                            // Throttled to 4x/s: Tr() plus string.Format plus the option getter ran
+                            // on every frame of the round for the Collector (AUDIT-2026-08-16).
                             collectButton.buttonText = UCLocalization.Tr("uc.ui.collector.button_relics_count", collected, NeededCount());
                         }
                     }

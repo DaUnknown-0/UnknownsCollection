@@ -174,6 +174,22 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 beacon = null;
                 active = false;
+                // AUDIT-2026-08-16: WantsFullVision's per-player neutral-role TTL cache holds
+                // round state (a PlayerId -> bool/timestamp mapping) and must not survive into
+                // the next round.
+                neutralCheckedAt.Clear();
+                neutralCache.Clear();
+            }
+        }
+
+        // AUDIT-2026-08-16: lobby-switch counterpart to ResetPatch above - without this, a stale
+        // neutral-role cache entry from the previous lobby's player roster could briefly answer
+        // for a reused PlayerId before its 0.5 s TTL naturally expires.
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class OnGameJoinedPatch {
+            public static void Postfix() {
+                neutralCheckedAt.Clear();
+                neutralCache.Clear();
             }
         }
 
@@ -205,6 +221,26 @@ namespace UnknownsCollection {
         // Was an own CalculateLightRadius postfix until 2026-08-11 (AUDIT-2026-08-11.md, M-5).
         // Covers both cases the old patch had: the Beacon itself, and nearby non-impostor,
         // non-neutral crewmates with an unobstructed line of sight to it.
+        // AUDIT-2026-08-16: per-player TTL cache for the neutral-role lookup, same trick as
+        // LocalGetsShare's cache above (getRoleInfoForPlayer allocates a list + ~12 LINQ .Any()
+        // calls with their own closures). WantsFullVision is called from the central vision
+        // pipeline (UCVision.cs:56) for every candidate crewmate every frame, so this is hot -
+        // unlike LocalGetsShare it isn't limited to the local player, hence keyed by PlayerId.
+        private static readonly Dictionary<byte, float> neutralCheckedAt = new();
+        private static readonly Dictionary<byte, bool> neutralCache = new();
+
+        private static bool IsNeutralCached(PlayerControl crew) {
+            byte id = crew.PlayerId;
+            float now = Time.time;
+            if (neutralCheckedAt.TryGetValue(id, out float t) && now - t <= 0.5f)
+                return neutralCache.TryGetValue(id, out bool cached) && cached;
+            var info = RoleInfo.getRoleInfoForPlayer(crew, false).FirstOrDefault();
+            bool isNeutral = info != null && info.isNeutral;
+            neutralCheckedAt[id] = now;
+            neutralCache[id] = isNeutral;
+            return isNeutral;
+        }
+
         public static bool WantsFullVision(NetworkedPlayerInfo p) {
             try {
                 if (!active || beacon == null || p == null || !IsAlive(beacon)) return false;
@@ -214,9 +250,7 @@ namespace UnknownsCollection {
                 if (crew == null) return false;
                 // TOR neutrals (Jackal, Jester, Arsonist, Vulture, ...) run on crewmate base roles too,
                 // so IsImpostor alone doesn't exclude them - mirrors Witness.cs's crew/neutral split.
-                var info = RoleInfo.getRoleInfoForPlayer(crew, false).FirstOrDefault();
-                bool isNeutral = info != null && info.isNeutral;
-                return !isNeutral && CanSeeBeacon(crew);
+                return !IsNeutralCached(crew) && CanSeeBeacon(crew);
             } catch { return false; }
         }
 

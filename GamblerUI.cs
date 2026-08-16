@@ -18,6 +18,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
@@ -306,10 +307,62 @@ namespace UnknownsCollection {
 
         // ---- HUD strip: open bets + last result ----
         private static TextMeshPro strip;
+
+        // AUDIT-2026-08-16: UpdateStrip() used to run unconditionally every HudManager.Update - a
+        // fresh StringBuilder, a UCLocalization.Tr() call and a Helpers.playerById() scan per open
+        // bet, for a text that only actually changes when a bet is placed/settled or the result
+        // banner appears/expires. The StringBuilder is now a reused static buffer (only Clear()'d,
+        // never reallocated), and the text itself only gets rebuilt when the bet list (count/id/
+        // settled-status) or the result banner (text or expiry) changed, or a short throttle elapses
+        // - the throttle alone is what lets the banner's Time.time-based expiry disappear promptly
+        // without a per-frame time comparison driving a full rebuild (see the file's general
+        // "time throttle over change detection" guidance).
+        private const float StripRebuildThrottle = 0.15f;
+        private static float nextStripRebuildTime;
+        private static bool stripDirty = true; // forces one unconditional rebuild after any reset
+        private static readonly StringBuilder stripSb = new StringBuilder(256);
+        private static readonly List<byte> cachedBetIds = new List<byte>();
+        private static readonly List<bool> cachedBetSettled = new List<bool>();
+        private static string cachedLastResultText;
+        private static float cachedLastResultUntil = -1f;
+
+        private static void ResetStripCache() {
+            stripDirty = true;
+            nextStripRebuildTime = 0f;
+            cachedBetIds.Clear();
+            cachedBetSettled.Clear();
+            cachedLastResultText = null;
+            cachedLastResultUntil = -1f;
+        }
+
+        // Cheap (id/settled only, no string work) comparison against the last rebuild's snapshot.
+        private static bool BetsSignatureDiffers() {
+            var bets = Gambler.Bets;
+            if (bets.Count != cachedBetIds.Count) return true;
+            for (int i = 0; i < bets.Count; i++) {
+                var b = bets[i];
+                byte id = b?.Id ?? byte.MaxValue;
+                bool settled = b != null && b.Settled;
+                if (id != cachedBetIds[i] || settled != cachedBetSettled[i]) return true;
+            }
+            return false;
+        }
+
+        private static void SyncBetsSnapshot() {
+            var bets = Gambler.Bets;
+            cachedBetIds.Clear();
+            cachedBetSettled.Clear();
+            for (int i = 0; i < bets.Count; i++) {
+                var b = bets[i];
+                cachedBetIds.Add(b?.Id ?? byte.MaxValue);
+                cachedBetSettled.Add(b != null && b.Settled);
+            }
+        }
+
         private static void UpdateStrip() {
             try {
                 if (!Gambler.IsLocalGambler()) {
-                    if (strip != null) { UnityEngine.Object.Destroy(strip.gameObject); strip = null; }
+                    if (strip != null) { UnityEngine.Object.Destroy(strip.gameObject); strip = null; ResetStripCache(); }
                     return;
                 }
                 var hud = HudManager.Instance;
@@ -317,22 +370,37 @@ namespace UnknownsCollection {
                 if (strip == null) {
                     strip = NewText(hud.transform, "", 1.1f, Color.white);
                     strip.transform.localPosition = new Vector3(-3.6f, 2.05f, -20f);
+                    stripDirty = true; // freshly (re)created label starts empty regardless of the cache
                 }
 
-                var sb = new System.Text.StringBuilder();
-                if (!string.IsNullOrEmpty(Gambler.lastResultText) && Time.time < Gambler.lastResultUntil)
-                    sb.Append(Gambler.lastResultText).Append('\n');
+                bool betsChanged = BetsSignatureDiffers();
+                bool resultChanged = Gambler.lastResultText != cachedLastResultText
+                                      || Gambler.lastResultUntil != cachedLastResultUntil;
+                bool dirty = stripDirty || betsChanged || resultChanged || Time.time >= nextStripRebuildTime;
+                if (!dirty) return;
 
-                foreach (var b in Gambler.Bets) {
-                    if (b.Settled) continue;
+                stripSb.Clear();
+                if (!string.IsNullOrEmpty(Gambler.lastResultText) && Time.time < Gambler.lastResultUntil)
+                    stripSb.Append(Gambler.lastResultText).Append('\n');
+
+                var bets = Gambler.Bets;
+                for (int i = 0; i < bets.Count; i++) {
+                    var b = bets[i];
+                    if (b == null || b.Settled) continue;
                     var def = Gambler.Def(b.Kind);
                     if (def == null) continue;
                     string target = b.Target == byte.MaxValue
                         ? "" : " " + (Helpers.playerById(b.Target)?.Data?.PlayerName ?? "?");
-                    sb.Append(UCLocalization.Tr("uc.gambler.ui.open_row", BetLabel(def) + target))
-                      .Append('\n');
+                    stripSb.Append(UCLocalization.Tr("uc.gambler.ui.open_row", BetLabel(def) + target))
+                           .Append('\n');
                 }
-                strip.text = sb.ToString();
+                strip.text = stripSb.ToString();
+
+                SyncBetsSnapshot();
+                cachedLastResultText = Gambler.lastResultText;
+                cachedLastResultUntil = Gambler.lastResultUntil;
+                nextStripRebuildTime = Time.time + StripRebuildThrottle;
+                stripDirty = false;
             } catch { }
         }
 
@@ -413,7 +481,17 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 Close();
                 if (strip != null) { try { UnityEngine.Object.Destroy(strip.gameObject); } catch { } strip = null; }
+                ResetStripCache();
             }
+        }
+
+        // Belt-and-suspenders round reset for the strip rebuild cache: Gambler.cs already clears
+        // Bets/lastResultText on its own resetVariables patch, but the (Id, Settled) signature alone
+        // could coincidentally match a stale cache across rounds if bet ids are reused from 0 - an
+        // explicit reset here removes that possibility instead of relying on it never happening.
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
+        static class StripCacheResetVariablesPatch {
+            public static void Postfix() { ResetStripCache(); }
         }
     }
 }

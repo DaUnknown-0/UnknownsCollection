@@ -129,6 +129,8 @@ namespace UnknownsCollection {
 
         private static void Receive(int major, int minor, int build, Guid guid, int clientId) {
             playerVersions[clientId] = new PlayerVersion(new Version(major, minor, build), guid);
+            // AUDIT-2026-08-16: marks PublishSnapshot()'s cache stale - see there.
+            playerVersionsDirty = true;
         }
 
         // Lists every connected client that lacks this mod or runs a different/modified build.
@@ -180,8 +182,20 @@ namespace UnknownsCollection {
         private const string HandshakeKeyPrefix = "TORMods.Handshake.";
         private const char StatusSep = '';
 
+        // AUDIT-2026-08-16: PublishSnapshot() used to run unconditionally every lobby frame on
+        // every client (called from GameStartManagerUpdatePatch.Postfix, which itself runs
+        // unconditionally before the host-only early return), building a fresh Dictionary<int,
+        // string> plus a string concat per player even though lobbies routinely sit open for
+        // minutes with nobody's version changing. Only rebuild + republish when playerVersions
+        // actually changed since the last publish. Starts true so the first lobby frame still
+        // publishes once (a solo lobby with an empty playerVersions dict still needs to register
+        // its presence in the cross-mod handshake board). Set back to true by Receive() (the only
+        // place that mutates playerVersions) and by the OnGameJoined reset below.
+        private static bool playerVersionsDirty = true;
+
         private static void PublishSnapshot() {
             try {
+                if (!playerVersionsDirty) return;
                 if (AmongUsClient.Instance == null) return;
                 var status = new Dictionary<int, string>();
                 // 3-part local version, same as BuildMismatchMessage: the handshake only transmits
@@ -203,6 +217,7 @@ namespace UnknownsCollection {
                 var reg = AppDomain.CurrentDomain.GetData(HandshakeRegistryKey) as string ?? "";
                 if (!reg.Split(',').Contains(guid))
                     AppDomain.CurrentDomain.SetData(HandshakeRegistryKey, reg == "" ? guid : reg + "," + guid);
+                playerVersionsDirty = false;
             } catch (Exception ex) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Handshake] snapshot publish failed: {ex.Message}");
             }
@@ -210,7 +225,14 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class OnGameJoinedPatch {
-            public static void Postfix() { playerVersions.Clear(); versionSent = false; }
+            public static void Postfix() {
+                playerVersions.Clear();
+                versionSent = false;
+                // AUDIT-2026-08-16: force one republish in the new lobby so the AppDomain-published
+                // snapshot doesn't keep showing the previous lobby's roster/versions until someone
+                // happens to re-send their handshake.
+                playerVersionsDirty = true;
+            }
         }
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnPlayerJoined))]

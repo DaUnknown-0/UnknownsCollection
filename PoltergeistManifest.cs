@@ -50,12 +50,19 @@ namespace UnknownsCollection {
 
         private static TheOtherRoles.Objects.CustomButton manifestButton;
 
+        // TTL cache for NearestLivingPlayer below (AUDIT-2026-08-16). See that method for details.
+        private static PlayerControl cachedNearestLivingPlayer;
+        private static float cachedNearestLivingPlayerExpiry;
+        private const float NearestLivingPlayerCacheTtl = 0.2f;
+
         public static void Reset() {
             IsManifested = false;
             templateId = byte.MaxValue;
             selectedTemplateId = byte.MaxValue;
             lookApplied = false;
             endTime = 0;
+            cachedNearestLivingPlayer = null;
+            cachedNearestLivingPlayerExpiry = 0f;
             // manifestButton deliberately kept (resetVariables runs after HudManager.Start).
         }
 
@@ -289,15 +296,21 @@ namespace UnknownsCollection {
         public static void PollTemplateSelection() {
             try {
                 if (!Poltergeist.IsLocalPoltergeist() || IsManifested) return;
+                bool cycled = false;
                 if (Input.GetKeyDown(KeyCode.K)) {
                     var living = PlayerControl.AllPlayerControls.ToArray()
                         .Where(IsValidTemplate).OrderBy(p => p.PlayerId).ToList();
                     if (living.Count > 0) {
                         int idx = living.FindIndex(p => p.PlayerId == selectedTemplateId);
                         selectedTemplateId = living[(idx + 1) % living.Count].PlayerId;
+                        cycled = true;
                     }
                 }
-                if (manifestButton != null) {
+                // Throttled to 4x/s: CurrentTemplate() walks the player list and the caption goes
+                // through Tr() + string.Format, both of which ran every frame (AUDIT-2026-08-16).
+                // A K press bypasses the gate: cycling the target must show up on the very next
+                // frame, a quarter second of lag on a key you just pressed is very much visible.
+                if (manifestButton != null && (cycled || UCLabelThrottle.Due("poltergeist.manifest"))) {
                     var t = CurrentTemplate();
                     manifestButton.buttonText = t != null && t.Data != null
                         ? UCLocalization.Tr("uc.ui.poltergeist.button_manifest_as", t.Data.PlayerName)
@@ -306,17 +319,41 @@ namespace UnknownsCollection {
             } catch { }
         }
 
+        // AUDIT-2026-08-16: called from CurrentTemplate() (always with maxDist = float.MaxValue in this
+        // file), which itself is polled every Tick via PollTemplateSelection() just to keep the manifest
+        // button label current - the O(n) distance scan used to run every single frame the Poltergeist
+        // has no valid selected template (the common case, default is byte.MaxValue and can persist for
+        // a long time). Two independent fixes: no ToArray() copy - index straight into the Il2Cpp list
+        // (no LINQ, no GetFastEnumerator - see project rules); and a short TTL cache so the scan itself
+        // only runs a few times a second instead of every frame.
+        //
+        // Staleness is bounded and safe: a cached pick is re-validated with the cheap IsValidTemplate
+        // check on every call (not just re-used blindly), so a template that died/disconnected/left
+        // within the TTL window is rejected immediately and triggers a fresh scan - it can never be
+        // handed to ApplyStart() (which has no IsDead check of its own) as manifest target.
         private static PlayerControl NearestLivingPlayer(float maxDist) {
             if (PlayerControl.LocalPlayer == null) return null;
+            if (Time.time < cachedNearestLivingPlayerExpiry && IsValidTemplate(cachedNearestLivingPlayer)) {
+                // maxDist isn't part of the cache key: this file only ever calls with float.MaxValue,
+                // so a cached pick already satisfies any maxDist requested here.
+                return cachedNearestLivingPlayer;
+            }
+
             Vector2 pos = PlayerControl.LocalPlayer.GetTruePosition();
             PlayerControl best = null;
             float bestD = maxDist;
-            foreach (var p in PlayerControl.AllPlayerControls.ToArray()) {
-                if (p == null || p.Data == null || p.Data.IsDead || p.Data.Disconnected) continue;
-                if (p.PlayerId == PlayerControl.LocalPlayer.PlayerId) continue;
-                float d = Vector2.Distance(pos, p.GetTruePosition());
-                if (d < bestD) { bestD = d; best = p; }
+            var all = PlayerControl.AllPlayerControls;
+            if (all != null) {
+                for (int i = 0; i < all.Count; i++) {
+                    var p = all[i];
+                    if (p == null || p.Data == null || p.Data.IsDead || p.Data.Disconnected) continue;
+                    if (p.PlayerId == PlayerControl.LocalPlayer.PlayerId) continue;
+                    float d = Vector2.Distance(pos, p.GetTruePosition());
+                    if (d < bestD) { bestD = d; best = p; }
+                }
             }
+            cachedNearestLivingPlayer = best;
+            cachedNearestLivingPlayerExpiry = Time.time + NearestLivingPlayerCacheTtl;
             return best;
         }
 

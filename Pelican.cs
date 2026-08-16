@@ -120,6 +120,14 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, DeadBody> swallowedBodies = new();
         // victimId in swallow order - drives the belly readout and survives a body that never spawned.
         private static readonly List<byte> swallowed = new();
+        // AUDIT-2026-08-16: bumped every time `swallowed` actually changes (swallow/release/digest).
+        // TickHud compares against swallowedNamesCacheVersion so it only rewalks the list and resolves
+        // names again on frames where the belly contents moved, instead of on every single frame.
+        private static int swallowedVersion;
+        // Reused belly-name buffer (avoids a fresh List<string> allocation every frame) plus the
+        // swallowedVersion it was last built from.
+        private static readonly List<string> swallowedNamesCache = new();
+        private static int swallowedNamesCacheVersion = -1;
         // Victims whose DeadBody was not found in the murder postfix yet (retried for a few frames).
         private static readonly List<byte> pendingHide = new();
         private static float pendingHideUntil;
@@ -399,6 +407,12 @@ namespace UnknownsCollection {
         private static void ClearRoundState() {
             swallowedBodies.Clear();
             swallowed.Clear();
+            // AUDIT-2026-08-16: reset the belly-name throttle cache too, or a leftover version number
+            // from the previous round could match this round's fresh swallowedVersion=0 and leave the
+            // belly HUD showing stale (or, worse, blank-after-recreation) names.
+            swallowedVersion = 0;
+            swallowedNamesCache.Clear();
+            swallowedNamesCacheVersion = -1;
             pendingHide.Clear();
             pendingHideUntil = 0f;
             huntActive = false;
@@ -418,6 +432,9 @@ namespace UnknownsCollection {
         private static void ClearState() {
             try { UCMusic.Release(MusicCue); } catch { }
             try { PelicanHud.HideAll(); } catch { }
+            // AUDIT-2026-08-16: PelicanHud keeps its own "last shown" throttle caches; clear them here
+            // so a stale value from the previous round can't suppress the next round's first update.
+            try { PelicanHud.ResetState(); } catch { }
             ForceLeaveBelly();
             pelican = null;
             active = false;
@@ -728,12 +745,18 @@ namespace UnknownsCollection {
             // Self-only readout, re-gated every frame (never "created once for the Pelican and then
             // left alone"): a stale belly overlay would tell a spectating client who is dead.
             if (IsLocalPelican() && !InMeeting() && IsAlive(pelican)) {
-                var names = new List<string>(swallowed.Count);
-                foreach (var id in swallowed) {
-                    var p = Helpers.playerById(id);
-                    names.Add(p?.Data?.PlayerName ?? id.ToString());
+                // AUDIT-2026-08-16: the swallowed set changes rarely (a swallow, a release, a
+                // digestion), so only walk it and resolve names again when swallowedVersion moved
+                // since the last build - not on every one of the ~60 frames/second this runs on.
+                if (swallowedNamesCacheVersion != swallowedVersion) {
+                    swallowedNamesCacheVersion = swallowedVersion;
+                    swallowedNamesCache.Clear();
+                    foreach (var id in swallowed) {
+                        var p = Helpers.playerById(id);
+                        swallowedNamesCache.Add(p?.Data?.PlayerName ?? id.ToString());
+                    }
                 }
-                PelicanHud.ShowBelly(names);
+                PelicanHud.ShowBelly(swallowedNamesCache, swallowedVersion);
             } else {
                 PelicanHud.HideBelly();
             }
@@ -837,7 +860,10 @@ namespace UnknownsCollection {
                     if (__instance.PlayerId != pelican.PlayerId) return;
 
                     // Runs on every client from identical inputs, so the swallow list needs no RPC.
-                    if (!swallowed.Contains(target.PlayerId)) swallowed.Add(target.PlayerId);
+                    if (!swallowed.Contains(target.PlayerId)) {
+                        swallowed.Add(target.PlayerId);
+                        swallowedVersion++; // AUDIT-2026-08-16: invalidate the belly-name cache
+                    }
                     if (!HideBodyOf(target.PlayerId)) {
                         pendingHide.Add(target.PlayerId);
                         pendingHideUntil = Time.time + 0.5f;
@@ -906,6 +932,7 @@ namespace UnknownsCollection {
             int released = ids.Count;
             swallowedBodies.Clear();
             swallowed.Clear();
+            if (released > 0) swallowedVersion++; // AUDIT-2026-08-16: invalidate the belly-name cache
             pendingHide.Clear();
             PelicanHud.HideBelly();
             if (released > 0) {
@@ -1010,8 +1037,10 @@ namespace UnknownsCollection {
                     }
                     foreach (var kvp in swallowedBodies)
                         if (kvp.Value != null) UnityEngine.Object.Destroy(kvp.Value.gameObject);
-                    if (swallowed.Count > 0)
+                    if (swallowed.Count > 0) {
                         UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] Digested {swallowed.Count} victim(s).");
+                        swallowedVersion++; // AUDIT-2026-08-16: invalidate the belly-name cache
+                    }
                     swallowedBodies.Clear();
                     swallowed.Clear();
                     pendingHide.Clear();

@@ -873,17 +873,25 @@ namespace UnknownsCollection {
             if (icon != null && transformButton.Sprite != icon
                 && !IsFrameOf(transformButton.Sprite, wolfForm)) transformButton.Sprite = icon;
             // CustomButton re-applies buttonText every Update (Objects/CustomButton.cs:236), so the
-            // label can simply be swapped here instead of rebuilding the button.
-            string label = UCLocalization.Tr(
-                wolfForm ? "uc.ui.werewolf.button_revert" : "uc.ui.werewolf.button_transform");
-            if (wolfForm) {
-                // How much wolf time is left. It cannot go on the cooldown ring: CustomButton only
-                // fires onClick while Timer < 0, so a running timer there would lock the werewolf into
-                // its form. The label is the one place that shows a number without disabling the button.
-                int left = Mathf.CeilToInt(Mathf.Max(0f, formEndTime - Time.time));
-                label += $" ({left}s)";
+            // label can simply be swapped here instead of rebuilding the button - and for the same
+            // reason it is safe to rebuild it only 4x/s: CustomButton keeps pushing the last value
+            // we stored, so the caption stays on screen between our repaints (AUDIT-2026-08-16).
+            // The wolf countdown shows whole seconds, so 4x/s is more than it can even display.
+            // The key carries the form, so flipping between wolf and human repaints on the very next
+            // frame instead of waiting out the interval - that switch is a direct reaction to the
+            // player's own click and has to look instant.
+            if (UCLabelThrottle.Due(wolfForm ? "werewolf.label.wolf" : "werewolf.label.human")) {
+                string label = UCLocalization.Tr(
+                    wolfForm ? "uc.ui.werewolf.button_revert" : "uc.ui.werewolf.button_transform");
+                if (wolfForm) {
+                    // How much wolf time is left. It cannot go on the cooldown ring: CustomButton only
+                    // fires onClick while Timer < 0, so a running timer there would lock the werewolf into
+                    // its form. The label is the one place that shows a number without disabling the button.
+                    int left = Mathf.CeilToInt(Mathf.Max(0f, formEndTime - Time.time));
+                    label += $" ({left}s)";
+                }
+                transformButton.buttonText = label;
             }
-            transformButton.buttonText = label;
 
             if (wolfForm) {
                 // Reverting is always allowed - no cooldown ring, the button must be clickable

@@ -417,13 +417,32 @@ namespace UnknownsCollection {
         // ---- Raise button + channel (Collector pattern: move cancels, meeting cancels) ----
         private const float RaiseRange = 2.0f;
 
+        // AUDIT-2026-08-16: CouldUse() calls NearestFreshBody() every frame the button exists (see
+        // CustomButton.Update), and the button exists for the whole round even when not channeling.
+        // FindObjectsOfType<DeadBody>() is a full scene scan, so that ran essentially every frame.
+        // Cache the scan result for a short TTL (same pattern as Saboteur.GetConsoles, but time-based
+        // here since DeadBody instances actually appear/disappear during the round - a report or
+        // cleanup can destroy one at any time). 0.2s is well under human reaction time for "corpse just
+        // became raisable", so the button's felt responsiveness is unaffected.
+        private static DeadBody[] deadBodyCache;
+        private static float deadBodyCacheAt = -999f;
+        private const float DeadBodyCacheTTL = 0.2f;
+
+        private static DeadBody[] GetDeadBodies() {
+            if (deadBodyCache == null || Time.time - deadBodyCacheAt >= DeadBodyCacheTTL) {
+                deadBodyCache = UnityEngine.Object.FindObjectsOfType<DeadBody>();
+                deadBodyCacheAt = Time.time;
+            }
+            return deadBodyCache ?? System.Array.Empty<DeadBody>();
+        }
+
         private static DeadBody NearestFreshBody(Vector2 from, float range) {
             DeadBody best = null;
             float bestD = range;
             float window = Freshness?.getFloat() ?? 60f;
             try {
-                foreach (var db in UnityEngine.Object.FindObjectsOfType<DeadBody>()) {
-                    if (db == null) continue;
+                foreach (var db in GetDeadBodies()) {
+                    if (db == null) continue;   // entry may be a since-removed (reported/cleaned) body
                     if (!deathAt.TryGetValue(db.ParentId, out float t0)) continue;
                     if (Time.time - t0 > window) continue;   // gone cold
                     float d = Vector2.Distance(from, (Vector2)db.TruePosition);
@@ -502,7 +521,12 @@ namespace UnknownsCollection {
                 bool moved = Vector2.Distance(PlayerControl.LocalPlayer.GetTruePosition(), channelStartPos) > 0.5f;
                 bool bodyGone = true;
                 try {
-                    foreach (var db in UnityEngine.Object.FindObjectsOfType<DeadBody>())
+                    // Uses the shared 0.2s cache, not a raw scene scan: ChannelTick runs BEFORE the
+                    // 0.5s throttle in HudUpdatePatch, so this is a per-frame path for the whole
+                    // channel. The cache was added for NearestFreshBody on 2026-08-16 and this second
+                    // call site was missed then. Destroyed bodies still read as null, which the
+                    // existing check below already handles.
+                    foreach (var db in GetDeadBodies())
                         if (db != null && db.ParentId == channelTargetId) { bodyGone = false; break; }
                 } catch { }
                 bool blocked = InMeeting() || PlayerControl.LocalPlayer.Data.IsDead;
@@ -526,7 +550,9 @@ namespace UnknownsCollection {
                         raiseButton.actionButtonRenderer.color = UnityEngine.Color.Lerp(
                             Palette.EnabledColor, Color, Mathf.Clamp01(progress));
                 }
-            } else if (raiseButton != null) {
+            } else if (raiseButton != null && UCLabelThrottle.Due("necromancer.army")) {
+                // Throttled: the count itself is the expensive part (a playerById scan per thrall),
+                // so the gate has to sit in front of it, not around the assignment (AUDIT-2026-08-16).
                 int alive = thralls.Count(id => IsAlive(Helpers.playerById(id)));
                 raiseButton.buttonText = UCLocalization.Tr("uc.ui.necromancer.button_army_count", alive);
             }
@@ -804,6 +830,8 @@ namespace UnknownsCollection {
             nextWinTry = 0f;
             winCheckUntil = 0f;
             exileWasActive = false;
+            deadBodyCache = null;
+            deadBodyCacheAt = -999f;
             // raiseButton deliberately NOT nulled (the resetVariables button-timing rule).
             // winnerIds deliberately survives resetVariables (read after reset at game end).
         }

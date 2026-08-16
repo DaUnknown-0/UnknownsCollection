@@ -20,6 +20,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using System.Text;
 using HarmonyLib;
 using UnityEngine;
@@ -37,6 +38,36 @@ namespace UnknownsCollection {
         private static TMPro.TextMeshPro panel;
         private static TMPro.TextMeshPro notice;
         private static float noticeUntil;
+
+        // ---- AUDIT-2026-08-16: panel rebuild cache ----
+        // BuildPanel() used to run unconditionally every HudManager.Update - a fresh StringBuilder,
+        // one Il2Cpp AppendTaskText() call per queued task plus two Replace()+Trim(), for a text that
+        // in practice changes maybe a few times a second. We now only rebuild when something that
+        // actually shows up in the text changed (queue membership/lock state, revertCount, overflow
+        // warning), OR a short throttle elapses - the throttle alone re-renders the per-second
+        // countdown ("36s" -> "35s") and the overflow warning's time-based fade-out closely enough
+        // that neither is perceptible (see the file's general "time throttle over change detection"
+        // guidance). TaskLine() results are cached per queue-entry id so an unrelated rebuild (e.g.
+        // only the countdown ticking) never re-runs the Il2Cpp interop call for tasks that are still
+        // sitting in the queue unchanged.
+        private const float PanelRebuildThrottle = 0.15f;
+        private static float nextPanelRebuildTime;
+        private static bool panelDirty = true; // forces one unconditional rebuild after any reset
+        private static int cachedRevertCount = -1;
+        private static bool cachedOverflowActive;
+        private static readonly List<byte> cachedEntryIds = new List<byte>();
+        private static readonly List<bool> cachedEntryLocked = new List<bool>();
+        private static readonly Dictionary<byte, string> taskLineCache = new Dictionary<byte, string>();
+
+        private static void ResetHudCache() {
+            panelDirty = true;
+            nextPanelRebuildTime = 0f;
+            cachedRevertCount = -1;
+            cachedOverflowActive = false;
+            cachedEntryIds.Clear();
+            cachedEntryLocked.Clear();
+            taskLineCache.Clear();
+        }
 
         // ---- victim notice ----
         public static void ShowVictimNotice() {
@@ -83,7 +114,7 @@ namespace UnknownsCollection {
         // Full localized task line ("Electrical: Fix Wiring (1/3)") straight from the task object -
         // vanilla builds exactly this string for the task list, so it is translated and includes the
         // room and the step counter for free. Falls back to the raw enum name if anything goes wrong.
-        private static string TaskLine(NormalPlayerTask task) {
+        private static string ComputeTaskLine(NormalPlayerTask task) {
             try {
                 if (task == null) return "?";
                 var sb = new Il2CppSystem.Text.StringBuilder();
@@ -94,6 +125,20 @@ namespace UnknownsCollection {
             } catch {
                 try { return task.TaskType.ToString(); } catch { return "?"; }
             }
+        }
+
+        // AUDIT-2026-08-16: cache the (expensive, Il2Cpp-interop-backed) task line per queue-entry id
+        // so a panel rebuild triggered by something else (revertCount, overflow, the countdown
+        // throttle) does not redo AppendTaskText() for tasks whose text has not actually changed.
+        // Entry ids are only reused after a full queue-membership change, at which point the caller
+        // clears this cache wholesale (see the idsChanged check in HudUpdatePatch), so a stale value
+        // can never survive to be read back for a different entry.
+        private static string CachedTaskLine(Auditor.Entry e) {
+            if (e == null) return "?";
+            if (taskLineCache.TryGetValue(e.id, out var cached)) return cached;
+            string line = ComputeTaskLine(e.localTask);
+            taskLineCache[e.id] = line;
+            return line;
         }
 
         private static void BuildPanel(StringBuilder sb) {
@@ -108,7 +153,7 @@ namespace UnknownsCollection {
             } else {
                 for (int i = 0; i < queue.Count; i++) {
                     var e = queue[i];
-                    sb.Append('\n').Append('[').Append(i + 1).Append("] ").Append(TaskLine(e.localTask));
+                    sb.Append('\n').Append('[').Append(i + 1).Append("] ").Append(CachedTaskLine(e));
                     if (Auditor.ShowsCompleterName()) {
                         var victim = Helpers.playerById(e.victim);
                         if (victim != null && victim.Data != null)
@@ -124,6 +169,39 @@ namespace UnknownsCollection {
 
             if (Time.time - Auditor.lastOverflow < OverflowWarnSeconds && Auditor.lastOverflow > 0f)
                 sb.Append('\n').Append(Helpers.cs(WarnColor, UCLocalization.Tr("uc.ui.auditor.queue_full")));
+        }
+
+        private static bool OverflowWarnActive() =>
+            Auditor.lastOverflow > 0f && Time.time - Auditor.lastOverflow < OverflowWarnSeconds;
+
+        // Cheap (id/locked only, no string work) comparison against the last rebuild's snapshot.
+        // idsChanged also covers the queue count changing. lockedChanged is reported separately since
+        // a lock toggle changes the panel text (countdown vs "HOLD") but not the cached TaskLine.
+        private static bool QueueSnapshotDiffers(out bool idsChanged) {
+            var queue = Auditor.Queue;
+            idsChanged = queue.Count != cachedEntryIds.Count;
+            bool lockedChanged = false;
+            if (!idsChanged) {
+                for (int i = 0; i < queue.Count; i++) {
+                    var e = queue[i];
+                    byte id = e?.id ?? byte.MaxValue;
+                    bool locked = e != null && e.locked;
+                    if (id != cachedEntryIds[i]) idsChanged = true;
+                    if (locked != cachedEntryLocked[i]) lockedChanged = true;
+                }
+            }
+            return idsChanged || lockedChanged;
+        }
+
+        private static void SyncQueueSnapshot() {
+            var queue = Auditor.Queue;
+            cachedEntryIds.Clear();
+            cachedEntryLocked.Clear();
+            for (int i = 0; i < queue.Count; i++) {
+                var e = queue[i];
+                cachedEntryIds.Add(e?.id ?? byte.MaxValue);
+                cachedEntryLocked.Add(e != null && e.locked);
+            }
         }
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
@@ -149,9 +227,29 @@ namespace UnknownsCollection {
                     if (panel == null) return;
                     if (!panel.gameObject.activeSelf) panel.gameObject.SetActive(true);
 
-                    sb.Clear();
-                    BuildPanel(sb);
-                    panel.text = sb.ToString();
+                    // AUDIT-2026-08-16: only rebuild the text when something visible could have
+                    // changed since the last rebuild, or when the throttle window has elapsed (that
+                    // last part is what keeps the per-second countdown and the overflow warning's
+                    // fade-out moving without a full change-detector for either).
+                    bool queueChanged = QueueSnapshotDiffers(out bool idsChanged);
+                    if (idsChanged) taskLineCache.Clear();
+                    bool overflowActive = OverflowWarnActive();
+                    bool dirty = panelDirty || queueChanged
+                                 || Auditor.revertCount != cachedRevertCount
+                                 || overflowActive != cachedOverflowActive
+                                 || Time.time >= nextPanelRebuildTime;
+
+                    if (dirty) {
+                        sb.Clear();
+                        BuildPanel(sb);
+                        panel.text = sb.ToString();
+
+                        SyncQueueSnapshot();
+                        cachedRevertCount = Auditor.revertCount;
+                        cachedOverflowActive = overflowActive;
+                        nextPanelRebuildTime = Time.time + PanelRebuildThrottle;
+                        panelDirty = false;
+                    }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[AuditorHud] update failed: {e}");
                 }
@@ -159,10 +257,31 @@ namespace UnknownsCollection {
         }
 
         // The labels live under HudManager and die with it; the references must not outlive the scene.
+        // This already fires once per round (before resetVariables, see the
+        // resetVariables-Button-Timing rule), so it doubles as this file's round-reset path for the
+        // panel rebuild cache above.
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         [HarmonyPriority(Priority.First)]
         static class HudStartPatch {
-            public static void Prefix() { panel = null; notice = null; noticeUntil = 0f; }
+            public static void Prefix() {
+                panel = null; notice = null; noticeUntil = 0f;
+                ResetHudCache();
+            }
+        }
+
+        // Belt-and-suspenders round reset: mirrors Auditor.cs's own ResetPatch so the panel cache
+        // cannot outlive a round even if HudManager.Start does not fire for some reason.
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
+        static class HudCacheResetVariablesPatch {
+            public static void Postfix() { ResetHudCache(); }
+        }
+
+        // PlayerId-keyed state (the cached entry ids/locks and per-entry task lines) must ALSO be
+        // cleared on lobby change - resetVariables alone leaks it into the next lobby (see the
+        // resetVariables-Lobby-Leak rule).
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class HudCacheLobbyResetPatch {
+            public static void Postfix() { ResetHudCache(); }
         }
     }
 }

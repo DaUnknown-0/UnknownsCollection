@@ -476,12 +476,12 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => tunes.Clear();
+            public static void Postfix() => UCResetGuard.Run("PlayerTuning", tunes.Clear);
         }
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class LobbyResetPatch {
-            public static void Postfix() => tunes.Clear();
+            public static void Postfix() => UCResetGuard.Run("PlayerTuning", tunes.Clear);
         }
 
         // ====================================================================

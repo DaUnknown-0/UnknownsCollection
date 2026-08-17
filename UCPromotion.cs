@@ -85,7 +85,7 @@ namespace UnknownsCollection {
         // Clear claims on a full game-state reset (next game's start).
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { ClearClaims(); }
+            public static void Postfix() => UCResetGuard.Run("UCPromotion", ClearClaims);
         }
     }
 }

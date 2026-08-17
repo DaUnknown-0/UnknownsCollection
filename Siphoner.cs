@@ -288,13 +288,13 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Siphoner", () => {
                 siphoner = null;
                 active = false;
                 lastDrainTime = 0f;
                 drainActive = false;
                 // drainButton deliberately kept (resetVariables runs after HudManager.Start).
-            }
+            });
         }
 
         // ====================================================================

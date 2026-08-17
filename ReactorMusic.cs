@@ -404,14 +404,14 @@ namespace UnknownsCollection {
         // documented "resetVariables runs AFTER HudManager.Start" pitfall does not apply.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { ResetRound(); }
+            public static void Postfix() => UCResetGuard.Run("ReactorMusic", ResetRound);
         }
 
         // Belt and suspenders, same rule the rest of the mod adopted after the "resetVariables lobby
         // leak": state must never travel into a FOREIGN lobby.
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class GameJoinPatch {
-            public static void Postfix() { ResetRound(); }
+            public static void Postfix() => UCResetGuard.Run("ReactorMusic", ResetRound);
         }
 
         // The end screen. UCMusic.StopAll already runs here (its own OnGameEnd prefix), this only

@@ -357,22 +357,34 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
-                saboteur = null;
-                active = false;
-                tokens = 0;
-                killUsedThisRound = false;
-                sabotagedActive = false;
-                progressInit = false;
-                lastProgress = 0;
-                consoleCache = null;
-                lastUsedConsole = null;
-                lastUsedConsoleTime = 0f;
-                pendingKillPenalty = false;
-                killHoldUntil = 0f;
-                SaboteurTrap.Clear();
-                SaboteurScanUI.Close();
-            }
+            public static void Postfix() => UCResetGuard.Run("Saboteur", ClearState);
+        }
+
+        private static void ClearState() {
+            saboteur = null;
+            active = false;
+            tokens = 0;
+            killUsedThisRound = false;
+            sabotagedActive = false;
+            progressInit = false;
+            lastProgress = 0;
+            consoleCache = null;
+            lastUsedConsole = null;
+            lastUsedConsoleTime = 0f;
+            pendingKillPenalty = false;
+            killHoldUntil = 0f;
+            SaboteurTrap.Clear();
+            SaboteurScanUI.Close();
+        }
+
+        // SaboteurTrap holds PlayerId-keyed state (activeStuns, limpUntil) plus live world objects, and
+        // PlayerIds are handed out per LOBBY. Joining a vanilla host (or a host without this mod, where
+        // resetVariables never arrives) would otherwise carry the previous game's traps and, worse, its
+        // activeStuns set - whose whole job is to hand moveable=true back to the players it froze. Same
+        // belt-and-suspenders rule as the "resetVariables lobby leak" fix.
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Saboteur", ClearState);
         }
 
         // ====================================================================

@@ -270,7 +270,7 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
         static class MeetingStartPatch {
-            public static void Postfix() => StopAll();
+            public static void Postfix() => UCResetGuard.Run("UCMusic", StopAll);
         }
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
@@ -280,7 +280,7 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => StopAll();
+            public static void Postfix() => UCResetGuard.Run("UCMusic", StopAll);
         }
     }
 }

@@ -110,7 +110,7 @@ namespace UnknownsCollection {
         // Same patch target as Poltergeist.ResetAll (resetVariables runs at round start).
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { RunResets(); }
+            public static void Postfix() => UCResetGuard.Run("UCFx", RunResets);
         }
 
         // Belt-and-suspenders cleanup at game end too (same pattern as Tesla.cs' own OnGameEnd patch) -
@@ -118,7 +118,7 @@ namespace UnknownsCollection {
         // registry here means a lingering effect never survives into the post-game screen.
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
         static class GameEndPatch {
-            public static void Postfix() { RunResets(); }
+            public static void Postfix() => UCResetGuard.Run("UCFx", RunResets);
         }
 
         // ---- Sprite builders ----

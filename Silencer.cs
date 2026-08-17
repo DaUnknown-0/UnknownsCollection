@@ -230,16 +230,27 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
-                silencer = null;
-                active = false;
-                marksLeftThisRound = 0;
-                marksAppliedThisRound = 0;
-                silencedIds.Clear();
-                currentTarget = null;
-                wasInMeeting = false;
-                markerRevealStart.Clear();
-            }
+            public static void Postfix() => UCResetGuard.Run("Silencer", ClearState);
+        }
+
+        private static void ClearState() {
+            silencer = null;
+            active = false;
+            marksLeftThisRound = 0;
+            marksAppliedThisRound = 0;
+            silencedIds.Clear();
+            currentTarget = null;
+            wasInMeeting = false;
+            markerRevealStart.Clear();
+        }
+
+        // silencedIds and markerRevealStart are keyed by PlayerId, and PlayerIds are handed out per
+        // LOBBY - so joining a vanilla host (or a host without this mod, where resetVariables never
+        // arrives) would let the previous game's ids silence whoever happens to reuse them. Same
+        // belt-and-suspenders rule as the "resetVariables lobby leak" fix.
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Silencer", ClearState);
         }
 
         // ====================================================================

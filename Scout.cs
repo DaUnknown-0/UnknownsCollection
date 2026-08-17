@@ -242,7 +242,7 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Scout", () => {
                 scout = null;
                 active = false;
                 abilityActive = false;
@@ -253,7 +253,7 @@ namespace UnknownsCollection {
                 wasAbilityActive = false;
                 originalSpeed = 0;
                 // scoutButton deliberately kept (resetVariables runs after HudManager.Start).
-            }
+            });
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]

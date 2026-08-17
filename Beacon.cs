@@ -171,7 +171,7 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Beacon", () => {
                 beacon = null;
                 active = false;
                 // AUDIT-2026-08-16: WantsFullVision's per-player neutral-role TTL cache holds
@@ -179,7 +179,7 @@ namespace UnknownsCollection {
                 // the next round.
                 neutralCheckedAt.Clear();
                 neutralCache.Clear();
-            }
+            });
         }
 
         // AUDIT-2026-08-16: lobby-switch counterpart to ResetPatch above - without this, a stale

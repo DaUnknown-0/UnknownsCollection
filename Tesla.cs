@@ -359,7 +359,7 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Tesla", () => {
                 tesla = null;
                 plusId = minusId = byte.MaxValue;
                 active = false;
@@ -371,7 +371,7 @@ namespace UnknownsCollection {
                 wasInMeeting = false;
                 chargedHistory.Clear();
                 TeslaMeetingUI.Reset();
-            }
+            });
         }
 
         // Also clear the charged-history at game end (belt-and-suspenders; resetVariables already clears

@@ -616,7 +616,25 @@ namespace UnknownsCollection {
         // Everything that outlives the wolfForm/charge fields: look, blood rings, round music, the
         // vision cone and the heartbeat loop. Used by the round reset AND by every (re)assignment,
         // so no effect can survive a handover. Each call is safe to repeat.
+        // AUDIT M-6: the speed boost does not live in appliedMult/speedBase, it lives in
+        // MyPhysics.Speed - those two fields are only the bookkeeping that lets TickSpeed undo it.
+        // Zeroing them without writing the base value back therefore does not remove the boost, it
+        // makes it PERMANENT: TickSpeed then believes nothing is applied and never corrects the
+        // inflated value. Measured by the self-test on a round that ended in wolf form: base speed 2,
+        // still 4 afterwards. Undo the factor first, then forget the bookkeeping.
+        private static void RestoreSpeed() {
+            try {
+                if (Mathf.Abs(appliedMult - 1f) > 0.0001f && speedBase > 0f) {
+                    var me = PlayerControl.LocalPlayer;
+                    if (me != null && me.MyPhysics != null) me.MyPhysics.Speed = speedBase;
+                }
+            } catch { }
+            appliedMult = 1f;
+            speedBase = 0f;
+        }
+
         private static void ClearLingeringEffects() {
+            RestoreSpeed();
             try { WerewolfFx.ClearLook(); } catch { }
             try { WerewolfFx.ClearBloodRings(); } catch { }
             try { UCMusic.Release(MusicCue); } catch { }
@@ -629,9 +647,12 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
-                ClearLingeringEffects();
-
+            public static void Postfix() => UCResetGuard.Run("Werewolf", () => {
+                // Field assignments FIRST, ClearLingeringEffects LAST. It used to be the other way
+                // round, which maximised the blast radius: that call reaches into WerewolfFx, UCMusic,
+                // the heartbeat and MyPhysics.Speed, so a throw anywhere in there left all 15 fields
+                // below untouched and the Werewolf active into the next round. Nothing here can throw,
+                // so with this order the risky part can only cost itself. See UCResetGuard.cs.
                 werewolf = null;
                 active = false;
                 wolfForm = false;
@@ -644,10 +665,11 @@ namespace UnknownsCollection {
                 lastWoundTime = -99f;
                 woundSlowUntil = 0f;
                 exhaustSlowUntil = 0f;
-                appliedMult = 1f;
-                speedBase = 0f;
                 // transformButton deliberately kept (resetVariables runs AFTER HudManager.Start).
-            }
+
+                // Also resets appliedMult/speedBase, after writing the base speed back (AUDIT M-6).
+                ClearLingeringEffects();
+            });
         }
 
         // The role keeps no PlayerId lists, but the two PlayerControl/flag pairs above would still

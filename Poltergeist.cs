@@ -509,7 +509,7 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { ResetAll(); }
+            public static void Postfix() => UCResetGuard.Run("Poltergeist", ResetAll);
         }
 
         // Lobby change (AUDIT-2026-08-16): this role previously had no OnGameJoined reset at all, so
@@ -518,7 +518,7 @@ namespace UnknownsCollection {
         // here - same pattern as Necromancer.cs's LobbyResetPatch calling FullReset().
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class LobbyResetPatch {
-            public static void Postfix() { ResetAll(); }
+            public static void Postfix() => UCResetGuard.Run("Poltergeist", ResetAll);
         }
 
         // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher

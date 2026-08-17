@@ -268,14 +268,14 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Witness", () => {
                 witness = null;
                 active = false;
                 noteKillerId = noteVictimId = byte.MaxValue;
                 revealed = notesGiven = redNameExpired = wasInMeeting = false;
                 redNameApplyStart = redNameFadeStart = -10f;
                 pendingReporter = byte.MaxValue;
-            }
+            });
         }
 
         // ====================================================================

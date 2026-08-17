@@ -491,7 +491,7 @@ namespace UnknownsCollection {
         // explicit reset here removes that possibility instead of relying on it never happening.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class StripCacheResetVariablesPatch {
-            public static void Postfix() { ResetStripCache(); }
+            public static void Postfix() => UCResetGuard.Run("Gambler UI", ResetStripCache);
         }
     }
 }

@@ -262,7 +262,7 @@ namespace UnknownsCollection {
         // ---- Round reset ----
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Poisoner", () => {
                 poisoner = null;
                 active = false;
                 poisonedBodies.Clear();
@@ -272,7 +272,7 @@ namespace UnknownsCollection {
                 antidoteUsesLeft = 0;
                 // antidoteButton deliberately kept (resetVariables runs after HudManager.Start).
                 antidoteTarget = null;
-            }
+            });
         }
 
         // ---- Game start ----

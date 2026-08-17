@@ -899,7 +899,15 @@ namespace UnknownsCollection {
                     deadlySabotageThisRound = false;
                     sabotageWasActive = false;
                     lastReporter = byte.MaxValue;
-                    bets.RemoveAll(b => b.Settled);
+                    // Was `RemoveAll(b => b.Settled)` - the exact inverse of the comment above and of
+                    // every other bet-clearing site in this file. It kept the OPEN bets and threw the
+                    // finished ones away, with two consequences: an orphan permanently ate a slot of
+                    // MaxActiveBets (two of them and the Gambler could never bet again all game), and
+                    // MeetingStartPatch would settle it a round later against the WRONG round's
+                    // killTimes while still comparing to its original Placed stamp. Both settlement
+                    // points (MeetingHud.Start, VotingComplete) have already run by the time Close
+                    // fires, so nothing here is still waiting on an answer: clear the lot.
+                    bets.Clear();
 
                     // He may bet again right away, cooldown reset at every meeting.
                     betCooldownLeft = 0f;
@@ -973,14 +981,14 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { FullReset(); }
+            public static void Postfix() => UCResetGuard.Run("Gambler", FullReset);
         }
 
         // PlayerId-keyed state must ALSO be cleared when joining another lobby - resetVariables alone
         // leaks it into the next lobby (see the resetVariables-Lobby-Leak rule).
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class LobbyResetPatch {
-            public static void Postfix() { FullReset(); }
+            public static void Postfix() => UCResetGuard.Run("Gambler", FullReset);
         }
 
         private static void FullReset() {

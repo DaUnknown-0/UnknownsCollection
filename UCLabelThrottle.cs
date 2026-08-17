@@ -71,14 +71,14 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class RoundResetPatch {
-            public static void Postfix() => Clear();
+            public static void Postfix() => UCResetGuard.Run("UCLabelThrottle", Clear);
         }
 
         // PlayerIds and button objects are per-lobby; a timestamp from the previous lobby would at
         // worst delay one repaint, but the rule here is unconditional (see the file header).
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class LobbyResetPatch {
-            public static void Postfix() => Clear();
+            public static void Postfix() => UCResetGuard.Run("UCLabelThrottle", Clear);
         }
     }
 }

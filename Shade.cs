@@ -265,14 +265,26 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
-                shade = null;
-                active = false;
-                hiddenBodies.Clear();
-                hiddenBodyRefs.Clear();
-                revealedBodies.Clear();
-                revealedBodyPositions.Clear();
-            }
+            public static void Postfix() => UCResetGuard.Run("Shade", ClearState);
+        }
+
+        private static void ClearState() {
+            shade = null;
+            active = false;
+            hiddenBodies.Clear();
+            hiddenBodyRefs.Clear();
+            revealedBodies.Clear();
+            revealedBodyPositions.Clear();
+        }
+
+        // The body lists are keyed by PlayerId, and PlayerIds are handed out per LOBBY - so joining a
+        // vanilla host (or a host without this mod, where resetVariables never arrives) would let the
+        // previous game's ids hide or reveal whoever happens to reuse them. hiddenBodyRefs would also
+        // keep holding destroyed DeadBody objects across the lobby change. Same belt-and-suspenders
+        // rule as the "resetVariables lobby leak" fix.
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Shade", ClearState);
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]

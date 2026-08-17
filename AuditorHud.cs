@@ -273,7 +273,7 @@ namespace UnknownsCollection {
         // cannot outlive a round even if HudManager.Start does not fire for some reason.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class HudCacheResetVariablesPatch {
-            public static void Postfix() { ResetHudCache(); }
+            public static void Postfix() => UCResetGuard.Run("Auditor HUD cache", ResetHudCache);
         }
 
         // PlayerId-keyed state (the cached entry ids/locks and per-entry task lines) must ALSO be
@@ -281,7 +281,7 @@ namespace UnknownsCollection {
         // resetVariables-Lobby-Leak rule).
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class HudCacheLobbyResetPatch {
-            public static void Postfix() { ResetHudCache(); }
+            public static void Postfix() => UCResetGuard.Run("Auditor HUD cache", ResetHudCache);
         }
     }
 }

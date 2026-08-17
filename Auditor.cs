@@ -825,7 +825,7 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Auditor", () => {
                 auditor = null;
                 active = false;
                 revertCount = 0;
@@ -834,7 +834,7 @@ namespace UnknownsCollection {
                 victimNoticePending = false;
                 pendingRecomplete.Clear();
                 ClearQueue();
-            }
+            });
         }
 
         // PlayerId-keyed state must ALSO be cleared when joining another lobby - resetVariables alone

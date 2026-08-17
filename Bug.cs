@@ -206,12 +206,12 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Bug", () => {
                 bug = null;
                 active = false;
                 bugPlayerId = byte.MaxValue;
                 // NOTE: winnerBugId is intentionally NOT reset here (see its declaration).
-            }
+            });
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]

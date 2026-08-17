@@ -135,6 +135,9 @@ namespace UnknownsCollection {
         // ---- Hunt phase ----
         public static bool huntActive;      // the countdown is running (every client)
         private static bool huntEnded;      // the hunt is over WITHOUT a Pelican win -> guard is off
+        // AUDIT-2026-08-16: true once ApplyStartHunt has actually run THIS round. ApplyEndHunt may
+        // only latch huntEnded while this is set - see ApplyEndHunt for why.
+        private static bool huntStarted;
         private static float huntEndTime;   // local Time.time deadline (host-resynced every 5 s)
         private static float huntStartTime; // used only to decide when the intro has finished
         private static float nextHuntSync;  // host: next resync broadcast
@@ -329,10 +332,11 @@ namespace UnknownsCollection {
                         break;
                     }
                     case SubEndHunt: {
-                        // Host-authoritative (HostTickHunt). ApplyEndHunt only bails out on
-                        // "!huntActive && huntEnded" - a forged one right after role draft would
-                        // latch huntEnded=true forever and disable EndGameGuardPatch for the whole
-                        // round (AUDIT-2026-08-15).
+                        // Host-authoritative (HostTickHunt). A forged one right after role draft used
+                        // to latch huntEnded=true forever and disable EndGameGuardPatch for the whole
+                        // round (AUDIT-2026-08-15); ApplyEndHunt itself now also refuses to latch
+                        // before huntStarted is set (AUDIT-2026-08-16), so this RequireHost check and
+                        // ApplyEndHunt's own guard defend the same outcome at two layers.
                         if (UCRpc.RequireHost("Pelican.EndHunt")) ApplyEndHunt();
                         break;
                     }
@@ -375,6 +379,7 @@ namespace UnknownsCollection {
         private static void ApplyStartHunt(float secs) {
             if (!active || huntActive || huntEnded) return;
             huntActive = true;
+            huntStarted = true;
             huntStartTime = Time.time;
             huntEndTime = Time.time + secs;
             nextCall = Time.time + 4f;
@@ -393,6 +398,17 @@ namespace UnknownsCollection {
         // Pelican died/left). huntEnded switches the end-game guard off for good, so TOR's own
         // CheckEndCriteria ends the round on its next tick with the survivor's own win reason.
         private static void ApplyEndHunt() {
+            // AUDIT-2026-08-16: a call before any ApplyStartHunt this round (SetPelican right onto a
+            // fresh promotion, a future host-side call path that reaches here before HostTickHunt ever
+            // starts a hunt, ...) must not latch huntEnded - that would permanently switch
+            // EndGameGuardPatch off for the rest of the round even though the hunt never happened
+            // (AUDIT-2026-08-15 found the RPC-forgery angle; this closes the same hole one layer down,
+            // for any host-authoritative caller, forged or not). The genuine end-of-hunt path is
+            // unaffected: HostTickHunt only ever calls SendEndHunt() from inside its
+            // "if (huntActive) { ... }" branch, and huntActive can only become true after
+            // ApplyStartHunt has already set huntStarted, so a legitimate hunt end always has
+            // huntStarted == true here.
+            if (!huntStarted) return;
             if (!huntActive && huntEnded) return;
             huntActive = false;
             huntEnded = true;
@@ -417,6 +433,7 @@ namespace UnknownsCollection {
             pendingHideUntil = 0f;
             huntActive = false;
             huntEnded = false;
+            huntStarted = false;
             huntEndTime = 0f;
             huntStartTime = 0f;
             nextHuntSync = 0f;
@@ -448,14 +465,14 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { ClearState(); }
+            public static void Postfix() => UCResetGuard.Run("Pelican", ClearState);
         }
 
         // Same belt-and-suspenders rule the rest of the mod adopted after the "resetVariables lobby
         // leak": the PlayerId lists above must never travel into a FOREIGN lobby.
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class GameJoinPatch {
-            public static void Postfix() { ClearState(); }
+            public static void Postfix() => UCResetGuard.Run("Pelican", ClearState);
         }
 
         // ====================================================================

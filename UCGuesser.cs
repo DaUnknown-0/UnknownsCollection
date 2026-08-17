@@ -199,13 +199,13 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
         static class MeetingClosePatch {
-            public static void Postfix() { Sync(false); }
+            public static void Postfix() => UCResetGuard.Run("UCGuesser", () => Sync(false));
         }
 
         // Safety: also drop them on a full reset, so they never linger into other systems.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { Sync(false); }
+            public static void Postfix() => UCResetGuard.Run("UCGuesser", () => Sync(false));
         }
     }
 }

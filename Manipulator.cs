@@ -177,13 +177,13 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Manipulator", () => {
                 manipulator = null;
                 active = false;
                 fakeUntil = 0f;
                 // manipulateButton deliberately kept: resetVariables runs AFTER HudManager.Start
                 // at round start - nulling it here orphans the live button (see Collector.cs).
-            }
+            });
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]

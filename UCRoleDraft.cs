@@ -284,7 +284,13 @@ namespace UnknownsCollection {
         // Safety: also drop them on a full reset.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { introActive = false; pickedBy.Clear(); RemoveAll(); }
+            // Cheap state first, RemoveAll (which mutates TOR's allRoleInfos) last, so a throw in
+            // there cannot leave the draft flagged as still running. See UCResetGuard.cs.
+            public static void Postfix() => UCResetGuard.Run("UCRoleDraft", () => {
+                introActive = false;
+                pickedBy.Clear();
+                RemoveAll();
+            });
         }
 
         // GLOBAL flash guard while the draft intro is on screen. Helpers.showFlash disables

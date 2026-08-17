@@ -651,7 +651,7 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Copycat", () => {
                 copycat = null;
                 active = false;
                 learnedAbilities.Clear();
@@ -682,7 +682,7 @@ namespace UnknownsCollection {
                 // creation-time cooldown being read before clearAndReloadRoles reloads the options.
                 // Same rule as Collector/Poltergeist/Werewolf/... - see Collector.cs:299.
                 // NOTE: winnerCopycatId is intentionally NOT reset here (see its declaration).
-            }
+            });
         }
 
         // ====================================================================

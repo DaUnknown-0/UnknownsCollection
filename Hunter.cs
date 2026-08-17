@@ -771,14 +771,14 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() { ClearState(); }
+            public static void Postfix() => UCResetGuard.Run("Hunter", ClearState);
         }
 
         // The same belt-and-suspenders rule the rest of the mod adopted after the "resetVariables lobby
         // leak": a round that ends without resetVariables must not carry this state into a FOREIGN lobby.
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class GameJoinPatch {
-            public static void Postfix() { ClearState(); }
+            public static void Postfix() => UCResetGuard.Run("Hunter", ClearState);
         }
 
         private static void ClearState() {

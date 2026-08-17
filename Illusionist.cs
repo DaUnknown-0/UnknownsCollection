@@ -252,7 +252,7 @@ namespace UnknownsCollection {
         // ====================================================================
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
+            public static void Postfix() => UCResetGuard.Run("Illusionist", () => {
                 illusionist = null;
                 active = false;
                 recordBuffer.Clear();
@@ -261,7 +261,7 @@ namespace UnknownsCollection {
                 rxVnt.Clear();
                 recording = false;
                 IllusionistClone.Despawn();
-            }
+            });
         }
 
         // ====================================================================

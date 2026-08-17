@@ -225,8 +225,15 @@ namespace UnknownsCollection {
         }
 
         private static void ApplyCollect(int relicId) {
+            // CollectorRelics.Collect(id) is itself idempotent (a missing/already-collected id is a
+            // no-op) because UTSRpc sends this over both the legacy callId and the collective channel
+            // and relies on double delivery being harmless. Mirror that here: only count and play the
+            // pickup effect when a relic actually existed to be removed, otherwise a duplicate/late RPC
+            // (or one for a bogus id) would let the Collector reach the win threshold with fewer relics
+            // than the option actually requires.
             var relic = CollectorRelics.ById(relicId);
-            Vector2 at = relic != null ? relic.pos : (collector != null ? collector.GetTruePosition() : Vector2.zero);
+            if (relic == null) return;
+            Vector2 at = relic.pos;
             CollectorRelics.Collect(relicId);
             collected++;
             // Quiet glitter for EVERYONE near the relic - the deliberate counterplay tell.
@@ -285,27 +292,38 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() {
-                collector = null;
-                active = false;
-                collectorPlayerId = byte.MaxValue;
-                collected = 0;
-                relicsSpawned = false;
-                relicIdCounter = 0;
-                extraRelicsGranted = 0;
-                extraSpawnedTotal = 0;
-                nextTaskCheck = 0f;
-                nextWinTry = 0f;
-                channeling = false;
-                channelRelicId = -1;
-                announcedReady = false;
-                // collectButton is deliberately NOT nulled: TOR runs resetVariables at ROUND START,
-                // AFTER HudManager.Start created the button. Nulling the static reference here left
-                // the live button working (OnClick lambdas use the statics directly) but killed all
-                // logic gated on "collectButton != null" - the channel never progressed or aborted.
-                CollectorRelics.Clear();
-                // NOTE: winnerCollectorId deliberately survives (read after reset at game end, like Bug).
-            }
+            public static void Postfix() => UCResetGuard.Run("Collector", ClearState);
+        }
+
+        private static void ClearState() {
+            collector = null;
+            active = false;
+            collectorPlayerId = byte.MaxValue;
+            collected = 0;
+            relicsSpawned = false;
+            relicIdCounter = 0;
+            extraRelicsGranted = 0;
+            extraSpawnedTotal = 0;
+            nextTaskCheck = 0f;
+            nextWinTry = 0f;
+            channeling = false;
+            channelRelicId = -1;
+            announcedReady = false;
+            // collectButton is deliberately NOT nulled: TOR runs resetVariables at ROUND START,
+            // AFTER HudManager.Start created the button. Nulling the static reference here left
+            // the live button working (OnClick lambdas use the statics directly) but killed all
+            // logic gated on "collectButton != null" - the channel never progressed or aborted.
+            CollectorRelics.Clear();
+            // NOTE: winnerCollectorId deliberately survives (read after reset at game end, like Bug).
+        }
+
+        // collectorPlayerId is a PlayerId, and PlayerIds are handed out per LOBBY - so joining a
+        // vanilla host (or a host without this mod, where resetVariables never arrives) would make
+        // whoever reuses that id the Collector, with the previous game's relic objects still on the
+        // map. Same belt-and-suspenders rule as the "resetVariables lobby leak" fix.
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Collector", ClearState);
         }
 
         // ---- Pick + relic spawn (host) ----

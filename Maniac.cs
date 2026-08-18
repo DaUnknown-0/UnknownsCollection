@@ -151,7 +151,8 @@ namespace UnknownsCollection {
 
         // Whether the bomb's blast may kill this player, given the "Explosion Hits" and "Pierces Shield"
         // options. Medic shields protect the shielded player; the Time Master shield protects the Time
-        // Master while it's active. A shield only protects if the option does NOT pierce it.
+        // Master while it's active. A shield only protects if the option does NOT pierce it. The Mini,
+        // the first-kill shield and the two Forgotten Fixes shields are never pierced.
         private static bool BlastCanKill(PlayerControl p) {
             if (!IsAlive(p)) return false;
             if (IsProtectedMini(p)) return false;                                       // Mini is off-limits
@@ -162,6 +163,12 @@ namespace UnknownsCollection {
             // The "shield first kill" protection is never pierced by the bomb, regardless of the pierce option.
             var fkShielded = FirstKillShieldedPlayer();
             if (fkShielded != null && fkShielded.PlayerId == p.PlayerId) return false;
+
+            // Same for the two Forgotten Fixes kill shields (newcomer, spawn protection): they cover a
+            // player's first round and the opening seconds, and a blast that ignored them would undo
+            // exactly what they exist for. The pierce option deliberately does not reach them - it is
+            // worded for the two TOR shields below. No effect when that mod is absent.
+            if (UCShieldBridge.IsKillProtected(p.PlayerId)) return false;
 
             int pierce = ShieldPierceSel();
             bool pierceMedic = pierce == 1 || pierce == 3;

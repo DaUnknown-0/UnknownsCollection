@@ -320,7 +320,11 @@ namespace UnknownsCollection {
             if (!IsLocalSilencer() || InMeeting() || marksLeftThisRound <= 0) { currentTarget = null; return; }
             int extra = ExtraTargets != null ? ExtraTargets.getSelection() : 0;
             bool onlyCrew = extra == 0; // allow impostors as targets once teammates are enabled
-            currentTarget = PlayerControlFixedUpdatePatch.setTarget(onlyCrew);
+            // Silencing is not a kill: announce the call as peaceful so the Forgotten Fixes kill
+            // shields (newcomer, spawn protection) do not drop the target from TOR's helper.
+            // No-op when that mod is absent - see UCShieldBridge.
+            using (UCShieldBridge.Peaceful())
+                currentTarget = PlayerControlFixedUpdatePatch.setTarget(onlyCrew);
             if (currentTarget == null && extra == 2) currentTarget = PlayerControl.LocalPlayer; // self
             if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, MarkColor);
         }

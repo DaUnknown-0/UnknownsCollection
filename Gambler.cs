@@ -247,6 +247,14 @@ namespace UnknownsCollection {
             return w;
         }
 
+        // Local withdrawal, no RPC: for events that are already replayed identically on every client
+        // (see SidekickWithdrawPatch). Runs the same teardown the RPC withdrawal does - open bets die,
+        // the host lifts every cooldown effect the modifier still holds.
+        public static void WithdrawLocal() {
+            try { ApplySetGambler(byte.MaxValue); }
+            catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Gambler] WithdrawLocal failed: {e}"); }
+        }
+
         public static void SendSetGambler(byte id) {
             try {
                 var w = BeginRpc(SubSetGambler);
@@ -499,6 +507,38 @@ namespace UnknownsCollection {
                 SendPlaceBet(nextBetId++, kind, target);
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Gambler] HostPlaceBet failed: {e}");
+            }
+        }
+
+        // ====================================================================
+        // The office closes when its holder changes team: a Gambler who becomes the Jackal's SIDEKICK
+        // stops being a crewmate, and the whole modifier is written for the crew's round (betting on
+        // the vote, on deaths, on task progress, paid in crew-side rewards). Leaving it on a sidekick
+        // would let the killing team farm the crew's own side bets.
+        //
+        // No RPC: jackalCreatesSidekick is a TOR RPC PROCEDURE and runs on every client with identical
+        // arguments (RPC.cs:692, dispatch at :1510), so every client withdraws in the same tick. That
+        // is the Pelican's "the swallow list needs no RPC" argument, and it is also why this must be a
+        // POSTFIX reading STATE instead of the target id: the UTS spawn protection can refuse a
+        // sidekicking with a prefix, and Harmony runs postfixes either way. Asking "is he actually the
+        // sidekick now" is immune to that - a refused sidekicking leaves the modifier alone.
+        //
+        // The FAKE sidekick (Jackal.fakeSidekick, when impostors may not be sidekicked) never becomes
+        // Sidekick.sidekick, so he keeps the modifier - he also keeps his real team, and he must not be
+        // able to tell the difference from a lost ability.
+        // ====================================================================
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.jackalCreatesSidekick))]
+        static class SidekickWithdrawPatch {
+            public static void Postfix([HarmonyArgument(0)] byte targetId) {
+                try {
+                    if (!active || gambler == null || gambler.PlayerId != targetId) return;
+                    if (Sidekick.sidekick == null || Sidekick.sidekick.PlayerId != targetId) return;
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        "[Gambler] carrier became the Jackal's sidekick - modifier withdrawn.");
+                    WithdrawLocal();
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Gambler] sidekick withdraw failed: {e}");
+                }
             }
         }
 

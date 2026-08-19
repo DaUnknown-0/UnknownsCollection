@@ -117,6 +117,7 @@ namespace UnknownsCollection {
         public static CustomOption ExhaustionSlow;         // 1517
         public static CustomOption TrapperTrapWounds;      // 1518
         public static CustomOption SaboteurTrapWounds;     // 1519
+        public static CustomOption IgnoreBaitInWolfForm;   // 1509
         public static CustomOption DeputyHandcuffsRevert;  // 1482
 
         // ---- Runtime state ----
@@ -228,6 +229,8 @@ namespace UnknownsCollection {
                 SaboteurTrapWounds = CustomOption.Create(1519, Types.Impostor, "Saboteur Trap Wounds The Wolf",
                     true, SpawnRate);
                 DeputyHandcuffsRevert = CustomOption.Create(1482, Types.Impostor, "Deputy Handcuffs Force Revert",
+                    true, SpawnRate);
+                IgnoreBaitInWolfForm = CustomOption.Create(1509, Types.Impostor, "Wolf Form Ignores Bait",
                     true, SpawnRate);
 
                 WerewolfFx.Init(); // force the FX static ctor (UCFx tick/reset registration)
@@ -1192,7 +1195,55 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
         [HarmonyPriority(Priority.Low)] // last postfix: TOR sets its own kill timers before us
         static class MurderPatch {
+            // "Wolf Form Ignores Bait": the transformation is a loud, timed window, and losing it to
+            // the one Bait the wolf happened to run into ends the whole ability before it starts.
+            // Two things have to go, and they sit on either side of TOR's own postfix
+            // (PlayerControlPatch.MurderPlayerPatch.Postfix), which is what arms the Bait:
+            //   - the orange kill flash it shows the killer: suppressed by turning TOR's own
+            //     Bait.showKillFlash off for the duration of this one call (prefix + finalizer, so a
+            //     throwing patch further down the chain can never leave it off),
+            //   - the queued self-report itself: removed from Bait.active afterwards.
+            // Only the wolf FORM is exempt. A werewolf killing as a plain impostor triggers the Bait
+            // exactly like everyone else.
+            private static bool flashSuppressed;
+
+            private static bool SuppressBaitFor(PlayerControl killer, PlayerControl target) {
+                try {
+                    if (IgnoreBaitInWolfForm == null || !IgnoreBaitInWolfForm.getBool()) return false;
+                    if (!active || !wolfForm) return false;
+                    if (werewolf == null || killer == null || target == null) return false;
+                    if (killer.PlayerId != werewolf.PlayerId) return false;
+                    return Bait.bait != null
+                           && Bait.bait.Any(x => x != null && x.PlayerId == target.PlayerId);
+                } catch {
+                    return false;
+                }
+            }
+
+            public static void Prefix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
+                flashSuppressed = false;
+                try {
+                    if (!SuppressBaitFor(__instance, target) || !Bait.showKillFlash) return;
+                    Bait.showKillFlash = false;
+                    flashSuppressed = true;
+                } catch { }
+            }
+
+            // Runs even when the original or another patch throws - Bait.showKillFlash is a global
+            // TOR setting and must never stay off for everyone else.
+            public static void Finalizer() {
+                if (!flashSuppressed) return;
+                flashSuppressed = false;
+                try { Bait.showKillFlash = true; } catch { }
+            }
+
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
+                try {
+                    if (SuppressBaitFor(__instance, target)) DropQueuedBaitReport(target);
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] bait suppression failed: {e}");
+                }
+
                 try {
                     if (!active || werewolf == null || target == null || __instance == null) return;
 
@@ -1217,6 +1268,21 @@ namespace UnknownsCollection {
                         __instance.SetKillTimer(BaseKillCooldown() * (1f - KillReductionValue()));
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] MurderPatch failed: {e}");
+                }
+            }
+
+            // TOR queues the self-report as an entry in Bait.active, counted down by its own
+            // baitUpdate (PlayerControlPatch.cs:875) and fired on the KILLER's client. Removing the
+            // entry for this victim cancels exactly that one report and touches nothing else - other
+            // baited bodies keep their timers.
+            private static void DropQueuedBaitReport(PlayerControl target) {
+                if (Bait.active == null || Bait.active.Count == 0) return;
+                foreach (var entry in new Dictionary<DeadPlayer, float>(Bait.active)) {
+                    var dead = entry.Key;
+                    if (dead?.player == null || dead.player.PlayerId != target.PlayerId) continue;
+                    Bait.active.Remove(dead);
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        "[Werewolf] wolf form ignored a Bait - self-report cancelled.");
                 }
             }
         }

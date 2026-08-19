@@ -787,6 +787,11 @@ namespace UnknownsCollection {
                     // the torch back off once the form, the round or the wolf itself is gone.
                     TickCone();
 
+                    // The wolf's own corpse, restyled once it appears. Also before the bail-out: it
+                    // has to keep looking for the body after the beast is dead, which is exactly when
+                    // several of the checks below stop being true. It throttles itself.
+                    WerewolfCorpse.Tick();
+
                     // Same reasoning for the heartbeat, which is a LOCAL loop: everything that starts
                     // and stops it lives behind the two bail-outs below, so anyone who stops being the
                     // werewolf (role reassigned, withdrawn, died) would never reach the stop call and

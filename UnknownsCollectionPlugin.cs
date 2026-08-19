@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.2.5";
+    public const string PluginVersion = "1.2.2.6";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -235,6 +235,11 @@ public class UnknownsCollectionPlugin : BasePlugin
         // his only weakness.
         Werewolf.CreateOptions();
         Werewolf.TryPatch(harmony);
+
+        // The corpse the beast leaves behind (option only - the swap runs from the Werewolf's own
+        // HUD tick, its resets are attribute-based patches picked up by PatchAll below). Must follow
+        // Werewolf.CreateOptions(): the option hangs under the werewolf spawn rate.
+        WerewolfCorpse.CreateOptions();
 
         // The Hunter (Paket W2) - not a spawnable role but the Sheriff's ENDGAME: once every
         // non-Werewolf Impostor is dead and the beast is still alive, the Sheriff is promoted into a

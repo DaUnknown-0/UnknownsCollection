@@ -103,6 +103,8 @@
         <EmbeddedResource Include="Resources\werewolf_revert.png" />
         <EmbeddedResource Include="Resources\werewolf_form.png" />
         <EmbeddedResource Include="Resources\werewolf_bloodring.png" />
+        <EmbeddedResource Include="Resources\werewolf_corpse_body.png" />
+        <EmbeddedResource Include="Resources\werewolf_corpse_detail.png" />
         <EmbeddedResource Include="Resources\overlay_wolfhead.png" />
         <EmbeddedResource Include="Resources\werewolf_transform.ogg" />
         <EmbeddedResource Include="Resources\werewolf_revert.ogg" />

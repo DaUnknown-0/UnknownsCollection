@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.1.1";
+    public const string PluginVersion = "1.2.2.4";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -278,6 +278,11 @@ public class UnknownsCollectionPlugin : BasePlugin
         // ban/task replacement, module byte 213). No options, no own game logic; the Harmony
         // patches are attribute-based and come in via PatchAll below.
         PlayerTuning.TryPatch(harmony);
+
+        // Publish this mod's role colours (by option ID and by name) so the settings list can print
+        // them in colour instead of white. Must run after every CreateOptions above (it reads the
+        // SpawnRate IDs) and before UCLocalization below, which rewrites the option names.
+        UCOptionColors.Register();
 
         // Localization: loads the uc.* tables and translates UC's RoleInfos + options by
         // matching their pristine English text (follows UTS's UTS.Loc.ActiveCode/Epoch via

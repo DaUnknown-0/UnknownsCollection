@@ -65,8 +65,9 @@ namespace UnknownsCollection {
         //
         // Every number below was set by compositing the real sprites at these values against a
         // crewmate for scale, not by guessing: at the first attempt the pools were wider than the
-        // corridor.
-        private const float CarcassScale = 2.4f;
+        // corridor. 4.8 puts the beast at roughly five crewmates across - a body you cannot walk
+        // past without noticing.
+        private const float CarcassScale = 4.8f;
 
         // The death frames are 224 px at 200 ppu (1.12 units) drawn on a ground line at 90 % of the
         // frame height, i.e. 0.448 units below the sprite's centre. Lifting the sprite by that much
@@ -84,7 +85,9 @@ namespace UnknownsCollection {
             new Vector3( 0.46f, -0.40f, 0f),
             new Vector3( 0.10f, -0.18f, 0f),
         };
-        private static readonly float[] PoolScales = { 0.72f, 0.42f, 0.38f, 0.30f };
+        // Scaled DOWN when the carcass grew: these are multiplied by CarcassScale, so leaving them
+        // alone would have doubled the blood along with the beast and flooded the room.
+        private static readonly float[] PoolScales = { 0.58f, 0.34f, 0.30f, 0.24f };
         private static readonly float[] PoolRotations = { 0f, 118f, -74f, 203f };
         private const float PoolAlpha = 0.9f;
 
@@ -134,11 +137,48 @@ namespace UnknownsCollection {
         private static void HideBody(byte wolfId) {
             foreach (var dead in UnityEngine.Object.FindObjectsOfType<DeadBody>()) {
                 if (dead == null || dead.ParentId != wolfId) continue;
-                var renderers = dead.bodyRenderers;
-                if (renderers == null) continue;
-                for (int i = 0; i < renderers.Length; i++)
-                    if (renderers[i] != null) renderers[i].enabled = false;
+                HideEverythingButOurs(dead);
             }
+        }
+
+        // THE WHOLE CHILD TREE, NOT bodyRenderers
+        // A corpse keeps the player's cosmetics, and those are their own renderers hanging off the
+        // body - not entries in bodyRenderers. Switching off that array alone left the hat (and
+        // whatever else the player wore) floating over the carcass, which is exactly the "two bodies
+        // on the floor" this file exists to prevent. Walking the tree catches body, shadow, hat,
+        // visor, skin and pet without having to know the vanilla hierarchy by name.
+        private static void HideEverythingButOurs(DeadBody dead) {
+            var all = dead.GetComponentsInChildren<SpriteRenderer>(true);
+            if (all == null) return;
+            foreach (var sr in all) {
+                if (sr == null || IsOurs(sr.transform)) continue;
+                sr.enabled = false;
+            }
+        }
+
+        private static bool IsOurs(Transform t) {
+            for (var p = t; p != null; p = p.parent)
+                if (p.name == CarcassRootName) return true;
+            return false;
+        }
+
+        // Diagnostics for the next step (putting the beast's own hat on the corpse instead of the
+        // flipbook frame): which renderers a corpse actually carries, and where they sit relative to
+        // the body. Vanilla names are not documented anywhere we can read, so they get written down
+        // from a real round instead.
+        private static void LogRenderers(DeadBody dead) {
+            try {
+                var all = dead.GetComponentsInChildren<SpriteRenderer>(true);
+                if (all == null) return;
+                var line = new System.Text.StringBuilder("[WerewolfCorpse] corpse renderers:");
+                foreach (var sr in all) {
+                    if (sr == null) continue;
+                    var p = sr.transform.localPosition;
+                    line.Append($" [{sr.name} sprite={(sr.sprite != null ? sr.sprite.name : "-")}")
+                        .Append($" pos=({p.x:0.00},{p.y:0.00}) order={sr.sortingOrder}]");
+                }
+                UnknownsCollectionPlugin.Logger?.LogInfo(line.ToString());
+            } catch { /* diagnostics must never cost the corpse its look */ }
         }
 
         private static void TryStyle(byte wolfId) {
@@ -158,13 +198,14 @@ namespace UnknownsCollection {
                     // to STAY off. Re-asserted rather than trusted: this runs four times a second
                     // anyway, and anything switching them back on would put a crewmate corpse back
                     // underneath the beast.
-                    for (int i = 0; i < renderers.Length; i++)
-                        if (renderers[i] != null) renderers[i].enabled = false;
+                    HideEverythingButOurs(dead);
                     continue;
                 }
 
-                for (int i = 0; i < renderers.Length; i++)
-                    if (renderers[i] != null) renderers[i].enabled = false;
+                // Once per corpse, so the hierarchy behind "the hat was still showing" is on record
+                // rather than guessed at from a screenshot next time something peeks through.
+                LogRenderers(dead);
+                HideEverythingButOurs(dead);
 
                 // One root under the body's renderer, so the whole scene inherits position, flipping
                 // and the sorting layer, and dies with the body when the meeting clears it.

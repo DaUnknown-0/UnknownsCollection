@@ -64,12 +64,9 @@ namespace UnknownsCollection {
         // the UI, so they use the same ppu as the animation frames (WerewolfFx.VictoryPpu = 100) -
         // a still and a frame stay interchangeable that way.
         public static Sprite WerewolfMoon => GetSprite("UnknownsCollection.Resources.werewolf_moon.png", 100f);
-        // The corpse the beast leaves behind, in two layers: the body takes the player colour from
-        // the game's own dead-body renderer, the detail layer is drawn on top with its own colours
-        // (WerewolfCorpse.cs). 200 ppu puts the 192 px artwork at just under one unit across, which
-        // is the size of a vanilla dead body.
-        public static Sprite WerewolfCorpseBody => GetSprite("UnknownsCollection.Resources.werewolf_corpse_body.png", 200f);
-        public static Sprite WerewolfCorpseDetail => GetSprite("UnknownsCollection.Resources.werewolf_corpse_detail.png", 200f);
+        // There is no corpse artwork of its own any more: a beast shot down in wolf form keeps the
+        // last frame of its death flipbook as its body (WerewolfCorpse.cs), and every other death
+        // leaves the vanilla corpse alone.
         public static Sprite WerewolfVictorySprite => GetSprite("UnknownsCollection.Resources.werewolf_victory.png", 100f);
 
         // Hunter (Paket W2, the Sheriff's endgame). hunter_shoot is the animated kill-button icon at the

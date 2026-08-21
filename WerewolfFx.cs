@@ -40,10 +40,13 @@
  *
  *  4. SILVER DEATH SEQUENCE (Paket W2). Fired by Werewolf.cs's SilverBulletPatch the instant the
  *     HUNTER lands a lethal silver hit on the wolf-form beast: a one-shot werewolf_death_f00-23
- *     flipbook (~12 fps, holds the last frame) at the victim's position, with werewolf_silver played
- *     back at ~frame 3 (0.25 s) for the "impact" beat. A free-floating world sprite, NOT parented to
- *     the player transform (unlike the wolf skin above) - the victim is dying/dead and its cosmetics
- *     may already be hidden/disabled by the time this plays, so the sequence must survive that.
+ *     flipbook (~12 fps) at the victim's position, with werewolf_silver played back at ~frame 3
+ *     (0.25 s) for the "impact" beat. A free-floating world sprite, NOT parented to the player
+ *     transform (unlike the wolf skin above) - the victim is dying/dead and its cosmetics may
+ *     already be hidden/disabled by the time this plays, so the sequence must survive that. When it
+ *     ends it HANDS THE LAST FRAME OVER to WerewolfCorpse, which paints it onto the real dead body:
+ *     the beast's carcass then lies there until somebody reports it, and there is only ever one body
+ *     on the floor. While the flipbook runs, WerewolfCorpse keeps the real body hidden.
  *
  *  5. VICTORY SCENE (Paket W4, plan 4.8b). The Impostors won and there was a beast: a dark panel,
  *     the full moon and the one-shot werewolf_victory flipbook take over the end screen for a few
@@ -364,8 +367,15 @@ namespace UnknownsCollection {
         private const float DeathFps = 12f;         // ~2.0 s for the 24-frame one-shot
         private const float DeathPpu = 200f;        // 224 px frames -> ~1.12 units (blood-ring scale)
         private const float DeathSoundDelay = 3f / DeathFps; // "~frame 3" per WEREWOLF_PLAN.md 4.11
-        private const float DeathHoldSecs = 4f;     // how long the last frame is held before fading
-        private const float DeathFadeSecs = 1f;
+        // THE SEQUENCE HANDS THE CARCASS OVER, IT DOES NOT KEEP IT
+        // A free-floating sprite that stays on the floor is a second body: the game spawns a real
+        // DeadBody for the same kill a few frames earlier, so the round ends up with the beast lying
+        // next to a crewmate corpse, and the two read as two victims. The last frame is therefore
+        // published here and painted onto the REAL body by WerewolfCorpse, which is also what makes
+        // it last until the report - the DeadBody is the object the game keeps until a meeting, this
+        // one was never more than an animation.
+        public static bool SilverDeathPlaying { get; private set; }
+        public static Sprite DeathCarcass { get; private set; }
 
         private sealed class DeathSeq {
             public GameObject go;
@@ -404,6 +414,9 @@ namespace UnknownsCollection {
                 var sr = go.AddComponent<SpriteRenderer>();
                 sr.sprite = deathFrames[0];
                 deathSeqs.Add(new DeathSeq { go = go, sr = sr, start = Time.time });
+                // Set here rather than in the tick: the real body can spawn in the very next frame,
+                // and WerewolfCorpse has to know to keep it hidden from that frame on.
+                SilverDeathPlaying = true;
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Werewolf] silver death sequence failed: {e.Message}");
             }
@@ -424,19 +437,16 @@ namespace UnknownsCollection {
                 if (t < animSecs) {
                     d.sr.sprite = deathFrames[Mathf.Clamp((int)(t * DeathFps), 0, DeathFrameCount - 1)];
                 } else {
-                    d.sr.sprite = deathFrames[DeathFrameCount - 1]; // hold the last frame
-                    float sinceHold = t - animSecs;
-                    if (sinceHold > DeathHoldSecs) {
-                        float fadeT = Mathf.Clamp01((sinceHold - DeathHoldSecs) / DeathFadeSecs);
-                        var c = d.sr.color;
-                        d.sr.color = new Color(c.r, c.g, c.b, 1f - fadeT);
-                        if (fadeT >= 1f) {
-                            UnityEngine.Object.Destroy(d.go);
-                            deathSeqs.RemoveAt(i);
-                        }
-                    }
+                    // Handover, not a fade: the last frame becomes the corpse's artwork and this
+                    // object goes. No blend between the two - the carcass the animation ends on and
+                    // the carcass on the body are the same pixels, so a swap in one frame is
+                    // invisible, while a cross-fade would show both at once.
+                    DeathCarcass = deathFrames[DeathFrameCount - 1];
+                    UnityEngine.Object.Destroy(d.go);
+                    deathSeqs.RemoveAt(i);
                 }
             }
+            SilverDeathPlaying = deathSeqs.Count > 0;
         }
 
         // ==================================================================================
@@ -637,6 +647,8 @@ namespace UnknownsCollection {
             try {
                 foreach (var d in deathSeqs) if (d.go != null) UnityEngine.Object.Destroy(d.go);
                 deathSeqs.Clear();
+                SilverDeathPlaying = false;
+                DeathCarcass = null;   // a new round must never inherit the last beast's carcass
             } catch { }
         }
     }

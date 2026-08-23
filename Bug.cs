@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -204,14 +204,28 @@ namespace UnknownsCollection {
             }
         }
 
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            bug = null;
+            active = false;
+            bugPlayerId = byte.MaxValue;
+            // NOTE: winnerBugId is intentionally NOT reset here (see its declaration).
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Bug", () => {
-                bug = null;
-                active = false;
-                bugPlayerId = byte.MaxValue;
-                // NOTE: winnerBugId is intentionally NOT reset here (see its declaration).
-            });
+            public static void Postfix() => UCResetGuard.Run("Bug", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Bug", ClearState);
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
@@ -260,7 +274,10 @@ namespace UnknownsCollection {
             // Priority.Last also puts this prefix AFTER TOR's (gameOverReason is already stamped) and
             // after Copycat's (WinnerCopycatId is already decided).
             public static void Prefix() {
-                if (active && bugPlayerId != byte.MaxValue) winnerBugId = bugPlayerId;
+                // Always reassign, never only on success: without the else branch a stale winnerBugId
+                // from an earlier round survives into a round the Bug is not in, and the postfix below
+                // would award a win to a player who no longer holds the role (Copycat.cs does it this way).
+                winnerBugId = (active && bugPlayerId != byte.MaxValue) ? bugPlayerId : byte.MaxValue;
                 try {
                     int reason = (int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason;
                     originalReason = OriginalReason(reason);
@@ -324,7 +341,7 @@ namespace UnknownsCollection {
                 // A Copycat that earned her shared win would have stood on that podium too.
                 if (Copycat.WinnerCopycatId != byte.MaxValue) {
                     PlayerControl cp = Helpers.playerById(Copycat.WinnerCopycatId);
-                    if (cp != null && cp.Data != null && !list.Any(w => w.PlayerName == cp.Data.PlayerName))
+                    if (cp != null && cp.Data != null && !list.Any(w => UCWinners.IsSameWinner(w, cp.Data)))
                         list.Add(new CachedPlayerData(cp.Data));
                 }
                 return list;

@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -444,29 +444,62 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Maniac.SetManiac")) ApplySetManiac(id); break; }
-                    case SubPlantBomb: ApplyPlantBomb(reader.ReadByte()); break;
-                    case SubWarnBomb: ApplyWarnBomb(reader.ReadByte()); break;
+                    // AUDIT H-5: every one of these used to apply unconditionally, so any client could
+                    // plant, defuse-by-passing, pre-detonate or wipe the bomb state at will. The legitimate
+                    // sender differs per subtype, so the guards do too.
+                    //
+                    // Owner-authored: the Maniac's own plant button (HudStartPatch below).
+                    case SubPlantBomb: { byte plantId = reader.ReadByte();
+                        if (UCRpc.RequireOwnerOrHost(maniac, "Maniac.PlantBomb")) ApplyPlantBomb(plantId);
+                        break; }
+                    // Host-only: the bomb state machine in HudUpdatePatch runs behind an AmHost gate.
+                    case SubWarnBomb: { byte warnId = reader.ReadByte();
+                        if (UCRpc.RequireHost("Maniac.WarnBomb")) ApplyWarnBomb(warnId);
+                        break; }
+                    // Sent by whoever CARRIES the bomb, not by the Maniac - so the guard is on the old
+                    // carrier. ApplyPassBomb additionally refuses any oldId that is not the real carrier,
+                    // which leaves the current carrier (or the host) as the only possible sender.
                     case SubPassBomb: {
                         byte oldId = reader.ReadByte();
                         byte newId = reader.ReadByte();
-                        ApplyPassBomb(oldId, newId);
+                        if (UCRpc.RequireOwnerOrHost(Helpers.playerById(oldId), "Maniac.PassBomb"))
+                            ApplyPassBomb(oldId, newId);
                         break;
                     }
-                    case SubExplode: ApplyExplode(reader.ReadByte()); break;
-                    case SubClear: ApplyClear(); break;
+                    // Host-only (same state machine).
+                    case SubExplode: { byte explodeId = reader.ReadByte();
+                        if (UCRpc.RequireHost("Maniac.Explode")) ApplyExplode(explodeId);
+                        break; }
+                    case SubClear:
+                        if (UCRpc.RequireHost("Maniac.Clear")) ApplyClear();
+                        break;
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] HandleRpc failed: {e}");
             }
         }
 
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            maniac = null;
+            active = false;
+            ClearBomb();
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Maniac", () => {
-                maniac = null;
-                active = false;
-                ClearBomb();
-            });
+            public static void Postfix() => UCResetGuard.Run("Maniac", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Maniac", ClearState);
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]

@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -218,7 +218,13 @@ namespace UnknownsCollection {
                         // AUDIT-2026-08-15: unlike SubSetSilencer above, this had no guard at all - any
                         // client could mute any player. Only the Silencer (or the host) may mark a target.
                         if (UCRpc.RequireOwnerOrHost(silencer, "Silencer.Silence")) ApplySilence(id); break; }
-                    case SubClear: ApplyClearSilences(); break;
+                    // Host-only. Not dead code, despite having no caller inside this mod: the sender is
+                    // ForceImpostorMod, which invokes SendClearSilences() by reflection from
+                    // PreClearUcResidues - and that runs behind MayControl (AmHost || Freeplay).
+                    // Unguarded, any client could lift every silence the moment it was cast.
+                    case SubClear:
+                        if (UCRpc.RequireHost("Silencer.ClearSilences")) ApplyClearSilences();
+                        break;
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] HandleRpc failed: {e}");

@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -60,6 +60,7 @@ namespace UnknownsCollection {
         private const byte SubScrubRole = 3;  // [pid] - leftover TOR role statics (see ScrubTorRoles)
         private const byte SubSetFaction = 4; // [pid][impostor bool] - vanilla faction, applied locally everywhere
         private const byte SubRevive    = 5;  // [pid] - revive a dead player (outside meetings)
+        private const byte SubArmKillFx = 6;  // [victimId][kind] - host tooling: pick the next cutscene
 
         public struct Tune {
             public float Speed;      // 1 = normal
@@ -350,6 +351,63 @@ namespace UnknownsCollection {
             }
         }
 
+        // ====================================================================
+        // Arm a chosen kill cutscene (host tooling)
+        //
+        // WHY THIS EXISTS
+        // There are 22 kill cutscenes across UC and TOR (UCKillOverlay.Kind), and the only way to
+        // see one used to be to actually roll that role, reach that exact situation, and be the
+        // killer or the victim. Verifying a single animation could cost a dozen rounds, and after a
+        // change to the overlay code there was no practical way to check the other twenty-one.
+        //
+        // ForceImpostorMod already has a test kill (RoleControl.Kill) that runs a real
+        // uncheckedMurderPlayer, so the kill itself is not this module's job. What was missing is
+        // the CHOICE of cutscene: without it the overlay hook falls back to whatever the situation
+        // happens to look like, which for a staged kill is nothing in particular. This arms one
+        // specific kind on every client, and the kill that follows consumes it exactly the way a
+        // real ability's arming would (UCKillOverlay.SelectRaw checks armedVictims first). So the
+        // code under test is the real path, not a preview mode that could drift away from it.
+        //
+        // A broadcast rather than a host-local call, because the cutscene plays on the killer's and
+        // the victim's own clients, not on the host's.
+        private static void ApplyArmKillFx(byte victimId, byte kind) {
+            try {
+                if (kind == 0) return;                  // 0 = leave it to the normal detection
+                UCKillOverlay.ArmVictim((UCKillOverlay.Kind)kind, victimId, 5f);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[PlayerTuning] ApplyArmKillFx failed: {e.Message}");
+            }
+        }
+
+        // Arms `kind` for the next death of `victimId`, on every client. The caller performs the
+        // kill itself right afterwards; the 5s time-to-live is what bridges the gap between this
+        // broadcast and the murder RPC that follows it.
+        public static bool SendArmKillFx(byte victimId, byte kind) {
+            try {
+                if (!MaySend(out string reason)) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[PlayerTuning] SendArmKillFx refused: {reason}.");
+                    return false;
+                }
+                var w = BeginRpc(SubArmKillFx);
+                w.Write(victimId);
+                w.Write(kind);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyArmKillFx(victimId, kind);
+                return true;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[PlayerTuning] SendArmKillFx failed: {e}");
+                return false;
+            }
+        }
+
+        // The cutscene names a host tool can offer, in enum order so the index IS the wire value.
+        // Plain strings, so ForceImpostorMod can read them by reflection without sharing the enum
+        // type (the contract style PlayerTuningBridge uses for everything else).
+        public static string[] KillFxKindNames() {
+            try { return Enum.GetNames(typeof(UCKillOverlay.Kind)); }
+            catch { return new string[0]; }
+        }
+
         public static bool SendRevive(byte pid) {
             try {
                 if (!MaySend(out string reason)) {
@@ -383,6 +441,16 @@ namespace UnknownsCollection {
             try {
                 var p = Helpers.playerById(pid);
                 if (p == null || p.Data == null || !p.Data.IsDead) return;
+                // Second meeting guard (AUDIT L-9). RoleControl.Revive already refuses this during a
+                // meeting - "the voting UI knows no resurrection" - but that guard sits with ONE
+                // caller, while this applier runs on every client and is reachable from anything that
+                // sends the module byte. A revive mid-meeting leaves the vote area showing a corpse
+                // for a player who is walking again, so the rule belongs here as well.
+                if (MeetingHud.Instance != null || ExileController.Instance != null) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning(
+                        $"[PlayerTuning] revive of {p.Data.PlayerName} ignored: a meeting is running.");
+                    return;
+                }
                 // Faction BEFORE Revive: the ghost role still carries IsImpostor, afterwards we
                 // re-issue the matching LIVING vanilla role (Revive alone leaves the ghost role).
                 bool wasImp = p.Data.Role != null && p.Data.Role.IsImpostor;
@@ -462,6 +530,12 @@ namespace UnknownsCollection {
                     case SubRevive:
                         ApplyRevive(reader.ReadByte());
                         break;
+                    case SubArmKillFx: {
+                        byte victimId = reader.ReadByte();
+                        byte kind = reader.ReadByte();
+                        ApplyArmKillFx(victimId, kind);
+                        break;
+                    }
                     default:
                         UnknownsCollectionPlugin.Logger?.LogWarning($"[PlayerTuning] unknown subtype {subtype}.");
                         break;

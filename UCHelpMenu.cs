@@ -80,9 +80,10 @@ namespace UnknownsCollection {
                 E("Collector", Faction.Neutral, () => Collector.Color, () => Collector.SpawnRate, "uc.help.collector"),
                 E("Pelican", Faction.Neutral, () => Pelican.Color, () => Pelican.SpawnRate, "uc.help.pelican"),
                 // AUDIT-2026-08-15: Necromancer was missing from the guide entirely despite being a
-                // spawnable Neutral role. "uc.help.necromancer" has no localization table entry yet;
-                // T()/TrIn() falls back to the raw key string rather than crashing, so this is safe
-                // to ship ahead of the localization pass (see concerns).
+                // spawnable Neutral role. Fixed AUDIT-2026-08-23 (L-19): "uc.help.necromancer" now has
+                // an English reference entry (Resources/Localization/en.json); every other language
+                // table falls back to it automatically via Tr()/TrIn(), so no per-language work is
+                // needed here.
                 E("Necromancer", Faction.Neutral, () => Necromancer.Color, () => Necromancer.SpawnRate, "uc.help.necromancer"),
 
                 E("Poltergeist", Faction.Ghost, () => Poltergeist.Color, () => Poltergeist.SpawnRate, "uc.help.poltergeist"),

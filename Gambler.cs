@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -143,7 +143,10 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, int> tasksThisRound = new Dictionary<byte, int>();
         private static bool deadlySabotageThisRound;
         private static byte lastReporter = byte.MaxValue;                       // 255 = emergency button
-        private static readonly List<byte> deathOrderThisRound = new List<byte>();
+        // Deaths of this round in order, each with the Time.time it happened (AUDIT M-10). The time
+        // matters because "who dies next" is asked from the moment the BET is placed, not from the
+        // start of the round - see the WhoDiesNext case in the settlement below.
+        private static readonly List<KeyValuePair<byte, float>> deathOrderThisRound = new List<KeyValuePair<byte, float>>();
         private static bool sabotageWasActive;
 
         // Local: cooldown until the next bet may be placed.
@@ -154,6 +157,16 @@ namespace UnknownsCollection {
 
         // Host: pending effect that has to be lifted again (tuning is a permanent multiplier).
         private static readonly Dictionary<byte, float> tuningUntil = new Dictionary<byte, float>();
+        // AUDIT-2026-08-23, L-30: ApplyCooldownEffect only loops PlayerControl.AllPlayerControls
+        // filtered on Role.IsImpostor at the moment a bet settles. A Jackal's Sidekick keeps
+        // RoleTypes.Crewmate (see TOR's jackalCreatesSidekick), so it never matches that filter even
+        // though it has its own kill button and is squarely part of the killing team - a Sidekick
+        // created BEFORE settlement silently skips the effect, and one created AFTER settlement (while
+        // the effect is still running) has no snapshot to be caught by at all. These two fields let the
+        // sidekick-creation hook (SidekickCooldownCatchupPatch below) retroactively apply the same
+        // multiplier the round's already-settled bet produced, instead of the sidekick falling through.
+        private static bool cooldownEffectActiveThisRound;
+        private static float lastCooldownMult = 1f;
         private static byte nextBetId;
 
         // Host-only: task completions we ordered ourselves, so a penalty reset does not look like
@@ -542,6 +555,28 @@ namespace UnknownsCollection {
             }
         }
 
+        // AUDIT-2026-08-23, L-30: ApplyCooldownEffect only snapshots PlayerControl.AllPlayerControls
+        // at bet-settlement time. A Sidekick minted by the Jackal AFTER that moment (but still within
+        // the same round, while the effect is running) was never part of that snapshot and would
+        // otherwise dodge the whole cooldown effect for the rest of the round - a real gap for the
+        // killing team's fairness, not just a cosmetic miss. Host-only (jackalCreatesSidekick runs
+        // identically on every client; only the host is allowed to hand out PlayerTuning changes).
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.jackalCreatesSidekick))]
+        static class SidekickCooldownCatchupPatch {
+            public static void Postfix([HarmonyArgument(0)] byte targetId) {
+                try {
+                    if (!AmHost() || !cooldownEffectActiveThisRound) return;
+                    if (Sidekick.sidekick == null || Sidekick.sidekick.PlayerId != targetId) return;
+                    PlayerTuning.SendSetTuning(targetId, 1f, lastCooldownMult, false);
+                    tuningUntil[targetId] = Time.time + 600f;
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        "[Gambler] fresh sidekick caught up to the round's active cooldown effect.");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Gambler] sidekick cooldown catch-up failed: {e}");
+                }
+            }
+        }
+
         // ====================================================================
         // Host: round observation
         // ====================================================================
@@ -551,7 +586,11 @@ namespace UnknownsCollection {
                 try {
                     if (!AmHost() || !active || target == null) return;
                     killTimes.Add(Time.time);
-                    if (!deathOrderThisRound.Contains(target.PlayerId)) deathOrderThisRound.Add(target.PlayerId);
+                    bool alreadyRecorded = false;
+                    for (int i = 0; i < deathOrderThisRound.Count; i++)
+                        if (deathOrderThisRound[i].Key == target.PlayerId) { alreadyRecorded = true; break; }
+                    if (!alreadyRecorded)
+                        deathOrderThisRound.Add(new KeyValuePair<byte, float>(target.PlayerId, Time.time));
                 } catch { }
             }
         }
@@ -693,10 +732,21 @@ namespace UnknownsCollection {
                     var t = Helpers.playerById(b.Target);
                     return t != null && t.Data != null && !t.Data.IsDead && !t.Data.Disconnected;
                 }
-                case BetKind.WhoDiesNext:
-                    // Nobody died at all -> the question was never answered.
-                    if (deathOrderThisRound.Count == 0) { push = true; return false; }
-                    return deathOrderThisRound[0] == b.Target;
+                case BetKind.WhoDiesNext: {
+                    // "NEXT" is measured from when the bet was placed, not from the start of the
+                    // round (AUDIT M-10). Reading deathOrderThisRound[0] meant that anyone who had
+                    // already died earlier this round permanently owned the answer: a bet placed
+                    // after the round's first kill could never be won and was not even refunded,
+                    // which is precisely the situation a Gambler bets in - somebody just died, who
+                    // is next? Only deaths at or after b.Placed count now.
+                    for (int i = 0; i < deathOrderThisRound.Count; i++) {
+                        if (deathOrderThisRound[i].Value < b.Placed) continue;
+                        return deathOrderThisRound[i].Key == b.Target;
+                    }
+                    // Nobody died after the bet was placed -> the question was never answered.
+                    push = true;
+                    return false;
+                }
             }
             push = true;
             return false;
@@ -908,10 +958,20 @@ namespace UnknownsCollection {
                 try { baseCd = Mathf.Max(1f, GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown); } catch { }
                 // won -> the impostors get SLOWER (longer cooldown), lost -> faster.
                 float mult = Mathf.Clamp(won ? (baseCd + delta) / baseCd : (baseCd - delta) / baseCd, 0.1f, 5f);
+                // Remembered so a Sidekick created AFTER this settlement can still be caught up while
+                // the effect is still running (AUDIT-2026-08-23, L-30; see SidekickCooldownCatchupPatch).
+                cooldownEffectActiveThisRound = true;
+                lastCooldownMult = mult;
 
                 foreach (var p in PlayerControl.AllPlayerControls.ToArray()) {
                     if (p == null || p.Data == null || p.Data.Role == null) continue;
-                    if (!p.Data.Role.IsImpostor || p.Data.Disconnected) continue;
+                    if (p.Data.Disconnected) continue;
+                    // AUDIT-2026-08-23, L-30: an existing Jackal Sidekick is part of the killing team
+                    // and has its own kill button (PlayerTuning's CustomButton.Update patch already
+                    // scales it generically), but it keeps RoleTypes.Crewmate, so IsImpostor alone would
+                    // let it dodge the whole effect.
+                    bool isSidekick = Sidekick.sidekick != null && Sidekick.sidekick.PlayerId == p.PlayerId;
+                    if (!p.Data.Role.IsImpostor && !isSidekick) continue;
                     PlayerTuning.SendSetTuning(p.PlayerId, 1f, mult, false);
                     // Until the next meeting: MeetingClosePatch clears it. A long fallback keeps a
                     // dropped meeting from making the effect permanent.
@@ -953,14 +1013,20 @@ namespace UnknownsCollection {
                     betCooldownLeft = 0f;
 
                     if (!AmHost()) return;
-                    // Impostor cooldown effects last exactly one round.
+                    // Impostor cooldown effects last exactly one round. Also covers a Sidekick that
+                    // received the effect (either in the settlement loop or via the catch-up patch
+                    // above): AUDIT-2026-08-23, L-30, a Sidekick keeps RoleTypes.Crewmate, so IsImpostor
+                    // alone would leave its entry in tuningUntil uncleared here and let it linger on the
+                    // 600-second fallback instead of ending with the round like every other target.
                     foreach (var kv in new List<KeyValuePair<byte, float>>(tuningUntil)) {
                         var p = Helpers.playerById(kv.Key);
                         if (p == null || p.Data == null || p.Data.Role == null) continue;
-                        if (!p.Data.Role.IsImpostor) continue;
+                        bool isSidekick = Sidekick.sidekick != null && Sidekick.sidekick.PlayerId == kv.Key;
+                        if (!p.Data.Role.IsImpostor && !isSidekick) continue;
                         tuningUntil.Remove(kv.Key);
                         try { PlayerTuning.SendClear(kv.Key); } catch { }
                     }
+                    cooldownEffectActiveThisRound = false;
                 } catch { }
             }
         }
@@ -1040,6 +1106,8 @@ namespace UnknownsCollection {
             deathOrderThisRound.Clear();
             pendingRecomplete.Clear();
             tuningUntil.Clear();
+            cooldownEffectActiveThisRound = false;
+            lastCooldownMult = 1f;
             deadlySabotageThisRound = false;
             sabotageWasActive = false;
             lastReporter = byte.MaxValue;

@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -76,9 +76,10 @@
  *
  * Options: 1544-1549. Win reason: 32 (see the constant below). See ID-Registry.md.
  * RPC: module byte 212 on UCRpc.CallId 230.
- * NOT in this stage (Paket W4): UCRoleDraft entry, UCGuesser entry, UCHelpMenu page,
- * TeslaVersionHandshake.AnyUCRoleEnabled, the UCKillOverlay beak cutscene (its sprite is already
- * registered as UCAssets.OverlayPelican).
+ * Fully integrated since Paket W4 shipped: draft sentinel 217 (UCRoleDraft), the UCGuesser entry,
+ * the UCHelpMenu page, TeslaVersionHandshake.AnyUCRoleEnabled and the UCKillOverlay beak cutscene
+ * (UCAssets.OverlayPelican). The list of "not in this stage" items that used to stand here was
+ * still promising all five as future work long after they were done.
  */
 
 using System;
@@ -1240,7 +1241,9 @@ namespace UnknownsCollection {
         static class OnGameEndPatch {
             // Snapshot BEFORE TOR's own reset can wipe the role statics (Bug/Collector precedent).
             public static void Prefix() {
-                if (active && pelicanPlayerId != byte.MaxValue) winnerPelicanId = pelicanPlayerId;
+                // Always reassign (Bug.cs precedent): without the else branch a stale id from an
+                // earlier round would survive into a round that has no Pelican.
+                winnerPelicanId = (active && pelicanPlayerId != byte.MaxValue) ? pelicanPlayerId : byte.MaxValue;
             }
 
             public static void Postfix() {

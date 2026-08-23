@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -301,14 +301,28 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Saboteur.SetSaboteur")) ApplySetSaboteur(id); break; }
-                    case SubClear: ApplyClear(); break;
+                    // Round/meeting ability reset. Only ever sent host-side (ForceImpostorMod's
+                    // PreClearUcResidues, which runs behind MayControl = AmHost || Freeplay); a forged
+                    // one re-arms killUsedThisRound and buys the Saboteur unlimited kills (AUDIT H-5).
+                    case SubClear:
+                        if (UCRpc.RequireHost("Saboteur.Clear")) ApplyClear();
+                        break;
+                    // Owner-authored, NOT host-only: the Saboteur's own button sends this (HudStartPatch
+                    // below). The host is accepted too, per the RequireOwnerOrHost contract. Guarding it
+                    // breaks the forged-console kill chain: a fake console the victim then completes
+                    // turns into a host-validated murder (AUDIT H-5).
                     case SubSetSabotagedConsole: {
                         float x = reader.ReadSingle();
                         float y = reader.ReadSingle();
-                        ApplySetSabotagedConsole(x, y);
+                        if (UCRpc.RequireOwnerOrHost(saboteur, "Saboteur.SetSabotagedConsole"))
+                            ApplySetSabotagedConsole(x, y);
                         break;
                     }
-                    case SubClearSabotage: ApplyClearSabotage(); break;
+                    // Host-only: every sender sits behind an AmHost gate (HostHandleRequestKill,
+                    // HandleSaboteurDeath).
+                    case SubClearSabotage:
+                        if (UCRpc.RequireHost("Saboteur.ClearSabotage")) ApplyClearSabotage();
+                        break;
                     case SubRequestKill: {
                         byte victimId = reader.ReadByte();
                         float x = reader.ReadSingle();
@@ -319,7 +333,9 @@ namespace UnknownsCollection {
                             HostHandleRequestKill(victimId, x, y); // no-op unless we are the host
                         break;
                     }
-                    case SubKillFx: ApplyKillFx(reader.ReadByte()); break;
+                    // Host-only: sent from HostHandleRequestKill right before the unchecked murder.
+                    case SubKillFx: { byte fxVictim = reader.ReadByte();
+                        if (UCRpc.RequireHost("Saboteur.KillFx")) ApplyKillFx(fxVictim); break; }
                     case SubPlaceTrap: {
                         int id = reader.ReadInt32();
                         float x = reader.ReadSingle();

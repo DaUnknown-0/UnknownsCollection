@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -146,11 +146,20 @@ namespace UnknownsCollection {
         private static float woundSlowUntil;
         private static float exhaustSlowUntil;
 
-        // Speed handling, Scout pattern (Scout.cs:338-346): never cache a "base" speed once - other
-        // roles/mods write MyPhysics.Speed too, so the base is re-derived from the CURRENTLY applied
-        // multiplier whenever the desired multiplier changes.
-        private static float speedBase;
-        private static float appliedMult = 1f;
+        // Speed handling: a velocity multiply, no bookkeeping at all (AUDIT-2026-08-23, M-6).
+        //
+        // This used to assign MyPhysics.Speed outright and keep two fields (speedBase, appliedMult)
+        // to be able to undo it - and that undo was the whole problem. MyPhysics.Speed is ONE global
+        // float per player and three effects assigned it: this form, the Scout ability and the
+        // Poltergeist hex. Every absolute write captures whatever the field currently holds, which
+        // may already be another effect's product, so a hex cast during wolf form got rebased into
+        // speedBase and stayed as a permanent floor after reverting - a frame-dependent race nobody
+        // could reproduce on demand. A round that ended in wolf form could leave a doubled base speed
+        // behind entirely, which is what the earlier RestoreSpeed fix was patching around.
+        //
+        // The multiplier is now applied to body.velocity per tick and NOTHING is stored: no base to
+        // capture, no restore to get wrong, no order dependency between the three effects. See
+        // SpeedMultNow and the two FixedUpdate patches at the bottom of this file.
 
         private static TheOtherRoles.Objects.CustomButton transformButton;
 
@@ -359,7 +368,9 @@ namespace UnknownsCollection {
                 return imps <= 1 && werewolf != null && IsAlive(werewolf) && werewolf.Data.Role != null
                        && werewolf.Data.Role.IsImpostor;
             } catch {
-                return true;
+                // Fail CLOSED, like LightsSabotageActive() above: this probe gates CanTransformNow() (and
+                // Hunter's own trigger), so a throw must not hand out a transform the option would forbid.
+                return false;
             }
         }
 
@@ -619,25 +630,12 @@ namespace UnknownsCollection {
         // Everything that outlives the wolfForm/charge fields: look, blood rings, round music, the
         // vision cone and the heartbeat loop. Used by the round reset AND by every (re)assignment,
         // so no effect can survive a handover. Each call is safe to repeat.
-        // AUDIT M-6: the speed boost does not live in appliedMult/speedBase, it lives in
-        // MyPhysics.Speed - those two fields are only the bookkeeping that lets TickSpeed undo it.
-        // Zeroing them without writing the base value back therefore does not remove the boost, it
-        // makes it PERMANENT: TickSpeed then believes nothing is applied and never corrects the
-        // inflated value. Measured by the self-test on a round that ended in wolf form: base speed 2,
-        // still 4 afterwards. Undo the factor first, then forget the bookkeeping.
-        private static void RestoreSpeed() {
-            try {
-                if (Mathf.Abs(appliedMult - 1f) > 0.0001f && speedBase > 0f) {
-                    var me = PlayerControl.LocalPlayer;
-                    if (me != null && me.MyPhysics != null) me.MyPhysics.Speed = speedBase;
-                }
-            } catch { }
-            appliedMult = 1f;
-            speedBase = 0f;
-        }
-
+        // RestoreSpeed is gone with the absolute write (AUDIT-2026-08-23, M-6). It existed to undo
+        // an assignment to MyPhysics.Speed, and getting that undo exactly right - including the case
+        // of a round ending mid-form, which once left a permanently doubled base speed - was the
+        // whole difficulty. A velocity multiply has nothing to undo: the moment wolfForm is false
+        // the multiplier is 1 and the next physics tick moves at the normal speed by itself.
         private static void ClearLingeringEffects() {
-            RestoreSpeed();
             try { WerewolfFx.ClearLook(); } catch { }
             try { WerewolfFx.ClearBloodRings(); } catch { }
             try { UCMusic.Release(MusicCue); } catch { }
@@ -670,7 +668,6 @@ namespace UnknownsCollection {
                 exhaustSlowUntil = 0f;
                 // transformButton deliberately kept (resetVariables runs AFTER HudManager.Start).
 
-                // Also resets appliedMult/speedBase, after writing the base speed back (AUDIT M-6).
                 ClearLingeringEffects();
             });
         }
@@ -688,7 +685,6 @@ namespace UnknownsCollection {
                 active = false;
                 wolfForm = false;
                 silverHitsTaken = 0;
-                appliedMult = 1f;
             }
         }
 
@@ -827,7 +823,8 @@ namespace UnknownsCollection {
 
                     // ---- everything below is OWNER-CLIENT ONLY ----
                     TickCharge();
-                    TickSpeed();
+                    // TickSpeed is gone (AUDIT M-6): the speed is applied per physics tick in the
+                    // two FixedUpdate patches below, not re-stamped from the HUD update.
                     TickButton();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] HudUpdate failed: {e}");
@@ -868,31 +865,54 @@ namespace UnknownsCollection {
             lightsWereOut = lightsOut;
         }
 
-        // Scout pattern (Scout.cs:338-346): re-derive the base speed from the multiplier that is
-        // CURRENTLY applied whenever the desired multiplier changes, instead of caching it once - so a
-        // TOR ability that writes MyPhysics.Speed in between is not overwritten with a stale value.
-        private static void TickSpeed() {
-            var me = PlayerControl.LocalPlayer;
-            if (me == null || me.MyPhysics == null) return;
-
+        // The wolf's speed factor for RIGHT NOW: the form bonus, cut by whichever slow is currently
+        // strongest. A pure function of the live state - it stores nothing, which is the entire
+        // point of the M-6 rework (see the field comment near the top of this file).
+        //
+        // Slows deliberately do not stack multiplicatively: a wounded AND exhausted wolf takes the
+        // harsher of the two, not their product, so the two never conspire into a crawl.
+        private static float SpeedMultNow() {
             float mult = wolfForm ? SpeedMultValue() : 1f;
-            // Slows do not stack multiplicatively - the strongest one wins (a wounded, exhausted wolf
-            // should not end up at 0.68x by accident).
             float slow = 1f;
             if (Time.time < woundSlowUntil) slow = Mathf.Min(slow, WoundSlowFactor);
             if (Time.time < exhaustSlowUntil) slow = Mathf.Min(slow, ExhaustSlowFactor);
-            mult *= slow;
+            return mult * slow;
+        }
 
-            if (Mathf.Abs(mult - appliedMult) > 0.0001f) {
-                speedBase = me.MyPhysics.Speed / Mathf.Max(0.0001f, appliedMult);
-                appliedMult = mult;
-                if (Mathf.Abs(mult - 1f) <= 0.0001f) {
-                    me.MyPhysics.Speed = speedBase;   // hand the speed back untouched and stop writing
-                    return;
-                }
+        // Owner side: the physics that actually move the wolf.
+        //
+        // Both patches gate on the werewolf's OWN id rather than on IsLocalWerewolf, so the remote
+        // patch below can apply the same factor to everyone else's view of the beast. wolfForm,
+        // werewolf and both slow timers are RPC-synced, so every client computes the same number.
+        [HarmonyPatch(typeof(PlayerPhysics), nameof(PlayerPhysics.FixedUpdate))]
+        static class SpeedOwnerPatch {
+            public static void Postfix(PlayerPhysics __instance) {
+                try {
+                    if (!active || werewolf == null) return;
+                    if (!__instance.AmOwner || __instance.myPlayer == null || __instance.myPlayer.Data == null) return;
+                    if (__instance.myPlayer.PlayerId != werewolf.PlayerId) return;
+                    float m = SpeedMultNow();
+                    if (Mathf.Abs(m - 1f) < 0.0001f) return;
+                    if (__instance.myPlayer.Data.IsDead || !__instance.myPlayer.CanMove) return;
+                    __instance.body.velocity *= m;
+                } catch { }
             }
-            if (Mathf.Abs(appliedMult - 1f) > 0.0001f && speedBase > 0f)
-                me.MyPhysics.Speed = speedBase * appliedMult;
+        }
+
+        // Remote side: what everyone else sees between position updates.
+        [HarmonyPatch(typeof(CustomNetworkTransform), nameof(CustomNetworkTransform.FixedUpdate))]
+        static class SpeedRemotePatch {
+            public static void Postfix(CustomNetworkTransform __instance) {
+                try {
+                    if (!active || werewolf == null) return;
+                    if (__instance.AmOwner || __instance.myPlayer == null || __instance.myPlayer.Data == null) return;
+                    if (__instance.myPlayer.PlayerId != werewolf.PlayerId) return;
+                    float m = SpeedMultNow();
+                    if (Mathf.Abs(m - 1f) < 0.0001f) return;
+                    if (__instance.myPlayer.Data.IsDead) return;
+                    __instance.body.velocity *= m;
+                } catch { }
+            }
         }
 
         private static void TickButton() {

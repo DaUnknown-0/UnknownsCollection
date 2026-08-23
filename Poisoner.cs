@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -242,15 +242,22 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Poisoner.SetPoisoner")) ApplySetPoisoner(id); break; }
-                    // All four remaining subtypes are host-only broadcasts (Send* gated behind AmHost in
-                    // MurderPatch/ReportPatch/MeetingClosePatch) - a forged sender could otherwise mark
-                    // bodies, arm/cure reporters or exile players at will (AUDIT-2026-08-15).
+                    // MarkBody / PoisonReporter / PoisonDeath are host-only broadcasts (Send* gated behind
+                    // AmHost in MurderPatch/ReportPatch/MeetingClosePatch) - a forged sender could otherwise
+                    // mark bodies, arm reporters or exile players at will (AUDIT-2026-08-15).
+                    //
+                    // Antidote is NOT one of them. It is the MEDIC's ability button (HudStartPatch below), so it
+                    // legitimately originates from the Medic's own client, which is usually not the host - the
+                    // same category UCRpc.RequireOwnerOrHost exists for. Gating it with RequireHost turned every
+                    // non-host Medic's cure into a local-only no-op: the Medic saw the cleanse and lost a charge,
+                    // while the host kept the reporter in poisonedReporters and killed them at MeetingHud.Close
+                    // anyway. The owner here is the Medic, not the Poisoner.
                     case SubMarkBody: { byte id = reader.ReadByte();
                         if (UCRpc.RequireHost("Poisoner.MarkBody")) ApplyMarkBody(id); break; }
                     case SubPoisonReporter: { byte id = reader.ReadByte();
                         if (UCRpc.RequireHost("Poisoner.PoisonReporter")) ApplyPoisonReporter(id); break; }
                     case SubAntidote: { byte id = reader.ReadByte();
-                        if (UCRpc.RequireHost("Poisoner.Antidote")) ApplyAntidote(id); break; }
+                        if (UCRpc.RequireOwnerOrHost(Medic.medic, "Poisoner.Antidote")) ApplyAntidote(id); break; }
                     case SubPoisonDeath: { byte id = reader.ReadByte();
                         if (UCRpc.RequireHost("Poisoner.PoisonDeath")) ApplyPoisonDeath(id); break; }
                 }
@@ -260,19 +267,33 @@ namespace UnknownsCollection {
         }
 
         // ---- Round reset ----
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            poisoner = null;
+            active = false;
+            poisonedBodies.Clear();
+            poisonedReporters.Clear();
+            bodiesPoisonedThisRound.Clear();
+            _pendingPoisonDeaths.Clear();
+            antidoteUsesLeft = 0;
+            // antidoteButton deliberately kept (resetVariables runs after HudManager.Start).
+            antidoteTarget = null;
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Poisoner", () => {
-                poisoner = null;
-                active = false;
-                poisonedBodies.Clear();
-                poisonedReporters.Clear();
-                bodiesPoisonedThisRound.Clear();
-                _pendingPoisonDeaths.Clear();
-                antidoteUsesLeft = 0;
-                // antidoteButton deliberately kept (resetVariables runs after HudManager.Start).
-                antidoteTarget = null;
-            });
+            public static void Postfix() => UCResetGuard.Run("Poisoner", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Poisoner", ClearState);
         }
 
         // ---- Game start ----

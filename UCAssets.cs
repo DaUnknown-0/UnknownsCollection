@@ -165,7 +165,19 @@ namespace UnknownsCollection {
             using Stream stream = asm.GetManifestResourceStream(path);
             if (stream == null) return null;
             var data = new byte[stream.Length];
-            _ = stream.Read(data, 0, (int)stream.Length);
+            // AUDIT-2026-08-23, L-19: a single Read() call is not guaranteed to fill the buffer in one
+            // go (Stream.Read may legitimately return fewer bytes than requested, e.g. for a manifest
+            // resource stream backed by a chunked/buffered reader), which used to silently hand a
+            // truncated byte array to ImageConversion.LoadImage and either fail to decode or decode a
+            // corrupted image. Same read-loop pattern as UCHats.ReadResource, which already gets this
+            // right for the exact same kind of embedded-resource stream.
+            int read = 0;
+            while (read < data.Length) {
+                int n = stream.Read(data, read, data.Length - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            if (read != data.Length) return null;
             var tex = new Texture2D(2, 2, TextureFormat.ARGB32, true);
             if (!ImageConversion.LoadImage(tex, data, false)) return null;
             tex.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;

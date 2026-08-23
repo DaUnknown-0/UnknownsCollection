@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -283,19 +283,25 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Auditor.SetAuditor")) ApplySetAuditor(id); break; }
+                    // AUDIT H-5: the queue broadcasts below applied unconditionally. A forged Dequeue
+                    // bumps revertCount (a cooldown advantage), a forged Lock makes entries unexpirable,
+                    // and forged Enqueue/Reverted desync the queue against the host's real one.
+                    //
+                    // Host-only: every sender sits behind AmHost() - CompleteTaskPatch (enqueue/overflow),
+                    // HostHandleRequest and the tick/meeting cleanups (dequeue/reverted).
                     case SubEnqueue: {
                         byte entryId = reader.ReadByte();
                         byte victim = reader.ReadByte();
                         byte typeId = reader.ReadByte();
                         uint taskId = reader.ReadUInt32();
                         float life = reader.ReadSingle();
-                        ApplyEnqueue(entryId, victim, typeId, taskId, life);
+                        if (UCRpc.RequireHost("Auditor.Enqueue")) ApplyEnqueue(entryId, victim, typeId, taskId, life);
                         break;
                     }
                     case SubDequeue: {
                         byte entryId = reader.ReadByte();
                         byte reason = reader.ReadByte();
-                        ApplyDequeue(entryId, reason);
+                        if (UCRpc.RequireHost("Auditor.Dequeue")) ApplyDequeue(entryId, reason);
                         break;
                     }
                     case SubReverted: {
@@ -304,7 +310,7 @@ namespace UnknownsCollection {
                         int n = reader.ReadByte();
                         var ids = new List<uint>(n);
                         for (int i = 0; i < n; i++) ids.Add(reader.ReadUInt32());
-                        ApplyReverted(entryId, victim, ids);
+                        if (UCRpc.RequireHost("Auditor.Reverted")) ApplyReverted(entryId, victim, ids);
                         break;
                     }
                     case SubRequest: {
@@ -315,13 +321,17 @@ namespace UnknownsCollection {
                         if (AmHost() && UCRpc.RequireOwnerOrHost(auditor, "Auditor.Request")) HostHandleRequest(entryId);
                         break;
                     }
+                    // Owner-authored: PollMinigameLock returns early unless IsLocalAuditor().
                     case SubLock: {
                         byte entryId = reader.ReadByte();
                         bool locked = reader.ReadBoolean();
-                        ApplyLock(entryId, locked);
+                        if (UCRpc.RequireOwnerOrHost(auditor, "Auditor.Lock")) ApplyLock(entryId, locked);
                         break;
                     }
-                    case SubOverflow: ApplyOverflow(); break;
+                    // Host-only (CompleteTaskPatch, behind AmHost()).
+                    case SubOverflow:
+                        if (UCRpc.RequireHost("Auditor.Overflow")) ApplyOverflow();
+                        break;
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Auditor] HandleRpc failed: {e}");
@@ -585,7 +595,29 @@ namespace UnknownsCollection {
                     var info = __instance.Data.FindTaskById(idx);
                     if (info == null) return;
 
-                    byte entryId = nextEntryId++;
+                    // AUDIT-2026-08-23, L-18: nextEntryId is only a byte, so after 256 completions it
+                    // silently wraps back to 0 (byte++ wraps in an unchecked context, it does not throw).
+                    // A stale entry that is still parked in the queue from long ago (a generous
+                    // EntryLifetime, or one paused for the whole meeting) could then collide with a
+                    // freshly-issued id, and the pendingRecomplete idempotency guard keys off exactly
+                    // this id - a collision lets a genuine new completion get treated as our own
+                    // re-completion (or vice versa), silently corrupting the queue. Walk forward until we
+                    // land on an id nothing in the queue currently holds. The queue itself is capped to a
+                    // handful of entries via QueueSize, so this exits on the very first check almost
+                    // always; the attempt ceiling only guards a future change that breaks that cap from
+                    // spinning here forever.
+                    byte entryId = nextEntryId;
+                    int idAttempts = 0;
+                    do {
+                        if (FindEntry(entryId) == null) break;
+                        entryId++;
+                    } while (++idAttempts < 256);
+                    if (idAttempts >= 256) {
+                        UnknownsCollectionPlugin.Logger?.LogError(
+                            "[Auditor] no free queue entry id found after 256 attempts, dropping this completion.");
+                        return;
+                    }
+                    nextEntryId = (byte)(entryId + 1);
                     SendEnqueue(entryId, __instance.PlayerId, info.TypeId, idx,
                                 EntryLifetime?.getFloat() ?? 90f);
                     UnknownsCollectionPlugin.Logger?.LogInfo(

@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -32,6 +32,26 @@ namespace UnknownsCollection {
         private const byte RpcId = UnknownsCollectionPlugin.FollowerRpcId;
         private const byte SubSetFollower = 0; // followerId
         private const byte SubShiftRole = 1;   // followerId, targetId
+
+        // AUDIT-2026-08-23, M-2 (FRAGEN Nr. 10, answered 2026-08-23: "end screen and export only").
+        //
+        // The takeover moves a TOR role STATIC, and those are single references: setRole writes
+        // Sheriff.sheriff = <follower>, so the dead player stops being the Sheriff retroactively.
+        // Everything that asks getRoleInfoForPlayer then reports them as a plain Crewmate, including
+        // the end-of-game summary and TrackerExport's snapshot: a player who spent the round as the
+        // Sheriff is recorded as having had no role at all.
+        //
+        // The role they held is remembered here so the summary can put it back. Deliberately NOT
+        // restored during the round: a Medium or a Seer would then read the same role twice, on the
+        // corpse and on the Follower, which is exactly the tell the takeover is supposed to hide.
+        // The choice of "end screen and export only" is the answer recorded in FRAGEN.md Nr. 10.
+        private static readonly Dictionary<byte, RoleId> rolesTakenOver = new Dictionary<byte, RoleId>();
+
+        // True from the moment the game ends. Set from a Priority.First prefix on OnGameEnd so it is
+        // already true for every other consumer of that event: TrackerExport reads its snapshot in an
+        // OnGameEnd PREFIX of its own (TOR's postfix wipes the statics), so a flag set any later
+        // would miss the very reader this fix exists for.
+        private static bool endScreenActive;
 
         private static RoleInfo followerInfo;
         public static RoleInfo FollowerInfo() => followerInfo ??= new RoleInfo(
@@ -142,6 +162,11 @@ namespace UnknownsCollection {
             }
 
             hasCopied = true;
+            // Remember what the dead player was, for the end-of-game summary only (see the field's
+            // comment). Plain Crewmate/Impostor is not worth recording: there is no role to lose.
+            if (roleId != RoleId.Crewmate && roleId != RoleId.Impostor)
+                rolesTakenOver[targetId] = roleId;
+
             // Takeover riser + energy-burst only for the Follower itself - the new role stays secret for
             // everyone else, so both cues share the exact same local-only gate.
             if (f == PlayerControl.LocalPlayer) {
@@ -179,13 +204,29 @@ namespace UnknownsCollection {
             }
         }
 
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            follower = null;
+            active = false;
+            hasCopied = false;
+            rolesTakenOver.Clear();
+            endScreenActive = false;
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Follower", () => {
-                follower = null;
-                active = false;
-                hasCopied = false;
-            });
+            public static void Postfix() => UCResetGuard.Run("Follower", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Follower", ClearState);
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
@@ -224,6 +265,31 @@ namespace UnknownsCollection {
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Follower] First death: {target.Data?.PlayerName}, shifting role to Follower.");
             SendShiftRole(follower.PlayerId, target.PlayerId);
+        }
+
+        // AUDIT-2026-08-11 M-1, fixed 2026-08-23: the three hooks below cover murders and the two
+        // exile controllers, but SIX ways to die reach neither. They all call target.Exiled()
+        // directly: the UC Poisoner (Poisoner.cs), TOR's Witch spell during the exile phase, a
+        // Guesser hit (RPC.cs:1015), the Lover following their partner, the Lawyer/Pursuer suicide
+        // and the Shifter losing their old role. A Follower whose lobby saw one of those as the
+        // first death simply kept waiting for a murder that had already been overtaken.
+        //
+        // Gated on "no exile controller is running" on purpose. A regular vote-out ALSO passes
+        // through Exiled(), and that case is already handled by the WrapUp hooks below, which fire
+        // after the cutscene. Without the gate the takeover would move to the start of the
+        // cutscene instead: harmless thanks to the hasCopied guard, but a visible timing change to
+        // the one path that works today. So the vote keeps its existing route and this hook only
+        // catches the deaths that have none.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.Exiled))]
+        static class ExiledDirectPatch {
+            public static void Postfix(PlayerControl __instance) {
+                try {
+                    if (ExileController.Instance != null) return;   // the vote path owns this one
+                    HandleFirstDeath(__instance);
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Follower] Exiled detection failed: {e}");
+                }
+            }
         }
 
         // Detect first death (host): when someone dies for the first time, tell the Follower
@@ -282,11 +348,46 @@ namespace UnknownsCollection {
             }
         }
 
+        // Arms the end-screen restore. Priority.First so this runs before every other prefix on
+        // OnGameEnd, including TrackerExport's snapshot in another assembly.
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
+        [HarmonyPriority(Priority.First)]
+        static class EndScreenArmPatch {
+            public static void Prefix() => endScreenActive = true;
+        }
+
         [HarmonyPatch(typeof(RoleInfo), nameof(RoleInfo.getRoleInfoForPlayer))]
         static class RoleInfoPatch {
             public static void Postfix(PlayerControl p, ref List<RoleInfo> __result) {
                 try {
-                    if (!active || follower == null || p == null || p != follower || __result == null) return;
+                    if (p == null || __result == null) return;
+
+                    // The player whose role was taken gets it back, but only once the round is over
+                    // (see rolesTakenOver). Checked before the Follower branch below because this is
+                    // about a DIFFERENT player: the corpse, not the Follower.
+                    if (endScreenActive && rolesTakenOver.TryGetValue(p.PlayerId, out RoleId stolen)) {
+                        bool alreadyThere = false;
+                        for (int i = 0; i < __result.Count; i++)
+                            if (__result[i] != null && __result[i].roleId == stolen) { alreadyThere = true; break; }
+                        if (!alreadyThere) {
+                            var info = RoleInfo.allRoleInfos.FirstOrDefault(x => x != null && x.roleId == stolen);
+                            if (info != null) {
+                                // Replace the bare "Crewmate" the moved static left behind; if the list
+                                // says something else entirely, prepend instead of throwing it away.
+                                bool replacedStolen = false;
+                                for (int i = 0; i < __result.Count; i++) {
+                                    if (__result[i] != null && __result[i].roleId == RoleId.Crewmate) {
+                                        __result[i] = info;
+                                        replacedStolen = true;
+                                        break;
+                                    }
+                                }
+                                if (!replacedStolen) __result.Insert(0, info);
+                            }
+                        }
+                    }
+
+                    if (!active || follower == null || p != follower) return;
 
                     // After the shift, the Follower has the real role (set by shiftRole), so let it show naturally.
                     if (hasCopied) return;

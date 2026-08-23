@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -45,11 +45,9 @@ namespace UnknownsCollection {
         public static bool active;
         public static bool abilityActive;
         public static float abilityEndTime;
-        private static float originalSpeed;
 
         // For controlling visibility (local player only)
         private static float currentAlpha = 1f;
-        private static bool wasAbilityActive;
 
         // Synced transparency alpha from RPC (for non-Scout clients)
         private static float syncedScoutAlpha = 1f;
@@ -164,7 +162,6 @@ namespace UnknownsCollection {
             // never fires) and the observer branch below writes it onto the next round's Scout every frame,
             // rendering the NEW Scout transparent from second 0 - a full role reveal.
             syncedScoutAlpha = 1f;
-            wasAbilityActive = false;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Scout] The Scout is {scout.Data?.PlayerName}.");
         }
 
@@ -180,10 +177,10 @@ namespace UnknownsCollection {
                 UCAssets.PlayScoutWhoosh(scout.GetTruePosition());
                 CrewFx.SpawnPoof(scout.GetTruePosition(), Color);
             }
+            // The speed itself is NOT written here any more (AUDIT M-6): `abilityActive` alone
+            // drives the velocity multiply in the FixedUpdate patches at the bottom of this file.
+            // See SpeedMult there for why the absolute MyPhysics.Speed write had to go.
             if (IsLocalScout()) {
-                originalSpeed = PlayerControl.LocalPlayer.MyPhysics.Speed;
-                float mult = SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.5f;
-                PlayerControl.LocalPlayer.MyPhysics.Speed = originalSpeed * mult;
                 if (scoutButton != null) scoutButton.Timer = dur;
                 // Broadcast transparency to other clients
                 float alpha = GetTransparency();
@@ -199,9 +196,8 @@ namespace UnknownsCollection {
                 UCAssets.PlayScoutWhoosh(scout.GetTruePosition(), 0.4f);
                 CrewFx.SpawnPoof(scout.GetTruePosition(), Color);
             }
-            if (IsLocalScout() && originalSpeed > 0) {
-                PlayerControl.LocalPlayer.MyPhysics.Speed = originalSpeed;
-            }
+            // Nothing to restore (AUDIT M-6): the speed was never written, it was multiplied onto
+            // the velocity each tick, and `abilityActive` is false from here on.
             currentAlpha = 1f;
             if (scoutButton != null) scoutButton.Timer = scoutButton.MaxTimer;
             // Apply (not send) - ApplyDeactivate() itself already runs on every client, either because the
@@ -231,29 +227,51 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Scout.SetScout")) ApplySetScout(id); break; }
-                    case SubActivate: ApplyActivate(); break;
-                    case SubDeactivate: ApplyDeactivate(); break;
-                    case SubTransparency: ApplyTransparency(reader.ReadSingle()); break;
+                    // Owner-authored, with the host as the documented fallback sender (HudUpdatePatch
+                    // deactivates on the host's behalf if the Scout disconnects mid-effect), which is
+                    // exactly what RequireOwnerOrHost allows. Unguarded, anyone could switch the
+                    // ability on and off for the Scout and desync its timer (AUDIT M-14).
+                    case SubActivate:
+                        if (UCRpc.RequireOwnerOrHost(scout, "Scout.Activate")) ApplyActivate();
+                        break;
+                    case SubDeactivate:
+                        if (UCRpc.RequireOwnerOrHost(scout, "Scout.Deactivate")) ApplyDeactivate();
+                        break;
+                    case SubTransparency: { float alpha = reader.ReadSingle();
+                        if (UCRpc.RequireOwnerOrHost(scout, "Scout.Transparency")) ApplyTransparency(alpha);
+                        break; }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Scout] HandleRpc failed: {e}");
             }
         }
 
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            scout = null;
+            active = false;
+            abilityActive = false;
+            abilityEndTime = 0;
+            currentAlpha = 1f;
+            observedAlpha = 1f;
+            syncedScoutAlpha = 1f; // synced target must not leak into the next round (see ApplySetScout)
+            // scoutButton deliberately kept (resetVariables runs after HudManager.Start).
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Scout", () => {
-                scout = null;
-                active = false;
-                abilityActive = false;
-                abilityEndTime = 0;
-                currentAlpha = 1f;
-                observedAlpha = 1f;
-                syncedScoutAlpha = 1f; // synced target must not leak into the next round (see ApplySetScout)
-                wasAbilityActive = false;
-                originalSpeed = 0;
-                // scoutButton deliberately kept (resetVariables runs after HudManager.Start).
-            });
+            public static void Postfix() => UCResetGuard.Run("Scout", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Scout", ClearState);
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
@@ -337,16 +355,10 @@ namespace UnknownsCollection {
                         }
                     }
 
-                    // Speed management
-                    if (local && abilityActive) {
-                        if (wasAbilityActive != abilityActive) {
-                            wasAbilityActive = abilityActive;
-                            float speedMult = SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.5f;
-                            originalSpeed = PlayerControl.LocalPlayer.MyPhysics.Speed / speedMult;
-                        }
-                        float m = SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.5f;
-                        PlayerControl.LocalPlayer.MyPhysics.Speed = originalSpeed * m;
-                    }
+                    // The per-frame re-stamping of MyPhysics.Speed that used to sit here is gone
+                    // (AUDIT M-6). It existed to win the absolute-write fight against the Werewolf
+                    // and the Poltergeist hex; with the speed applied multiplicatively there is
+                    // nothing left to fight over and nothing to re-stamp.
 
                     // Transparency management (client-side visual)
                     if (local) {
@@ -425,6 +437,65 @@ namespace UnknownsCollection {
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Scout] RoleInfo postfix failed: {e}");
                 }
+            }
+        }
+
+        // ====================================================================
+        // Speed: a velocity multiply, not an absolute MyPhysics.Speed write (AUDIT-2026-08-23, M-6)
+        //
+        // MyPhysics.Speed is ONE global float per player, and three things used to assign it
+        // outright: this ability, the Werewolf's wolf form and the Poltergeist's speed hex. Absolute
+        // writes to a shared field do not compose - each one captures whatever the field happened to
+        // hold, which may already be another effect's product, and each restore writes back a value
+        // that may no longer be current. The measured consequences were real: a hex cast during a
+        // scout run left a permanent x1.4 floor once the run ended, and a wolf reverting inside a hex
+        // window rebased itself onto the hex's inflated value and kept it for the rest of the round.
+        //
+        // Multiplying the velocity instead is commutative and stateless: nothing is captured, nothing
+        // is restored, and any number of effects stack in any order with the same result. The pattern
+        // is PlayerTuning's (PlayerTuning.cs:498-527), which is in turn SaboteurTrap's and
+        // TrapperLimp's - which is precisely why those three never collided with anything. The
+        // Poltergeist hex is now the only absolute writer left in this mod, so it has nobody to fight.
+        //
+        // Both sides are patched for the same reason PlayerTuning patches both: the owner's physics
+        // drive the real movement, and the remote CustomNetworkTransform drives what everyone else
+        // sees between position updates. `abilityActive` and `scout` are RPC-synced, so every client
+        // computes the same multiplier.
+        // ====================================================================
+        private static float SpeedMultFor(PlayerControl p) {
+            if (!active || !abilityActive || scout == null || p == null) return 1f;
+            if (p.PlayerId != scout.PlayerId) return 1f;
+            return SpeedMultiplier != null ? SpeedMultiplier.getFloat() : 1.5f;
+        }
+
+        [HarmonyPatch(typeof(PlayerPhysics), nameof(PlayerPhysics.FixedUpdate))]
+        static class SpeedOwnerPatch {
+            public static void Postfix(PlayerPhysics __instance) {
+                try {
+                    if (!active || !abilityActive) return;
+                    if (!__instance.AmOwner || __instance.myPlayer == null || __instance.myPlayer.Data == null) return;
+                    float m = SpeedMultFor(__instance.myPlayer);
+                    if (Mathf.Abs(m - 1f) < 0.0001f) return;
+                    // Respect anything that froze the player (Trapper stun, SaboteurTrap, a meeting):
+                    // multiplying a zero velocity is a no-op anyway, but CanMove also covers the
+                    // frames where the body is being driven by something else entirely.
+                    if (__instance.myPlayer.Data.IsDead || !__instance.myPlayer.CanMove) return;
+                    __instance.body.velocity *= m;
+                } catch { }
+            }
+        }
+
+        [HarmonyPatch(typeof(CustomNetworkTransform), nameof(CustomNetworkTransform.FixedUpdate))]
+        static class SpeedRemotePatch {
+            public static void Postfix(CustomNetworkTransform __instance) {
+                try {
+                    if (!active || !abilityActive) return;
+                    if (__instance.AmOwner || __instance.myPlayer == null || __instance.myPlayer.Data == null) return;
+                    float m = SpeedMultFor(__instance.myPlayer);
+                    if (Mathf.Abs(m - 1f) < 0.0001f) return;
+                    if (__instance.myPlayer.Data.IsDead) return;
+                    __instance.body.velocity *= m;
+                } catch { }
             }
         }
     }

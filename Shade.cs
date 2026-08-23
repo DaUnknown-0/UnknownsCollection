@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -241,20 +241,26 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Shade.SetShade")) ApplySetShade(id); break; }
+                    // All three of these are broadcast by the HOST only (MurderPatch and HudUpdatePatch
+                    // both return early unless AmHost), so the guard costs nothing and closes AUDIT H-4:
+                    // a forged AutoReport runs CmdReportDeadBody in a chosen player's name (fabricated
+                    // meetings), and a forged HideBody makes any corpse invisible and unreportable.
                     case SubHideBody: {
                         byte vid = reader.ReadByte();
                         float x = reader.ReadSingle();
                         float y = reader.ReadSingle();
-                        ApplyHideBody(vid, new Vector2(x, y));
+                        if (UCRpc.RequireHost("Shade.HideBody")) ApplyHideBody(vid, new Vector2(x, y));
                         break;
                     }
-                    case SubRevealBody:
-                        ApplyRevealBody(reader.ReadByte());
+                    case SubRevealBody: {
+                        byte rvid = reader.ReadByte();
+                        if (UCRpc.RequireHost("Shade.RevealBody")) ApplyRevealBody(rvid);
                         break;
+                    }
                     case SubAutoReport: {
                         byte vid = reader.ReadByte();
                         byte rid = reader.ReadByte();
-                        ApplyAutoReport(vid, rid);
+                        if (UCRpc.RequireHost("Shade.AutoReport")) ApplyAutoReport(vid, rid);
                         break;
                     }
                 }

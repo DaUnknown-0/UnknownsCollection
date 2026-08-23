@@ -45,10 +45,16 @@ namespace UnknownsCollection {
         // of being cleaned up immediately. Tracked separately and registered with UCFx's reset registry so
         // "Aufräumen über UCFx.RegisterReset" applies here too, not just to the live-clone bookkeeping.
         private static GameObject dissolveGo;
+        // AUDIT-2026-08-23, L-17: the dissolve's owned Material instances (see `ownedMaterials` below),
+        // captured alongside dissolveGo so a round reset landing mid-fade destroys them too instead of
+        // just the fading GameObject.
+        private static List<Material> dissolveOwnedMaterials;
 
         static IllusionistClone() {
             UCFx.RegisterReset(() => {
                 if (dissolveGo != null) { try { UnityEngine.Object.Destroy(dissolveGo); } catch { } dissolveGo = null; }
+                DestroyOwnedMaterials(dissolveOwnedMaterials);
+                dissolveOwnedMaterials = null;
             });
         }
 
@@ -56,6 +62,13 @@ namespace UnknownsCollection {
         private static SpriteRenderer[] renderers;   // clone renderers
         private static SpriteRenderer[] sources;     // live source renderers, parallel to `renderers`
         private static PlayerControl src;            // the live Illusionist we mirror
+        // AUDIT-2026-08-23, L-17: the per-renderer Material instances created below via
+        // `new Material(sr.material)`. They cannot be a sharedMaterial like the fallback path (each one
+        // is independently re-synced from its own source's material every frame in MirrorAppearance()),
+        // which means destroying `go` alone does NOT free them either - a GameObject's teardown only
+        // detaches its Renderer components, the native Material objects they pointed at leak until
+        // explicitly destroyed. Tracked here and destroyed alongside the clone in every teardown path.
+        private static List<Material> ownedMaterials;
 
         private static SpriteRenderer bodyClone;     // the clone's body renderer (driven by SpriteAnim)
         private static SpriteAnim bodyAnim;          // plays the vanilla Idle/Run/EnterVent/ExitVent clips
@@ -140,6 +153,7 @@ namespace UnknownsCollection {
 
                 go = new GameObject("IllusionistClone");
                 var built = new List<SpriteRenderer>(srcList.Count);
+                var newOwnedMaterials = new List<Material>(srcList.Count);
                 int bodyIdx = -1, skinIdx = -1;
                 foreach (var sr in srcList) {
                     if (sr == bodyRend) bodyIdx = built.Count;
@@ -153,7 +167,12 @@ namespace UnknownsCollection {
 
                     var cr = child.AddComponent<SpriteRenderer>();
                     cr.sprite = sr.sprite;
-                    try { cr.material = new Material(sr.material); } catch { cr.sharedMaterial = sr.sharedMaterial; }
+                    // AUDIT-2026-08-23, L-17: only the `new Material` branch needs to be tracked for
+                    // later Destroy() - the catch fallback assigns the SOURCE's own sharedMaterial (the
+                    // live player's actual cosmetics material), and destroying that would break the
+                    // real player's rendering, not just the clone's.
+                    try { cr.material = new Material(sr.material); newOwnedMaterials.Add(cr.material); }
+                    catch { cr.sharedMaterial = sr.sharedMaterial; }
                     cr.color = sr.color;
                     cr.flipX = false;                   // facing is handled by the root scale, not per-sprite
                     cr.flipY = sr.flipY;
@@ -164,6 +183,7 @@ namespace UnknownsCollection {
                 }
                 renderers = built.ToArray();
                 sources = srcList.ToArray();
+                ownedMaterials = newOwnedMaterials;
 
                 // Drive the body (and skin) with the vanilla animation clips so they walk on the clone's
                 // OWN movement instead of the live player's.
@@ -542,8 +562,10 @@ namespace UnknownsCollection {
         // meeting-start/round-reset where a scene change already covers the transition.
         public static void Despawn() {
             var toDestroy = go;
+            var toDestroyMaterials = ownedMaterials; // AUDIT-2026-08-23, L-17: captured before ResetState() nulls the field
             ResetState();
             if (toDestroy != null) { try { UnityEngine.Object.Destroy(toDestroy); } catch { } }
+            DestroyOwnedMaterials(toDestroyMaterials);
         }
 
         // Soft despawn: the clone dissolves (renderers fade out over DissolveDuration) instead of
@@ -555,16 +577,25 @@ namespace UnknownsCollection {
                 if (!active || go == null) { Despawn(); return; }
                 var fadeGo = go;
                 var fadeRenderers = renderers;
+                var fadeOwnedMaterials = ownedMaterials; // AUDIT-2026-08-23, L-17: captured before ResetState() nulls the field
                 var fadePos = currentPos;
                 ResetState();
                 if (dissolveGo != null) { try { UnityEngine.Object.Destroy(dissolveGo); } catch { } } // any earlier fade still in flight
+                DestroyOwnedMaterials(dissolveOwnedMaterials); // ditto for that earlier fade's owned materials
                 dissolveGo = fadeGo;
+                dissolveOwnedMaterials = fadeOwnedMaterials;
 
                 IllusionistFx.SpawnMaterializePoof(fadePos); // visual dissolve stays public
                 if (Illusionist.IsLocalIllusionist()) UCAssets.PlayIllusionistUnravelAt(fadePos); // sound Illusionist-only
 
                 var hud = HudManager.Instance;
-                if (hud == null) { if (fadeGo != null) UnityEngine.Object.Destroy(fadeGo); dissolveGo = null; return; }
+                if (hud == null) {
+                    if (fadeGo != null) UnityEngine.Object.Destroy(fadeGo);
+                    DestroyOwnedMaterials(fadeOwnedMaterials);
+                    dissolveGo = null;
+                    dissolveOwnedMaterials = null;
+                    return;
+                }
                 hud.StartCoroutine(Effects.Lerp(DissolveDuration, new Action<float>((t) => {
                     try {
                         if (fadeGo == null) return;
@@ -577,7 +608,8 @@ namespace UnknownsCollection {
                         }
                         if (t >= 1f) {
                             UnityEngine.Object.Destroy(fadeGo);
-                            if (dissolveGo == fadeGo) dissolveGo = null;
+                            DestroyOwnedMaterials(fadeOwnedMaterials);
+                            if (dissolveGo == fadeGo) { dissolveGo = null; dissolveOwnedMaterials = null; }
                         }
                     } catch { }
                 })));
@@ -587,12 +619,23 @@ namespace UnknownsCollection {
             }
         }
 
+        // AUDIT-2026-08-23, L-17: destroying a GameObject only detaches its Renderer components, it
+        // does not free the native Material instances that were assigned to them via `new Material(...)`
+        // - those leak for the rest of the process unless explicitly destroyed here. Every teardown path
+        // (hard despawn, soft dissolve, the superseded-fade case, and the round-reset registration)
+        // routes through this one helper.
+        private static void DestroyOwnedMaterials(List<Material> mats) {
+            if (mats == null) return;
+            foreach (var m in mats) if (m != null) { try { UnityEngine.Object.Destroy(m); } catch { } }
+        }
+
         private static void ResetState() {
             active = false;
             go = null;
             renderers = null;
             sources = null;
             src = null;
+            ownedMaterials = null;
             bodyClone = null;
             bodyAnim = null;
             idleClip = runClip = enterClip = exitClip = null;

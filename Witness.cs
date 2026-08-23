@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -266,16 +266,30 @@ namespace UnknownsCollection {
         // ====================================================================
         // Round reset
         // ====================================================================
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            witness = null;
+            active = false;
+            noteKillerId = noteVictimId = byte.MaxValue;
+            revealed = notesGiven = redNameExpired = wasInMeeting = false;
+            redNameApplyStart = redNameFadeStart = -10f;
+            pendingReporter = byte.MaxValue;
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Witness", () => {
-                witness = null;
-                active = false;
-                noteKillerId = noteVictimId = byte.MaxValue;
-                revealed = notesGiven = redNameExpired = wasInMeeting = false;
-                redNameApplyStart = redNameFadeStart = -10f;
-                pendingReporter = byte.MaxValue;
-            });
+            public static void Postfix() => UCResetGuard.Run("Witness", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Witness", ClearState);
         }
 
         // ====================================================================
@@ -390,7 +404,13 @@ namespace UnknownsCollection {
         // ====================================================================
         // Red killer name for the Witness (in-game + meeting). Cleared after a meeting if not permanent.
         // ====================================================================
+        // Priority.Low so this runs AFTER TOR's own HudManager.Update postfix: that one calls
+        // setNameColors(), which rewrites nameText.color of every player every single frame
+        // (UpdatePatch.cs:40,65,349). Without the priority both postfixes sit at Normal and the
+        // registration order decides who writes last - i.e. whether the red name shows at all.
+        // Same reasoning as WerewolfFx's name-tag postfix.
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        [HarmonyPriority(Priority.Low)]
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {

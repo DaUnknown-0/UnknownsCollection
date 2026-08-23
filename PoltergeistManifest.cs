@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -76,6 +76,23 @@ namespace UnknownsCollection {
             return w;
         }
 
+        // End reasons on the wire: 0 = the Poltergeist dropped the manifest itself, 1 = someone
+        // killed it. They are authored by different clients, hence the split guard below.
+        private const byte ReasonKilled = 1;
+
+        // True if the sender of the message being dispatched is a living player - i.e. someone who
+        // could actually have stabbed the manifest. See the ManifestEnd case for the reasoning.
+        private static bool SenderCouldHaveKilled() {
+            if (UCRpc.SenderIsHost) return true;
+            var sender = UCRpc.Sender;
+            if (sender != null && sender.Data != null && !sender.Data.IsDead && !sender.Data.Disconnected
+                && (Poltergeist.poltergeist == null || sender.PlayerId != Poltergeist.poltergeist.PlayerId))
+                return true;
+            UnknownsCollectionPlugin.Logger?.LogWarning(
+                "[UCRpc] 'Poltergeist.ManifestEnd(killed)' from a sender who cannot kill - ignored.");
+            return false;
+        }
+
         public static void HandleRpc(byte subtype, MessageReader reader) {
             switch (subtype) {
                 case SubManifestStart: {
@@ -89,8 +106,20 @@ namespace UnknownsCollection {
                 }
                 case SubManifestEnd: {
                     byte reason = reader.ReadByte();
-                    // AUDIT-2026-08-15: same gap as ManifestStart above.
-                    if (UCRpc.RequireOwnerOrHost(Poltergeist.poltergeist, "Poltergeist.ManifestEnd"))
+                    // AUDIT-2026-08-15 added an owner-or-host guard here, and AUDIT M-13 found it too
+                    // strict for reason 1: that end is sent by the KILLER's client (the impostor who
+                    // stabs the manifest, see the KillButton prefix below), never by the Poltergeist and
+                    // never by the host. The guard therefore dropped the legitimate message on every
+                    // other client - the manifest stayed standing until its timer ran out and the poof
+                    // and the stinger were only ever seen by the killer.
+                    //
+                    // Reason 1 accepts any LIVING sender instead: a ghost or a spectator has no kill
+                    // button, so this still keeps out the cheapest forgeries while restoring the
+                    // mechanic. A living player who forges it can end a manifest early - accepted, and
+                    // no worse than a real kill attempt, which they could simply walk over and perform.
+                    // Reason 0 (the Poltergeist ends it itself) keeps the strict owner-or-host rule.
+                    if ((reason == ReasonKilled) ? SenderCouldHaveKilled()
+                                               : UCRpc.RequireOwnerOrHost(Poltergeist.poltergeist, "Poltergeist.ManifestEnd"))
                         ApplyEnd(reason);
                     break;
                 }

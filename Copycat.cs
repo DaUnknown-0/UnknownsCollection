@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -534,7 +534,12 @@ namespace UnknownsCollection {
                             LearnAbility(ability);
                         break;
                     }
-                    case SubShootMiss: ApplyShootMiss(); break;
+                    // Host-only: DoShoot returns early unless AmHost. Cosmetic on its own (a miss chime
+                    // plus a red flash for the real Copycat), but there is no reason to let anyone else
+                    // fake it - a stranger could otherwise make the Copycat believe a shot was absorbed.
+                    case SubShootMiss:
+                        if (UCRpc.RequireHost("Copycat.ShootMiss")) ApplyShootMiss();
+                        break;
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] HandleRpc failed: {e}");
@@ -649,40 +654,54 @@ namespace UnknownsCollection {
         // ====================================================================
         // Round reset
         // ====================================================================
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            copycat = null;
+            active = false;
+            learnedAbilities.Clear();
+            // Plain bool, safe to reset here (unlike the button dictionary below): a stale `true`
+            // would make a round-2 revoke write a round-1 role value. Nothing to restore at this
+            // point - vanilla reassigns every RoleType at round start anyway.
+            ventPromotionActive = false;
+            usedAbilities.Clear();
+            shielded = camouflaged = isMorphed = false;
+            morphTargetId = byte.MaxValue;
+            shieldEndTime = camoEndTime = morphEndTime = 0f;
+            lastRealCamoTimer = 0f;
+            // Safe to null here - and note the contrast with abilityButtons right below, which is
+            // the exact opposite case: HudUpdatePatch re-derives both targets from scratch EVERY
+            // FRAME, while the buttons are built once per round in HudManager.Start (i.e. before
+            // this reset runs). Not a live bug either way - every read path is gated on `active`,
+            // which is false after this reset - purely hygiene so no PlayerControl of the previous
+            // round is kept alive.
+            currentTarget = null;
+            currentMorphTarget = null;
+            // abilityButtons deliberately NOT cleared: TOR runs resetVariables at ROUND START,
+            // AFTER HudManager.Start created the buttons (proof: resetVariables itself calls
+            // setCustomButtonCooldowns/CustomButton.ReloadHotkeys, which dereference finished
+            // button instances - RPC.cs:192-193, Buttons.cs:93). Clearing here took OnAbilityClick
+            // its only cooldown start - our buttons use the HasEffect=false overload, which never
+            // resets its own Timer, so every ability became spammable (Shoot every frame,
+            // permanent Shield). It also killed the MaxTimer refresh that compensates for the
+            // creation-time cooldown being read before clearAndReloadRoles reloads the options.
+            // Same rule as Collector/Poltergeist/Werewolf/... - see Collector.cs:299.
+            // NOTE: winnerCopycatId is intentionally NOT reset here (see its declaration).
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Copycat", () => {
-                copycat = null;
-                active = false;
-                learnedAbilities.Clear();
-                // Plain bool, safe to reset here (unlike the button dictionary below): a stale `true`
-                // would make a round-2 revoke write a round-1 role value. Nothing to restore at this
-                // point - vanilla reassigns every RoleType at round start anyway.
-                ventPromotionActive = false;
-                usedAbilities.Clear();
-                shielded = camouflaged = isMorphed = false;
-                morphTargetId = byte.MaxValue;
-                shieldEndTime = camoEndTime = morphEndTime = 0f;
-                lastRealCamoTimer = 0f;
-                // Safe to null here - and note the contrast with abilityButtons right below, which is
-                // the exact opposite case: HudUpdatePatch re-derives both targets from scratch EVERY
-                // FRAME, while the buttons are built once per round in HudManager.Start (i.e. before
-                // this reset runs). Not a live bug either way - every read path is gated on `active`,
-                // which is false after this reset - purely hygiene so no PlayerControl of the previous
-                // round is kept alive.
-                currentTarget = null;
-                currentMorphTarget = null;
-                // abilityButtons deliberately NOT cleared: TOR runs resetVariables at ROUND START,
-                // AFTER HudManager.Start created the buttons (proof: resetVariables itself calls
-                // setCustomButtonCooldowns/CustomButton.ReloadHotkeys, which dereference finished
-                // button instances - RPC.cs:192-193, Buttons.cs:93). Clearing here took OnAbilityClick
-                // its only cooldown start - our buttons use the HasEffect=false overload, which never
-                // resets its own Timer, so every ability became spammable (Shoot every frame,
-                // permanent Shield). It also killed the MaxTimer refresh that compensates for the
-                // creation-time cooldown being read before clearAndReloadRoles reloads the options.
-                // Same rule as Collector/Poltergeist/Werewolf/... - see Collector.cs:299.
-                // NOTE: winnerCopycatId is intentionally NOT reset here (see its declaration).
-            });
+            public static void Postfix() => UCResetGuard.Run("Copycat", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Copycat", ClearState);
         }
 
         // ====================================================================
@@ -918,7 +937,7 @@ namespace UnknownsCollection {
                     var p = Helpers.playerById(winnerCopycatId);
                     if (p == null || p.Data == null) return;
                     foreach (var w in EndGameResult.CachedWinners)
-                        if (w != null && w.PlayerName == p.Data.PlayerName) return; // already a winner
+                        if (UCWinners.IsSameWinner(w, p.Data)) return; // already a winner
                     EndGameResult.CachedWinners.Add(new CachedPlayerData(p.Data));
                     UnknownsCollectionPlugin.Logger?.LogInfo("[Copycat] Copycat wins with the winners!");
                 } catch (Exception e) {

@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -713,7 +713,10 @@ namespace UnknownsCollection {
 
         private static void UpdateManiac(float t, float exit) {
             float ein = EaseOut(Seg(t, 0f, 0.18f));
-            victimFig.SetAlpha(Mathf.Min(ein, t < 0.62f ? 1f : 1f) * (t < 0.92f ? 1f : exit));
+            // Was `Mathf.Min(ein, t < 0.62f ? 1f : 1f)`: both arms of that conditional are 1f, so
+            // the Min could only ever return `ein`. Written out, since a reader (and the last
+            // audit) inevitably stops to work out what the 0.62 threshold was supposed to do.
+            victimFig.SetAlpha(ein * (t < 0.92f ? 1f : exit));
 
             bool exploded = t >= 0.58f;
 

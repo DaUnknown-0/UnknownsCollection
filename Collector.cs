@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -12,8 +12,11 @@
  * hears a quiet glitter (the built-in counterplay). Collecting enough relics wins:
  *   - "Instant": the host ends the game immediately (own GameOverReason 19; the Bug uses 18);
  *   - "Survive To End": like the Bug, the win hijacks the next TEAM win while the Collector lives.
- *     If both a Bug and a full Collector are alive at a team win, whichever prefix rewrites the
- *     reason first wins the steal; the other one backs off because the reason is no longer a team win.
+ *     A Bug and a full Collector alive at the same team win no longer race for it (the comment here
+ *     used to say "whichever prefix rewrites the reason first"): the order is fixed by priority,
+ *     Pelican (First) then Collector (High) then Bug (Low), and all three ask the same
+ *     WouldHijackTeamWin helper, so the loser backs off because the reason is no longer a team win.
+ *     See AUDIT-2026-08-11 M-3, confirmed still correct on 2026-08-23.
  *
  * ARCHITECTURE mirrors Bug/Follower: neutral tag over a plain Crewmate, host-authoritative pick,
  * custom RPC (209), gated on "everyone has the mod". Options 1580-1588. See ID-Registry.md.
@@ -225,12 +228,14 @@ namespace UnknownsCollection {
         }
 
         private static void ApplyCollect(int relicId) {
-            // CollectorRelics.Collect(id) is itself idempotent (a missing/already-collected id is a
-            // no-op) because UTSRpc sends this over both the legacy callId and the collective channel
-            // and relies on double delivery being harmless. Mirror that here: only count and play the
-            // pickup effect when a relic actually existed to be removed, otherwise a duplicate/late RPC
-            // (or one for a bogus id) would let the Collector reach the win threshold with fewer relics
-            // than the option actually requires.
+            // CollectorRelics.Collect(id) is idempotent on its own (a missing or already-collected
+            // id is a no-op), and this applier matches it: only count the relic and play the pickup
+            // effect when one actually existed to be removed. Otherwise a duplicate, late or bogus
+            // id would walk the Collector towards the win threshold with fewer relics than the
+            // option requires.
+            // (The line that used to be here credited "UTSRpc sends this over both the legacy callId
+            // and the collective channel" - that is UTS's dual-send rationale, pasted in from
+            // another mod. This module rides UCRpc on channel 230 and is delivered exactly once.)
             var relic = CollectorRelics.ById(relicId);
             if (relic == null) return;
             Vector2 at = relic.pos;
@@ -268,20 +273,28 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Collector.SetCollector")) ApplySetCollector(id); break; }
+                    // Host-only: EnsureRelicsSpawned and the task-progress spawner both return early
+                    // unless AmHost. Unguarded they let anyone litter the map with phantom relics and
+                    // drive NeededCount (AUDIT H-5).
                     case SubSpawnRelics: {
                         int count = reader.ReadByte();
                         var positions = new List<Vector2>(count);
                         for (int i = 0; i < count; i++)
                             positions.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
-                        CollectorRelics.SpawnAll(positions);
+                        if (UCRpc.RequireHost("Collector.SpawnRelics")) CollectorRelics.SpawnAll(positions);
                         break;
                     }
-                    case SubCollect: ApplyCollect(reader.ReadByte()); break;
+                    // Owner-authored: only the Collector's own finished channel sends this. Unguarded,
+                    // a series of forged collects walks the Collector straight to the instant win
+                    // (GameOverReason 19) without a single relic ever being channelled (AUDIT H-5).
+                    case SubCollect: { byte relic = reader.ReadByte();
+                        if (UCRpc.RequireOwnerOrHost(collector, "Collector.Collect")) ApplyCollect(relic);
+                        break; }
                     case SubSpawnExtra: {
                         int relicId = reader.ReadByte();
                         float ex = reader.ReadSingle();
                         float ey = reader.ReadSingle();
-                        ApplySpawnExtra(relicId, new Vector2(ex, ey));
+                        if (UCRpc.RequireHost("Collector.SpawnExtra")) ApplySpawnExtra(relicId, new Vector2(ex, ey));
                         break;
                     }
                 }
@@ -670,7 +683,9 @@ namespace UnknownsCollection {
         [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
             public static void Prefix() {
-                if (active && collectorPlayerId != byte.MaxValue) winnerCollectorId = collectorPlayerId;
+                // Always reassign (Bug.cs precedent): without the else branch a stale id from an
+                // earlier round would survive into a round that has no Collector.
+                winnerCollectorId = (active && collectorPlayerId != byte.MaxValue) ? collectorPlayerId : byte.MaxValue;
             }
 
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {

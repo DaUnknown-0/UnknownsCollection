@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -357,21 +357,35 @@ namespace UnknownsCollection {
         // ====================================================================
         // Round reset
         // ====================================================================
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            tesla = null;
+            plusId = minusId = byte.MaxValue;
+            active = false;
+            countdown = 0f;
+            countdownLocal = 0f;
+            nextPulseTime = 0f;
+            dangerLocal = false;
+            graceUntil = 0f;
+            wasInMeeting = false;
+            chargedHistory.Clear();
+            TeslaMeetingUI.Reset();
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Tesla", () => {
-                tesla = null;
-                plusId = minusId = byte.MaxValue;
-                active = false;
-                countdown = 0f;
-                countdownLocal = 0f;
-                nextPulseTime = 0f;
-                dangerLocal = false;
-                graceUntil = 0f;
-                wasInMeeting = false;
-                chargedHistory.Clear();
-                TeslaMeetingUI.Reset();
-            });
+            public static void Postfix() => UCResetGuard.Run("Tesla", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Tesla", ClearState);
         }
 
         // Also clear the charged-history at game end (belt-and-suspenders; resetVariables already clears

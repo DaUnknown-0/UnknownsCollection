@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -163,10 +163,14 @@ namespace UnknownsCollection {
                         // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                         if (UCRpc.RequireHost("Manipulator.SetManipulator")) ApplySetManipulator(id); break; }
+                    // Owner-authored: the Manipulator's own button (HudStartPatch below) is the only
+                    // legitimate sender. Unguarded, any client could fire the Admin/Vitals lie in the
+                    // Manipulator's name, at any moment and for any duration (AUDIT H-5).
                     case SubManipulate: {
                         int seed = reader.ReadInt32();
                         float dur = reader.ReadSingle();
-                        ApplyManipulate(seed, dur);
+                        if (UCRpc.RequireOwnerOrHost(manipulator, "Manipulator.Manipulate"))
+                            ApplyManipulate(seed, dur);
                         break;
                     }
                 }
@@ -175,15 +179,29 @@ namespace UnknownsCollection {
             }
         }
 
+        // PlayerId-keyed state is cleared on OnGameJoined as well as on resetVariables
+        // (AUDIT M-12). PlayerIds are handed out per LOBBY, and resetVariables only ever
+        // arrives from a host that has this mod - so joining a vanilla host, or leaving a
+        // lobby abnormally, used to carry the previous game's ids into the next one and let
+        // them act on whoever happens to reuse them. Same belt-and-suspenders rule the
+        // Silencer and the Shade already followed; the body is shared so the two entry
+        // points can never drift apart.
+        private static void ClearState() {
+            manipulator = null;
+            active = false;
+            fakeUntil = 0f;
+            // manipulateButton deliberately kept: resetVariables runs AFTER HudManager.Start
+            // at round start - nulling it here orphans the live button (see Collector.cs).
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {
-            public static void Postfix() => UCResetGuard.Run("Manipulator", () => {
-                manipulator = null;
-                active = false;
-                fakeUntil = 0f;
-                // manipulateButton deliberately kept: resetVariables runs AFTER HudManager.Start
-                // at round start - nulling it here orphans the live button (see Collector.cs).
-            });
+            public static void Postfix() => UCResetGuard.Run("Manipulator", ClearState);
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class GameJoinPatch {
+            public static void Postfix() => UCResetGuard.Run("Manipulator", ClearState);
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]

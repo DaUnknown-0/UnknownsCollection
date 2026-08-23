@@ -1,4 +1,4 @@
-// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
+﻿// Unknown's Collection - Copyright (C) 2026 DaUnknown-0
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
@@ -278,6 +278,43 @@ namespace UnknownsCollection {
             }
             var p = Helpers.playerById(pid);
             if (p == null || p.Data == null) return;
+
+            // AUDIT M-11: the three rules that make a raise a raise - there IS a corpse, it is still
+            // fresh, and the Necromancer is standing at it - only ever ran in the owner's button path
+            // (NearestFreshBody). The host used to take any player id on faith, so a tampered client
+            // could raise a player who is merely dead-and-exiled (no corpse at all, which also skips
+            // the SnapTo in ApplyRaise) or one whose body went cold minutes ago. Same shape as
+            // Saboteur.HostHandleRequestKill: the host re-checks what the client claimed.
+            if (!p.Data.IsDead) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Necromancer] raise request rejected: player {pid} is alive.");
+                return;
+            }
+            if (!deathAt.TryGetValue(pid, out float diedAt)
+                || Time.time - diedAt > (Freshness?.getFloat() ?? 60f)) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Necromancer] raise request rejected: corpse of {pid} is cold or unknown.");
+                return;
+            }
+            DeadBody corpse = null;
+            foreach (var db in GetDeadBodies())
+                if (db != null && db.ParentId == pid) { corpse = db; break; }
+            if (corpse == null) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Necromancer] raise request rejected: no body for {pid} on the host.");
+                return;
+            }
+            if (necromancer == null || !IsAlive(necromancer)) {
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Necromancer] raise request rejected: no living Necromancer.");
+                return;
+            }
+            // Range check with the same slack the Saboteur's console check uses: the host's view of
+            // both positions is a network frame behind the owner's, and the channel takes seconds
+            // during which the Necromancer must not move anyway, so the tolerance only absorbs jitter.
+            float dist = Vector2.Distance(necromancer.GetTruePosition(), (Vector2)corpse.TruePosition);
+            if (dist > RaiseRange + RaiseRangeTolerance) {
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Necromancer] raise request rejected: Necromancer is {dist:0.00} away from the corpse of {pid}.");
+                return;
+            }
+
             SendRaise(pid);
         }
 
@@ -416,6 +453,11 @@ namespace UnknownsCollection {
 
         // ---- Raise button + channel (Collector pattern: move cancels, meeting cancels) ----
         private const float RaiseRange = 2.0f;
+
+        // Slack for the HOST's re-check of the same distance (AUDIT M-11). The owner's client decides
+        // on its own positions; the host validates a frame or two later, so an exact comparison would
+        // reject legitimate raises at the edge of the range.
+        private const float RaiseRangeTolerance = 1.0f;
 
         // AUDIT-2026-08-16: CouldUse() calls NearestFreshBody() every frame the button exists (see
         // CustomButton.Update), and the button exists for the whole round even when not channeling.

@@ -71,6 +71,17 @@ namespace UnknownsCollection {
         // fallback instead of a broken renderer.
         private static Shader additiveShader;
         private static bool additiveShaderChecked;
+        // AUDIT-2026-08-23, L-17: this used to be `sr.material = new Material(additiveShader)`, a
+        // brand-new native Material allocated on EVERY call. Every caller is a one-shot particle burst
+        // (Tesla/Saboteur kill FX, traps, the Werewolf glow, ...) that spawns dozens of these renderers
+        // per burst, many bursts per round; destroying the owning GameObject afterwards only detaches
+        // the SpriteRenderer, it does not free that native Material, so each burst leaked its whole
+        // batch for the rest of the process. None of the callers ever mutate this material's own
+        // properties afterwards (confirmed via grep: no .material.Set*/Get* on an additive-shader
+        // renderer anywhere in the mod - the tint is always done through SpriteRenderer.color instead),
+        // so a single cached instance shared via sharedMaterial is exactly as correct as a fresh copy
+        // and leaks nothing, same "build once, reuse forever" contract as the sprite cache above.
+        private static Material additiveMaterial;
 
         public static void TryMakeAdditive(SpriteRenderer sr) {
             if (sr == null) return;
@@ -78,8 +89,12 @@ namespace UnknownsCollection {
                 if (!additiveShaderChecked) {
                     additiveShader = Shader.Find("Legacy Shaders/Particles/Additive");
                     additiveShaderChecked = true;
+                    if (additiveShader != null) {
+                        additiveMaterial = new Material(additiveShader);
+                        additiveMaterial.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
+                    }
                 }
-                if (additiveShader != null) sr.material = new Material(additiveShader);
+                if (additiveMaterial != null) sr.sharedMaterial = additiveMaterial;
                 // else: leave the default (alpha-blended) material - safe fallback.
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[UCFx] additive material failed: {e.Message}");

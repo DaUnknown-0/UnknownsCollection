@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.2.11";
+    public const string PluginVersion = "1.2.2.12";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -81,7 +81,8 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte PlayerTuningRpcId = 213; // host tooling: per-player speed/cooldown/vent/tasks
     public const byte AuditorRpcId = 214;
     public const byte GamblerRpcId = 215;  // crew MODIFIER, no draft entry (rides on top of a role)
-    public const byte NecromancerRpcId = 216;  // neutral; raises corpses (Sub 0 set, Sub 1 raise)
+    public const byte NecromancerRpcId = 216;
+    public const byte ColorGrantRpcId = 217;   // host tooling: ask a player to change colour  // neutral; raises corpses (Sub 0 set, Sub 1 raise)
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -306,6 +307,11 @@ public class UnknownsCollectionPlugin : BasePlugin
         // Self-updater: checks GitHub releases and offers an in-game update (channel-aware: follows the
         // shared test-versions toggle). Must exist before registration so the repo fields resolve.
         AddComponent<UnknownsCollectionUpdater>();
+
+        // Host tooling: ask a player to change colour (they have to accept). The RPC receiver and
+        // the two screens; the palette entry itself is an attribute patch picked up by PatchAll.
+        UCColorGrant.RegisterRpc();
+        AddComponent<UCColorGrantUI>();
 
         // Register in the shared Mod Manager registry (cross-plugin, via AppDomain - no hard reference
         // to Useful TOR Stuff). Mirrors how ForceImpostorMod registers itself.

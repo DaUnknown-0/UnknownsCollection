@@ -3,7 +3,7 @@
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
 /*
- * UCColors - one more player colour, Purpur (#75151E), and the fallback that keeps it from
+ * UCColors - one more player colour, Purpur (#9D00FF), and the fallback that keeps it from
  * breaking anybody who does not have this mod.
  *
  * WHY THE FALLBACK IS NOT OPTIONAL
@@ -52,8 +52,12 @@ namespace UnknownsCollection {
 
         /// Purpur. The name id sits well clear of TOR's own block (50000 upwards, one per colour).
         private const int NameId = 50900;
-        public static readonly Color32 Purpur = new Color32(0x75, 0x15, 0x1E, byte.MaxValue);
-        public static readonly Color32 PurpurShadow = new Color32(0x45, 0x0A, 0x11, byte.MaxValue);
+        // Measured against the palette it joins: the nearest existing colour is TOR's Fuchsia
+        // (#A41181) at a distance of 127 in RGB, with Lavender (#AD7EC9) next at 138 - far enough
+        // apart to tell them on a crewmate. The shadow is the usual ~60% of the colour, which is the
+        // ratio TOR's own custom colours keep.
+        public static readonly Color32 Purpur = new Color32(0x9D, 0x00, 0xFF, byte.MaxValue);
+        public static readonly Color32 PurpurShadow = new Color32(0x5E, 0x00, 0x99, byte.MaxValue);
 
         /// Index into Palette.PlayerColors once installed, or -1 while it is not.
         public static int Index { get; private set; } = -1;

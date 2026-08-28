@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.2.12";
+    public const string PluginVersion = "1.2.2.14";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -310,6 +310,10 @@ public class UnknownsCollectionPlugin : BasePlugin
 
         // Host tooling: ask a player to change colour (they have to accept). The RPC receiver and
         // the two screens; the palette entry itself is an attribute patch picked up by PatchAll.
+        // The palette slots FIRST: UCColorGrant needs them to exist before it can hand one out,
+        // and this is a direct call rather than a patch because TOR built its palette during its
+        // own Load, before anything here could patch that method (see UCColors.Install).
+        UCColors.Install();
         UCColorGrant.RegisterRpc();
         AddComponent<UCColorGrantUI>();
 

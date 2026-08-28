@@ -3,46 +3,48 @@
 // Based on The Other Roles (https://github.com/TheOtherRolesAU/TheOtherRoles), GPL-3.0.
 
 /*
- * UCColors - one more player colour, Purpur (#9D00FF), and the fallback that keeps it from
- * breaking anybody who does not have this mod.
+ * UCColors - free colour slots, so the host can put a player into ANY colour, not just a palette
+ * entry.
  *
- * WHY THE FALLBACK IS NOT OPTIONAL
- * --------------------------------
- * A player colour is an INDEX into Palette.PlayerColors, and that array is only as long as the
- * mods present made it: vanilla ends at 17, TOR's CustomColors appends its own up to 41, and this
- * file appends one more at 42. The index is what travels over the network - RpcSetColor sends a
- * byte - so a client whose array stops at 41 and is told "colour 42" indexes past the end of it in
- * a render path.
+ * HOW A FREE COLOUR IS POSSIBLE AT ALL
+ * What travels over the network is an INDEX into Palette.PlayerColors, never an RGB value - that is
+ * what RpcSetColor sends and what every client renders from. An arbitrary colour therefore cannot
+ * be sent as a colour; it has to be a SLOT whose contents everybody agrees on. So this appends a
+ * block of empty slots to the palette, one per possible player, and UCColorGrant fills a slot by
+ * RPC before putting anybody in it. Every client with this mod writes the same RGB into the same
+ * slot, so the index they all receive resolves to the same colour on all of them.
  *
- * UC's version handshake blocks the game from STARTING while somebody is missing the mod
- * (TeslaVersionHandshake.BeginGameGatePatch), but it does not stop them JOINING, and the colour is
- * already being rendered in the lobby. So the handshake alone does not cover this, and two things
- * have to happen the moment a client without the mod is in the room:
+ * THE SLOTS ARE DELIBERATELY NOT IN THE COLOUR PICKER
+ * ----------------------------------------------------
+ * They are host-assigned by design, so they have no business in a picker - and staying out of it
+ * also steps around a live landmine in TOR:
  *
- *   1. NOBODY MAY KEEP THE COLOUR. The host moves anyone sitting on it to the nearest colour that
- *      exists without this mod. The host is the right actor because colour assignment is already
- *      host-authoritative - TOR's own CheckColor prefix resolves clashes by calling RpcSetColor
- *      from there - so one decision reaches everyone and no two clients disagree.
- *   2. NOBODY MAY PICK IT. The chip disappears from the colour tab, by the mechanism TOR's own tab
- *      builder already has: PlayerTabEnablePatch positions the chips named in its private ORDER
- *      list and switches off every chip beyond it (scale 0, button disabled, listeners removed).
- *      Leaving our index out of ORDER therefore hides it, and putting it back shows it again.
+ *   TheOtherRoles/Modules/CustomColors.cs:224, inside PlayerTabEnablePatch.Postfix:
+ *       if (pos < 0 || pos > chips.Length) continue;      // '>' where it must be '>='
+ *       ColorChip chip = chips[pos];                      // chips[chips.Length] -> out of bounds
  *
- * In the main menu there is no lobby to be unsafe in - AmongUsClient.Instance is null and
- * EveryoneHasMod() answers true - so the colour is pickable there as normal.
+ * That off-by-one cannot fire today, because TOR's ORDER list only ever holds 0..41 while
+ * chips.Length is 42. Putting an appended colour index into ORDER is exactly what would arm it, and
+ * an out-of-bounds read there is native - it would take the process, not throw. An earlier version
+ * of this file did try to add its colour to ORDER; that code never actually ran (see Install below
+ * for why), so this is a trap avoided rather than one already sprung. Do not add to ORDER.
  *
- * WHY THE NAME HAS TO BE REGISTERED, NOT JUST THE COLOUR
- * TOR's ColorStringPatch answers TranslationController.GetString for every StringNames at or above
- * 50000 out of its ColorStrings dictionary, and it does so with the INDEXER: an id in that range
- * that nobody registered throws KeyNotFoundException instead of falling through. So the name goes
- * into TOR's own dictionary (it is protected, hence the reflection) rather than into a second
- * GetString patch of ours.
+ * TOR's SECOND loop hides the slots for free - that one is written
+ * `for (int j = ORDER.Count; j < chips.Length; j++)` and is correctly bounded.
+ *
+ * pickableColors is left alone for the same reason. TOR uses it to resolve a colour clash by
+ * walking `(color + 1) % pickableColors`, and a free slot is not something a clash should hand out
+ * by accident.
+ *
+ * EVERY CLIENT NEEDS THE MOD, AND THE HOST ENFORCES IT
+ * A client without this mod has a shorter palette, so a slot index is past the end of its array. UC
+ * blocks the game from STARTING in that case but not from JOINING, so the guard below runs in the
+ * lobby and moves anybody off a custom slot the moment such a client is in the room.
  */
 
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using HarmonyLib;
 using TheOtherRoles.Modules;
 using UnityEngine;
@@ -50,99 +52,147 @@ using UnityEngine;
 namespace UnknownsCollection {
     public static class UCColors {
 
-        /// Purpur. The name id sits well clear of TOR's own block (50000 upwards, one per colour).
-        private const int NameId = 50900;
-        // Measured against the palette it joins: the nearest existing colour is TOR's Fuchsia
-        // (#A41181) at a distance of 127 in RGB, with Lavender (#AD7EC9) next at 138 - far enough
-        // apart to tell them on a crewmate. The shadow is the usual ~60% of the colour, which is the
-        // ratio TOR's own custom colours keep.
+        /// One slot per possible player, plus a little slack. A lobby holds 15.
+        public const int SlotCount = 16;
+
+        /// Name ids well clear of TOR's own block (50000 upwards, one per colour).
+        private const int NameIdBase = 50900;
+
+        /// First custom slot in Palette.PlayerColors, or -1 while none are installed.
+        public static int Base { get; private set; } = -1;
+        public static bool Installed => Base >= 0;
+
+        /// True for a colour index that only exists because of this mod.
+        public static bool IsCustom(int colour) => Installed && colour >= Base && colour < Base + SlotCount;
+
+        /// What an unfilled slot looks like, and what the slots are reset to between lobbies.
+        private static readonly Color32 Empty = new Color32(0x4A, 0x4A, 0x52, byte.MaxValue);
+
+        /// Purpur, the colour this started as. Kept as a named preset for the host's list rather
+        /// than a palette entry of its own - it is one hex value among all the others now.
         public static readonly Color32 Purpur = new Color32(0x9D, 0x00, 0xFF, byte.MaxValue);
-        public static readonly Color32 PurpurShadow = new Color32(0x5E, 0x00, 0x99, byte.MaxValue);
 
-        /// Index into Palette.PlayerColors once installed, or -1 while it is not.
-        public static int Index { get; private set; } = -1;
-
-        /// Where a player is moved when the colour becomes unsafe. Worked out once, from the
-        /// palette as it exists WITHOUT this mod, so it stays right if TOR ever adds colours.
-        private static int fallbackIndex = -1;
+        /// Where a player is moved when a custom slot becomes unusable.
+        private static int fallbackIndex;
 
         // ================================================================================
         // Install
         // ================================================================================
-        [HarmonyPatch(typeof(CustomColors), nameof(CustomColors.Load))]
-        internal static class InstallPatch {
-            public static void Postfix() {
+        /*
+         * CALLED DIRECTLY FROM THE PLUGIN, NOT AS A PATCH ON CustomColors.Load.
+         *
+         * That was the first attempt and it never ran once: TOR calls CustomColors.Load() inside
+         * its OWN plugin Load (Main.cs:127), and this mod has a hard dependency on TOR, so TOR is
+         * already fully loaded before PatchAll here can touch that method. A postfix on it is
+         * registered for a call that happened minutes ago. The symptom was silent - no slots, no
+         * log line, and the whole feature simply absent - which is exactly what a patch on an
+         * already-past call looks like.
+         *
+         * The dependency that made the patch useless is the same one that makes a direct call
+         * correct: by the time this runs, TOR's palette is built and ours goes on the end of it.
+         * UC's own options rely on that ordering for the same reason.
+         */
+        public static void Install() {
                 try {
-                    if (Index >= 0) return;                        // Load can run more than once
+                    if (Installed) return;                       // idempotent
 
                     // TOR's own idiom: pull the Il2Cpp arrays into managed lists, append, put back.
                     var names = Enumerable.ToList<StringNames>(Palette.ColorNames);
                     var colors = Enumerable.ToList<Color32>(Palette.PlayerColors);
                     var shadows = Enumerable.ToList<Color32>(Palette.ShadowColors);
 
-                    fallbackIndex = NearestExisting(colors);
+                    fallbackIndex = NearestExisting(colors, Purpur);
+                    Base = colors.Count;
 
-                    names.Add((StringNames)NameId);
-                    colors.Add(Purpur);
-                    shadows.Add(PurpurShadow);
-                    Index = colors.Count - 1;
+                    for (int i = 0; i < SlotCount; i++) {
+                        names.Add((StringNames)(NameIdBase + i));
+                        colors.Add(Empty);
+                        shadows.Add(Darker(Empty));
+                    }
 
                     Palette.ColorNames = names.ToArray();
                     Palette.PlayerColors = colors.ToArray();
                     Palette.ShadowColors = shadows.ToArray();
 
-                    // The name, into TOR's dictionary - see the header for why it must be there.
-                    var f = AccessTools.Field(typeof(CustomColors), "ColorStrings");
-                    var dict = f?.GetValue(null) as Dictionary<int, string>;
+                    // A name is required, not optional: TOR's ColorStringPatch answers GetString for
+                    // every StringNames at or above 50000 out of its ColorStrings dictionary, and it
+                    // does so with the INDEXER - an unregistered id in that range throws
+                    // KeyNotFoundException instead of falling through.
+                    var dict = AccessTools.Field(typeof(CustomColors), "ColorStrings")?.GetValue(null)
+                               as Dictionary<int, string>;
                     if (dict == null) throw new Exception("CustomColors.ColorStrings not reachable");
-                    dict[NameId] = "Purpur";
-
-                    // Count it among the pickable ones. TOR uses this both for the tab and for
-                    // resolving colour clashes, so it has to grow with the palette.
-                    CustomColors.pickableColors += 1;
+                    for (int i = 0; i < SlotCount; i++) dict[NameIdBase + i] = "Custom";
 
                     UnknownsCollectionPlugin.Logger?.LogInfo(
-                        $"[UCColors] Purpur installed as colour {Index}, fallback is colour {fallbackIndex}.");
+                        $"[UCColors] {SlotCount} free colour slots installed at {Base}..{Base + SlotCount - 1}; "
+                        + $"fallback is colour {fallbackIndex}. Deliberately NOT added to the colour picker.");
                 } catch (Exception e) {
-                    Index = -1;
+                    Base = -1;
                     UnknownsCollectionPlugin.Logger?.LogError($"[UCColors] install failed: {e}");
                 }
+        }
+
+        // ================================================================================
+        // Filling a slot
+        // ================================================================================
+        /// Writes an RGB value into one slot. Called on EVERY client from UCColorGrant's RPC, so the
+        /// index everybody receives resolves to the same colour everywhere.
+        public static bool SetSlot(int slot, Color32 rgb) {
+            if (!IsCustom(slot)) return false;
+            try {
+                var colors = Enumerable.ToList<Color32>(Palette.PlayerColors);
+                var shadows = Enumerable.ToList<Color32>(Palette.ShadowColors);
+                colors[slot] = rgb;
+                shadows[slot] = Darker(rgb);
+                Palette.PlayerColors = colors.ToArray();
+                Palette.ShadowColors = shadows.ToArray();
+                Refresh();
+                return true;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCColors] SetSlot({slot}) failed: {e}");
+                return false;
             }
         }
 
-        /*
-         * Which colour the player actually gets. The nearest one by default, but this goes straight
-         * to RpcSetColor and therefore past TOR's CheckColor prefix, which is what normally resolves
-         * two players landing on the same colour. So the clash is resolved here instead: if the
-         * nearest one is taken, walk forward through the colours that exist without this mod until
-         * a free one turns up. Falling back to the nearest one anyway (rather than looping forever)
-         * if the lobby is somehow full.
-         */
-        private static int FreeColourFor(PlayerControl who) {
-            int limit = Index > 0 ? Index : 1;                  // only colours everyone can resolve
-            for (int step = 0; step < limit; step++) {
-                int cand = (fallbackIndex + step) % limit;
-                if (!IsTaken(cand, who)) return cand;
-            }
-            return fallbackIndex;
+        /// The first slot nobody is standing in. -1 when they are all taken.
+        public static int FreeSlot() {
+            if (!Installed) return -1;
+            var used = new HashSet<int>();
+            try {
+                foreach (var p in PlayerControl.AllPlayerControls) {
+                    if (p == null || p.Data == null || p.Data.Disconnected) continue;
+                    used.Add(p.Data.DefaultOutfit.ColorId);
+                }
+            } catch { }
+            for (int i = 0; i < SlotCount; i++) if (!used.Contains(Base + i)) return Base + i;
+            return -1;
         }
 
-        private static bool IsTaken(int colour, PlayerControl except) {
-            foreach (var p in PlayerControl.AllPlayerControls) {
-                if (p == null || p.Data == null || p.Data.Disconnected) continue;
-                if (except != null && p.PlayerId == except.PlayerId) continue;
-                if (p.Data.DefaultOutfit.ColorId == colour) return true;
-            }
-            return false;
+        /// Among Us shades a crewmate with a second, darker tone per colour; TOR's own custom
+        /// colours sit at roughly 60% of theirs, so a filled slot follows the same ratio instead of
+        /// reading flatter than everything around it.
+        public static Color32 Darker(Color32 c) =>
+            new Color32((byte)(c.r * 0.60f), (byte)(c.g * 0.60f), (byte)(c.b * 0.60f), byte.MaxValue);
+
+        /// Re-tints everyone already wearing a slot: a player's look is built from the palette when
+        /// the colour is set, so a slot that changes afterwards needs its wearers rebuilt.
+        private static void Refresh() {
+            try {
+                foreach (var p in PlayerControl.AllPlayerControls) {
+                    if (p == null || p.Data == null || p.Data.Disconnected) continue;
+                    if (!IsCustom(p.Data.DefaultOutfit.ColorId)) continue;
+                    p.SetColor(p.Data.DefaultOutfit.ColorId);
+                }
+            } catch { }
         }
 
-        /// The closest colour to Purpur among the ones that exist without this mod, by plain squared
-        /// RGB distance. Not a hand-picked constant: TOR adds colours between releases, and the right
-        /// substitute is whatever is actually nearest in the palette we are appending to.
-        private static int NearestExisting(List<Color32> existing) {
+        /// The closest colour to `target` among the ones that exist without this mod, by plain
+        /// squared RGB distance. Not a hand-picked constant: TOR adds colours between releases, and
+        /// the right substitute is whatever is actually nearest in the palette we append to.
+        private static int NearestExisting(List<Color32> existing, Color32 target) {
             int best = 0; double bestD = double.MaxValue;
             for (int i = 0; i < existing.Count; i++) {
-                double dr = existing[i].r - Purpur.r, dg = existing[i].g - Purpur.g, db = existing[i].b - Purpur.b;
+                double dr = existing[i].r - target.r, dg = existing[i].g - target.g, db = existing[i].b - target.b;
                 double d = dr * dr + dg * dg + db * db;
                 if (d < bestD) { bestD = d; best = i; }
             }
@@ -152,45 +202,17 @@ namespace UnknownsCollection {
         // ================================================================================
         // Safety
         // ================================================================================
-        /// True while every client in the room has this mod - and therefore an array long enough to
-        /// resolve the colour. Outside a lobby this is true, which is what makes the colour
-        /// selectable from the main menu.
-        private static bool Safe() {
+        /// True while every client in the room has this mod, and therefore a palette long enough to
+        /// resolve a custom slot.
+        public static bool Safe() {
             try { return TeslaVersionHandshake.EveryoneHasMod(); } catch { return false; }
         }
 
         /*
-         * Hide or show the chip, by adding our index to TOR's ORDER list or taking it out again.
-         *
-         * A PREFIX, and deliberately at Priority.First: TOR lays the chips out in its own POSTFIX on
-         * the same method, reading ORDER as it finds it. Editing ORDER afterwards would change
-         * nothing until the tab is next opened.
-         */
-        [HarmonyPatch(typeof(PlayerTab), nameof(PlayerTab.OnEnable))]
-        [HarmonyPriority(Priority.First)]
-        internal static class ColorTabPatch {
-            public static void Prefix() {
-                try {
-                    if (Index < 0) return;
-                    var order = AccessTools.Field(typeof(CustomColors), "ORDER")?.GetValue(null) as List<int>;
-                    if (order == null) return;
-
-                    bool shouldShow = Safe();
-                    bool shown = order.Contains(Index);
-                    if (shouldShow && !shown) order.Add(Index);
-                    else if (!shouldShow && shown) order.Remove(Index);
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[UCColors] colour tab update failed: {e}");
-                }
-            }
-        }
-
-        /*
-         * The fallback itself. Runs on the host in the lobby: while anybody is missing the mod,
-         * nobody may be left sitting on a colour their client cannot resolve.
-         *
-         * Throttled to twice a second rather than run per frame - this walks the player list, and
-         * the situation it reacts to (somebody joining) does not need frame precision.
+         * The guard. Runs on the host in the lobby: while anybody is missing the mod, nobody may be
+         * left standing in a slot their client cannot resolve. Throttled to twice a second - this
+         * walks the player list, and the situation it reacts to (somebody joining) does not need
+         * frame precision.
          */
         [HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.Update))]
         internal static class LobbyGuardPatch {
@@ -198,7 +220,7 @@ namespace UnknownsCollection {
 
             public static void Postfix() {
                 try {
-                    if (Index < 0) return;
+                    if (!Installed) return;
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (Time.time < next) return;
                     next = Time.time + 0.5f;
@@ -206,17 +228,54 @@ namespace UnknownsCollection {
 
                     foreach (var p in PlayerControl.AllPlayerControls) {
                         if (p == null || p.Data == null || p.Data.Disconnected) continue;
-                        if (p.Data.DefaultOutfit.ColorId != Index) continue;
+                        if (!IsCustom(p.Data.DefaultOutfit.ColorId)) continue;
 
                         byte to = (byte)FreeColourFor(p);
                         p.RpcSetColor(to);
                         UnknownsCollectionPlugin.Logger?.LogInfo(
-                            $"[UCColors] {p.Data.PlayerName} was moved off Purpur to colour {to}: "
+                            $"[UCColors] {p.Data.PlayerName} was moved off a custom colour to {to}: "
                             + "somebody in the lobby does not have this mod and could not render it.");
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[UCColors] lobby guard failed: {e}");
                 }
+            }
+        }
+
+        /*
+         * Which colour the player gets instead. The nearest one by default, but this goes straight
+         * to RpcSetColor and therefore past TOR's CheckColor prefix, which is what normally resolves
+         * two players landing on the same colour - so the clash is resolved here instead.
+         */
+        private static int FreeColourFor(PlayerControl who) {
+            int limit = Base > 0 ? Base : 1;                    // only colours everyone can resolve
+            for (int step = 0; step < limit; step++) {
+                int cand = (fallbackIndex + step) % limit;
+                if (!IsTaken(cand, who)) return cand;
+            }
+            return fallbackIndex;
+        }
+
+        private static bool IsTaken(int colour, PlayerControl except) {
+            try {
+                foreach (var p in PlayerControl.AllPlayerControls) {
+                    if (p == null || p.Data == null || p.Data.Disconnected) continue;
+                    if (except != null && p.PlayerId == except.PlayerId) continue;
+                    if (p.Data.DefaultOutfit.ColorId == colour) return true;
+                }
+            } catch { }
+            return false;
+        }
+
+        /// Slots are per-lobby. Emptying them on join keeps a colour somebody was given in one lobby
+        /// from turning up on a stranger in the next.
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        internal static class ResetPatch {
+            public static void Postfix() {
+                try {
+                    if (!Installed) return;
+                    for (int i = 0; i < SlotCount; i++) SetSlot(Base + i, Empty);
+                } catch { }
             }
         }
     }

@@ -191,6 +191,10 @@ namespace UnknownsCollection {
             // native size on the player, which is exactly the case mipmaps exist for.
             var tex = new Texture2D(2, 2, TextureFormat.ARGB32, false);
             if (!ImageConversion.LoadImage(tex, data, false)) return null;
+            // MEMORY: a LoadImage'd texture stays readable, i.e. Unity keeps a full CPU copy next
+            // to the GPU one. Nothing in this codebase reads pixels back from these (no GetPixel /
+            // ReadPixels anywhere), so the copy was pure overhead: half of every icon and frame.
+            tex.Apply(false, true);
             tex.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
             return tex;
         }

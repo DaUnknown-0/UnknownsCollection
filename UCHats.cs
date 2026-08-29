@@ -564,6 +564,13 @@ namespace UnknownsCollection {
                 if (data == null) return null;
                 var texture = new Texture2D(2, 2, TextureFormat.ARGB32, true);
                 if (!ImageConversion.LoadImage(texture, data, false)) return null;
+                // MEMORY (2026-08-29): same diet UTS puts TOR's hat pack on (HatTextureDiet.cs).
+                // DXT5 is a quarter of ARGB32 and invisible at the size a hat is drawn; dropping the
+                // CPU copy halves what is left - nothing here ever reads a pixel back. Mipmaps stay,
+                // they are what keeps a hat drawn far below native size from shimmering. A Compress
+                // that refuses (odd sizes) leaves the texture as it was rather than losing the hat.
+                try { texture.Compress(true); } catch { }
+                texture.Apply(false, true);
                 var sprite = Sprite.Create(texture,
                     new Rect(0, 0, texture.width, texture.height),
                     new Vector2(0.53f, 0.575f),

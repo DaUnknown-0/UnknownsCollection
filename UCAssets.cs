@@ -178,7 +178,18 @@ namespace UnknownsCollection {
                 read += n;
             }
             if (read != data.Length) return null;
-            var tex = new Texture2D(2, 2, TextureFormat.ARGB32, true);
+            // PERF/MEMORY: no mip chain. A pyramid costs a third of the texture on top of it and
+            // buys nothing here: everything this loader hands out is drawn at a fixed on-screen
+            // size (button icons at 115 ppu, their 16-frame animation loops, the help-menu stills),
+            // so the smaller levels are never the ones sampled. Measured over the embedded PNGs
+            // this loader reaches - 368 animation frames plus 56 loose icons, 36,4 MB of pixels -
+            // the chain was up to 12,1 MB of pure overhead in a process that is 32-bit and has
+            // already died of OutOfMemory once (see Nightfall's material catalogue). Every
+            // procedurally drawn texture in this codebase already passes false here, and
+            // UnknownsAtlas' own resource loader does too; this was the odd one out. The hat
+            // loader in UCHats.cs deliberately KEEPS its chain - hats are drawn far below their
+            // native size on the player, which is exactly the case mipmaps exist for.
+            var tex = new Texture2D(2, 2, TextureFormat.ARGB32, false);
             if (!ImageConversion.LoadImage(tex, data, false)) return null;
             tex.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
             return tex;

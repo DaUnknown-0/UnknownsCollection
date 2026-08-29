@@ -416,17 +416,39 @@ public class UnknownsCollectionPlugin : BasePlugin
         // UnknownsCollective.Render() now owns the click entirely (toggle/expand + shared credit).
         private static string ModName => UCLocalization.Tr("uc.ui.modname");
 
+        // PERF: this line only ever changes when the language changes, but it was rebuilt sixty
+        // times a second - an interpolation plus a VersionDisplay.FormatRich call per frame. The
+        // cache is keyed on the translated name itself rather than hooked to
+        // UCLocalization.LanguageApplied: a plain string compare costs nothing next to the rebuild
+        // it replaces, needs no subscription to unwind, and is self-healing if the name ever
+        // changes by some path that does not raise that event.
+        private static string cachedLine;
+        private static string cachedForName;
+
         public static void Postfix(PingTracker __instance)
         {
             if (__instance == null || __instance.text == null) return;
             string text = __instance.text.text;
             if (string.IsNullOrEmpty(text)) return;
 
-            string line = $"<color=#1FB8FF>{ModName}</color> v{VersionDisplay.FormatRich(UnknownsCollectionPlugin.Version)}";
-            UnknownsCollective.Contribute(UnknownsCollectionPlugin.PluginGuid, line);
+            string name = ModName;
+            if (cachedLine == null || !string.Equals(cachedForName, name, StringComparison.Ordinal))
+            {
+                cachedForName = name;
+                cachedLine = $"<color=#1FB8FF>{name}</color> v{VersionDisplay.FormatRich(UnknownsCollectionPlugin.Version)}";
+            }
+
+            UnknownsCollective.Contribute(UnknownsCollectionPlugin.PluginGuid, cachedLine);
             text = UnknownsCollective.Render(__instance.text, text);
 
-            __instance.text.text = text;
+            // PERF: TextMeshPro rebuilds its mesh on EVERY assignment to .text, even when the
+            // string is identical - the setter marks the text dirty without comparing. Six of our
+            // mods write this same field one after another each frame (UC, UTS, Chance, HostFix,
+            // Nightfall, ForceImpostor) and UnknownsCollective.Render is idempotent within a
+            // frame, so at most the first of those writes carries a change. Comparing first turns
+            // six rebuilds per frame into one, and into none while the ping text sits still.
+            if (!string.Equals(__instance.text.text, text, StringComparison.Ordinal))
+                __instance.text.text = text;
         }
     }
 }

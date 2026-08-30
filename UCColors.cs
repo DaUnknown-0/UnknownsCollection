@@ -75,6 +75,75 @@ namespace UnknownsCollection {
         /// Where a player is moved when a custom slot becomes unusable.
         private static int fallbackIndex;
 
+        /*
+         * WHAT THE SLOTS HOLD, AND WHO WAS PUT IN ONE - both for as long as this lobby lasts.
+         *
+         * Neither existed until 2026-08-30, and that was the bug: the palette was the only record
+         * of a granted colour, and the palette is local to each client. A colour therefore
+         * survived exactly as long as nobody cleared it, and something did clear it at every round
+         * end (see ResetPatch). A player's colour INDEX lives in his player data and survives the
+         * round; the RGB behind that index has to survive with it, or he comes back grey.
+         */
+        private static readonly Color32[] slotRgb = new Color32[SlotCount];
+        private static readonly bool[] slotFilled = new bool[SlotCount];
+
+        /*
+         * PlayerId -> (slot, who), for every grant in this lobby. The host restores from this.
+         *
+         * WHY THE IDENTITY IS PART OF THE RECORD, and not just the id: Among Us REUSES PlayerIds.
+         * A player who was granted a colour can leave and the next person to join takes his id, and
+         * a record keyed on the id alone would then paint a stranger in a colour he never agreed to
+         * - in a feature whose entire design is that a colour is only ever changed with consent.
+         * So a record only counts while the person behind the id is still the same one: the friend
+         * code where there is one, the name otherwise.
+         */
+        private struct Grant {
+            public int Slot;
+            public string Who;
+        }
+
+        private static readonly Dictionary<byte, Grant> grants = new Dictionary<byte, Grant>();
+
+        /// Who a player is, for the record above. Friend code first: a name can be changed and can
+        /// repeat, a friend code is the player.
+        private static string Ident(PlayerControl p) {
+            try {
+                var d = p?.Data;
+                if (d == null) return "";
+                string fc = d.FriendCode;
+                if (!string.IsNullOrEmpty(fc)) return "fc:" + fc;
+                return "name:" + (d.PlayerName ?? "");
+            } catch { return ""; }
+        }
+
+        /// The lobby the records above belong to. `AmongUsClient.GameId` is the lobby's own id.
+        private static int lobbyId = int.MinValue;
+
+        /// The RGB in a slot, if anything was ever written into it.
+        public static bool TryGetSlot(int slot, out Color32 rgb) {
+            rgb = Empty;
+            if (!IsCustom(slot)) return false;
+            int i = slot - Base;
+            if (!slotFilled[i]) return false;
+            rgb = slotRgb[i];
+            return true;
+        }
+
+        /// Every slot that holds a colour, for the host's re-broadcast.
+        public static IEnumerable<KeyValuePair<int, Color32>> FilledSlots() {
+            if (!Installed) yield break;
+            for (int i = 0; i < SlotCount; i++)
+                if (slotFilled[i]) yield return new KeyValuePair<int, Color32>(Base + i, slotRgb[i]);
+        }
+
+        /// Called by UCColorGrant on the host the moment a grant goes through. The host also LEARNS
+        /// the same mapping from whoever is wearing a slot (LobbyGuardPatch.Restore), which is what
+        /// covers a host who took over the lobby after the colour was handed out.
+        public static void RememberGrant(PlayerControl who, int slot) {
+            if (who == null || !IsCustom(slot)) return;
+            grants[who.PlayerId] = new Grant { Slot = slot, Who = Ident(who) };
+        }
+
         // ================================================================================
         // Install
         // ================================================================================
@@ -140,6 +209,8 @@ namespace UnknownsCollection {
         public static bool SetSlot(int slot, Color32 rgb) {
             if (!IsCustom(slot)) return false;
             try {
+                slotRgb[slot - Base] = rgb;
+                slotFilled[slot - Base] = true;
                 var colors = Enumerable.ToList<Color32>(Palette.PlayerColors);
                 var shadows = Enumerable.ToList<Color32>(Palette.ShadowColors);
                 colors[slot] = rgb;
@@ -217,6 +288,7 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.Update))]
         internal static class LobbyGuardPatch {
             private static float next;
+            private static int lastClients = -1;
 
             public static void Postfix() {
                 try {
@@ -224,7 +296,8 @@ namespace UnknownsCollection {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (Time.time < next) return;
                     next = Time.time + 0.5f;
-                    if (Safe()) return;
+                    if (Safe()) { Restore(); return; }
+                    lastClients = -1;                 // so the next safe tick re-broadcasts
 
                     foreach (var p in PlayerControl.AllPlayerControls) {
                         if (p == null || p.Data == null || p.Data.Disconnected) continue;
@@ -238,6 +311,64 @@ namespace UnknownsCollection {
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[UCColors] lobby guard failed: {e}");
+                }
+            }
+
+            /*
+             * PUTTING A GRANTED COLOUR BACK. Two things can take it away, and the host is the only
+             * one who can undo either:
+             *
+             *  - A CLIENT THAT DOES NOT HAVE THE SLOT. He wrote his palette when he joined, and a
+             *    grant older than his arrival never reached him: he renders the wearer in whatever
+             *    that slot holds for him, which is the empty grey. Nobody could see this from the
+             *    host's side, so it was simply broken for late joiners. The trigger is the client
+             *    COUNT changing - the cheapest signal that says "somebody's palette is new".
+             *  - A COLOUR INDEX THAT CAME BACK CHANGED. The index lives in the player's data, and
+             *    if anything resets it (the game re-applying a saved colour, a clash resolution,
+             *    another mod), the wearer is out of his slot. The host sets it again.
+             *
+             * Only in the lobby, only while everyone has the mod: the same two conditions under
+             * which the colour could be handed out in the first place. Outside them the guard above
+             * is in charge and moves people OFF custom slots, and the two must not fight.
+             */
+            private static void Restore() {
+                if (!UCColorGrant.InLobby()) { lastClients = -1; return; }
+
+                int clients = 0;
+                try { clients = AmongUsClient.Instance.allClients?.Count ?? 0; } catch { }
+                if (clients != lastClients) {
+                    lastClients = clients;
+                    foreach (var kv in FilledSlots()) UCColorGrant.BroadcastSlot(kv.Key, kv.Value);
+                }
+
+                /*
+                 * LEARN BEFORE RESTORING. A grant is recorded when it happens, but the host may not
+                 * have been in the room then - a host change hands the lobby to somebody whose
+                 * record is empty. Whoever is standing in a filled slot right now is that same
+                 * information, and it is available to everybody, so it is read off the players
+                 * first. The order matters: read while things are still right, act when they break.
+                 */
+                foreach (var p in PlayerControl.AllPlayerControls) {
+                    if (p == null || p.Data == null || p.Data.Disconnected) continue;
+                    int worn = p.Data.DefaultOutfit.ColorId;
+                    if (IsCustom(worn) && TryGetSlot(worn, out _)) RememberGrant(p, worn);
+                }
+
+                if (grants.Count == 0) return;
+                foreach (var p in PlayerControl.AllPlayerControls) {
+                    if (p == null || p.Data == null || p.Data.Disconnected) continue;
+                    if (!grants.TryGetValue(p.PlayerId, out var g)) continue;
+                    // The id is the same; is the PERSON? If not, the record belongs to somebody who
+                    // has left and it dies here rather than colouring his successor.
+                    if (g.Who != Ident(p)) { grants.Remove(p.PlayerId); continue; }
+                    int slot = g.Slot;
+                    if (p.Data.DefaultOutfit.ColorId == slot) continue;
+                    if (!TryGetSlot(slot, out var rgb)) continue;
+                    UCColorGrant.BroadcastSlot(slot, rgb);
+                    p.RpcSetColor((byte)slot);
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[UCColors] restored {p.Data.PlayerName} to slot {slot} "
+                        + $"(#{rgb.r:X2}{rgb.g:X2}{rgb.b:X2}); the colour index had been reset.");
                 }
             }
         }
@@ -267,14 +398,34 @@ namespace UnknownsCollection {
             return false;
         }
 
-        /// Slots are per-lobby. Emptying them on join keeps a colour somebody was given in one lobby
-        /// from turning up on a stranger in the next.
+        /*
+         * Slots are per-LOBBY, and that is not the same thing as per-OnGameJoined.
+         *
+         * This used to empty every slot whenever OnGameJoined ran, which reads right and was
+         * wrong: the callback also fires when a round ENDS and everybody returns to the same
+         * lobby. The wearer keeps his colour index - that lives in his player data, not in the
+         * palette - so after every round he stood in a slot that had just been wiped, and the
+         * granted colour showed up as the empty grey. Reported 2026-08-30 ("die geaenderte Farbe
+         * wird bei jedem Rundenende zurueckgesetzt").
+         *
+         * So the wipe is tied to the lobby's own id instead. Same lobby, same slots; a different
+         * lobby empties them, which is what keeps a colour granted in one room from turning up on
+         * a stranger in the next.
+         */
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         internal static class ResetPatch {
             public static void Postfix() {
                 try {
                     if (!Installed) return;
-                    for (int i = 0; i < SlotCount; i++) SetSlot(Base + i, Empty);
+                    int id = 0;
+                    try { id = AmongUsClient.Instance != null ? AmongUsClient.Instance.GameId : 0; } catch { }
+                    if (id == lobbyId) return;                  // back in the same lobby: keep everything
+                    lobbyId = id;
+                    grants.Clear();
+                    for (int i = 0; i < SlotCount; i++) {
+                        SetSlot(Base + i, Empty);
+                        slotFilled[i] = false;                  // SetSlot marks it filled; it is not
+                    }
                 } catch { }
             }
         }

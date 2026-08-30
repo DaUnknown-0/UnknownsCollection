@@ -182,16 +182,30 @@ namespace UnknownsCollection {
 
             // Fill the slot EVERYWHERE before anybody is put into it, or a client renders whatever
             // that slot held a moment ago.
-            var w = UCRpc.Begin(RpcId);
-            w.Write(SubSetSlot);
-            w.Write((byte)slot);
-            w.Write(rgb.r); w.Write(rgb.g); w.Write(rgb.b);
-            AmongUsClient.Instance.FinishRpcImmediately(w);
-            UCColors.SetSlot(slot, rgb);
+            BroadcastSlot(slot, rgb);
 
             target.RpcSetColor((byte)slot);
+            // Recorded so the host can put this back: a late joiner never received the slot, and a
+            // colour index can come back changed from a round (UCColors.LobbyGuardPatch.Restore).
+            UCColors.RememberGrant(target, slot);
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[UCColorGrant] {target.Data?.PlayerName} accepted #{rgb.r:X2}{rgb.g:X2}{rgb.b:X2} in slot {slot}.");
+        }
+
+        /// Tells everyone what a slot holds, and writes it locally too. Used when a colour is
+        /// granted and again whenever the host has to restore one.
+        public static void BroadcastSlot(int slot, Color32 rgb) {
+            try {
+                if (AmongUsClient.Instance == null) return;
+                var w = UCRpc.Begin(RpcId);
+                w.Write(SubSetSlot);
+                w.Write((byte)slot);
+                w.Write(rgb.r); w.Write(rgb.g); w.Write(rgb.b);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                UCColors.SetSlot(slot, rgb);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCColorGrant] BroadcastSlot failed: {e}");
+            }
         }
 
         private static void Notify(string text) {

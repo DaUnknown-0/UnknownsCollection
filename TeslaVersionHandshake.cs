@@ -250,6 +250,9 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.Update))]
         [HarmonyPriority(Priority.Low)]
         static class GameStartManagerUpdatePatch {
+            private static float nextWarnCheck;
+            private static bool warnNeeded;
+
             public static void Postfix(GameStartManager __instance) {
                 if (PlayerControl.LocalPlayer != null && !versionSent) { versionSent = true; ShareVersion(); }
                 if (AmongUsClient.Instance == null) return;
@@ -261,7 +264,14 @@ namespace UnknownsCollection {
 
                 var text = __instance.GameStartText;
                 if (text == null) return;
-                if (!AnyUCRoleEnabled() || EveryoneHasMod()) return;
+                // PERF: twenty option reads plus a walk over allClients (with a Version allocated
+                // per call) every host lobby frame - now four times a second. The warning appears
+                // at most a quarter second late, which nobody can tell apart from instant.
+                if (Time.unscaledTime >= nextWarnCheck) {
+                    nextWarnCheck = Time.unscaledTime + 0.25f;
+                    warnNeeded = AnyUCRoleEnabled() && !EveryoneHasMod();
+                }
+                if (!warnNeeded) return;
                 string marker = "Unknown's Collection";
                 if (text.text != null && text.text.Contains(marker)) return;
 

@@ -19,7 +19,9 @@
  *     reference module. Sender applies locally (it never receives its own broadcast).
  *   - Speed: velocity-multiply in PlayerPhysics.FixedUpdate (owner) + CustomNetworkTransform.
  *     FixedUpdate (remote view) - the SaboteurTrap/TrapperLimp/PropHunt approach. Deliberately
- *     NOT MyPhysics.Speed: that global field is fought over by Scout/Werewolf/Poltergeist.
+ *     NOT MyPhysics.Speed: that global field used to be fought over by absolute writes from
+ *     Scout/Werewolf/Poltergeist (AUDIT-2026-08-23, M-6); all three now use the same
+ *     velocity-multiply pattern, so nothing left in this mod writes it outright anymore.
  *   - Cooldowns: rate-scaling. CustomButton.Update gets a prefix/postfix pair measuring the
  *     actual tick delta (inherits ALL of TOR's gates for free: draft, vent, moveable, effect
  *     duration is exempt). The vanilla kill timer gets the same treatment in a

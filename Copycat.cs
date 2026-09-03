@@ -120,11 +120,7 @@ namespace UnknownsCollection {
         internal static byte WinnerCopycatId => winnerCopycatId;
 
         // ---- TOR CustomRPC byte values (enum is internal) - verified against TheOtherRoles RPC.cs ----
-        private const byte TorMorphlingRpc = 130;  // CustomRPC.MorphlingMorph
-        private const byte TorCamouflageRpc = 131; // CustomRPC.CamouflagerCamouflage
-        private const byte TorTimeMasterRpc = 126; // CustomRPC.TimeMasterShield
         private const byte TorMurderRpc = 108;     // CustomRPC.UncheckedMurderPlayer (any kill; also our Shoot)
-        private const byte TorVentRpc = 107;       // CustomRPC.UseUncheckedVent (anyone venting)
 
         // ---- Custom RPC subtypes: module byte 206 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 206; // == UnknownsCollectionPlugin.CopycatRpcId
@@ -184,17 +180,6 @@ namespace UnknownsCollection {
             PlayerControl.AllPlayerControls.ToArray().Count(p => p != null && p.Data != null && !p.Data.Disconnected);
         public static bool IsLocalCopycat() =>
             copycat != null && PlayerControl.LocalPlayer != null && copycat.PlayerId == PlayerControl.LocalPlayer.PlayerId;
-
-        private static Ability? RpcToAbility(byte callId) {
-            return callId switch {
-                TorCamouflageRpc => Ability.Camouflage,
-                TorMorphlingRpc => Ability.Morphling,
-                TorTimeMasterRpc => Ability.Shield,
-                TorMurderRpc => Ability.Shoot,
-                // Vent is NOT learned here: it is gated on line-of-sight and handled in VentEnterLearnPatch.
-                _ => null
-            };
-        }
 
         private static int MaxAbilities() =>
             MaxAbilitiesStored != null ? Mathf.RoundToInt(MaxAbilitiesStored.getFloat()) : 3;
@@ -546,24 +531,50 @@ namespace UnknownsCollection {
             }
         }
 
-        // The ONE HandleRpc patch left outside UCRpc.cs - and deliberately so: this is not a receiver
-        // for our own channel (that moved to HandleModuleRpc above), it SNIFFS TOR's ability RPCs so
-        // the Copycat can learn from them. It only inspects callId - never reads the reader - and
-        // always returns true, so TOR's own handler still sees an untouched stream.
-        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
-        static class TorAbilitySnifferPatch {
-            public static bool Prefix(byte callId, MessageReader reader) {
+        // Ability sniffing used to Prefix PlayerControl.HandleRpc and inspect the raw callId. That only
+        // fires for RPCs the local client RECEIVES over the network - but TOR applies its own RPCs
+        // locally on the sender's client via FinishRpcImmediately(w) with -1 as the target (see e.g.
+        // RPC.cs camouflagerCamouflage callers), which never loops back through HandleRpc. So a Copycat
+        // who was themself the one casting Camouflage/Morph/Shield/a kill never learned it - only
+        // bystanders who received the RPC did. Postfixing the managed RPCProcedure methods instead
+        // fires identically on every client that runs the effect, sender included, exactly the audience
+        // that is supposed to learn from witnessing it. LearnAbility already carries every guard that
+        // matters here (active, CopycatIsAlive, dedup, capacity), so these postfixes need none of their
+        // own beyond "did this effect actually apply" (Camouflager.camouflager != null etc., mirroring
+        // the early-out each RPCProcedure method itself uses).
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.camouflagerCamouflage))]
+        static class LearnCamouflagePatch {
+            public static void Postfix() {
                 try {
-                    if (callId == UCRpc.CallId) return true; // our own channel is never a TOR ability
-                    if (active && copycat != null) {
-                        var ability = RpcToAbility(callId);
-                        if (ability != null) LearnAbility(ability.Value);
-                    }
-                } catch (Exception e) {
-                    UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff failed: {e}");
-                }
-                return true; // never consumes anything
+                    if (Camouflager.camouflager != null) LearnAbility(Ability.Camouflage);
+                } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Camouflage) failed: {e}"); }
+            }
+        }
+
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.morphlingMorph))]
+        static class LearnMorphlingPatch {
+            public static void Postfix() {
+                try {
+                    if (Morphling.morphling != null) LearnAbility(Ability.Morphling);
+                } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Morphling) failed: {e}"); }
+            }
+        }
+
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.timeMasterShield))]
+        static class LearnShieldPatch {
+            public static void Postfix() {
+                try {
+                    LearnAbility(Ability.Shield);
+                } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Shield) failed: {e}"); }
+            }
+        }
+
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.uncheckedMurderPlayer))]
+        static class LearnShootPatch {
+            public static void Postfix() {
+                try {
+                    LearnAbility(Ability.Shoot);
+                } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Shoot) failed: {e}"); }
             }
         }
 

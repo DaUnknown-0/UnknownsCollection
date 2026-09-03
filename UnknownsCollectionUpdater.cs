@@ -118,23 +118,34 @@ namespace UnknownsCollection {
         private IEnumerator CoDownloadRelease(GithubRelease release, bool managerMode) {
             _busy = true; _updateState = 1; _updateProgress = 0f;
 
+            // No Among Us TwitchPopup in manager mode; the Mod Manager shows progress/state itself via
+            // GetUpdateState()/GetUpdateProgress(). TwitchManager.Instance or its TwitchPopup can be
+            // null (main menu not fully initialized yet, or a build where the field is simply not set
+            // up) - fall back to working popup-less, same as managerMode, rather than NRE-ing out of the
+            // coroutine and leaving _busy stuck true for the session (mirrors Nightfall/NightfallUpdater.cs).
             GenericPopup popup = null;
             GameObject button = null;
             if (!managerMode) {
-                popup = Instantiate(TwitchManager.Instance.TwitchPopup);
-                popup.TextAreaTMP.fontSize *= 0.7f;
-                popup.TextAreaTMP.enableAutoSizing = false;
-                popup.Show();
-                button = popup.transform.GetChild(2).gameObject;
-                button.SetActive(false);
-                popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.updating");
+                var popupTemplate = TwitchManager.Instance != null ? TwitchManager.Instance.TwitchPopup : null;
+                if (popupTemplate != null) {
+                    popup = Instantiate(popupTemplate);
+                    popup.TextAreaTMP.fontSize *= 0.7f;
+                    popup.TextAreaTMP.enableAutoSizing = false;
+                    popup.Show();
+                    button = popup.transform.GetChild(2).gameObject;
+                    button.SetActive(false);
+                    popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.updating");
+                }
             }
 
             var asset = release.Assets.Find(FilterPluginAsset);
             if (asset == null) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"Update download: release {release?.Tag} has no '{PluginAssetName}' asset — aborting.");
                 _updateState = 3;
-                if (!managerMode) { popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.failed"); button.SetActive(true); }
+                if (!managerMode && popup != null) {
+                    popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.failed");
+                    if (button != null) button.SetActive(true);
+                }
                 _busy = false;
                 yield break;
             }
@@ -145,7 +156,7 @@ namespace UnknownsCollection {
             var operation = www.SendWebRequest();
             while (!operation.isDone) {
                 _updateProgress = www.downloadProgress;
-                if (!managerMode) {
+                if (!managerMode && popup != null) {
                     int stars = Mathf.CeilToInt(www.downloadProgress * 10);
                     popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.downloading",
                         new String((char)0x25A0, stars) + new String((char)0x25A1, 10 - stars));
@@ -154,33 +165,95 @@ namespace UnknownsCollection {
             }
 
             if (www.isNetworkError || www.isHttpError) {
+                www.downloadHandler.Dispose(); www.Dispose();
                 _updateState = 3;
-                if (!managerMode) { popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.failed"); button.SetActive(true); }
+                if (!managerMode && popup != null) {
+                    popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.failed");
+                    if (button != null) button.SetActive(true);
+                }
                 _busy = false; yield break;
             }
-            if (!managerMode) popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.copying");
+            if (!managerMode && popup != null) popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.copying");
 
             var filePath = Path.Combine(Paths.PluginPath, asset.Name);
-            if (File.Exists(filePath + ".old")) File.Delete(filePath + ".old");
-            if (File.Exists(filePath)) File.Move(filePath, filePath + ".old");
 
-            var persistTask = File.WriteAllBytesAsync(filePath, www.downloadHandler.data);
+            // Move the working DLL aside before writing the download, so a write failure below can roll
+            // back to it instead of leaving the plugin folder without a usable Unknown's Collection at
+            // all. Guarded in its own try/catch: a locked .old (virus scanner, another process) must not
+            // silently proceed and overwrite the still-working plugin file (mirrors Nightfall/
+            // NightfallUpdater.cs and UsefulTORStuff/UTSModDownloader.cs).
+            var moved = false;
+            try {
+                if (File.Exists(filePath + ".old")) File.Delete(filePath + ".old");
+                if (File.Exists(filePath)) File.Move(filePath, filePath + ".old");
+                moved = true;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError(
+                    $"Update failed: could not move the old plugin file aside ({e.Message}).");
+                _updateState = 3;
+                if (!managerMode && popup != null) {
+                    popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.failed");
+                    if (button != null) button.SetActive(true);
+                }
+                _busy = false;
+                yield break;
+            }
+
             var hasError = false;
-            while (!persistTask.IsCompleted) {
-                if (persistTask.Exception != null) { hasError = true; break; }
-                yield return new WaitForEndOfFrame();
+            System.Threading.Tasks.Task persistTask = null;
+            try {
+                persistTask = File.WriteAllBytesAsync(filePath, www.downloadHandler.data);
+            } catch (Exception e) {
+                // File.WriteAllBytesAsync can throw synchronously (e.g. path/IO errors) before ever
+                // returning a Task - treat that exactly like a failed write instead of letting the
+                // exception escape the coroutine and skip the rollback below.
+                UnknownsCollectionPlugin.Logger?.LogError($"Update failed: could not start writing the new plugin file ({e.Message}).");
+                hasError = true;
+                persistTask = null;
+            }
+            if (persistTask != null) {
+                while (!persistTask.IsCompleted) {
+                    if (persistTask.Exception != null) { hasError = true; break; }
+                    yield return new WaitForEndOfFrame();
+                }
             }
             // AUDIT-2026-08-15: Task.IsCompleted is also true for Faulted/Canceled, so a task that already
             // failed by the very first check never enters the loop above and hasError stays false. Re-check
-            // after the loop so a write failure is never reported as a successful update.
-            if (!hasError && persistTask.IsFaulted) hasError = true;
+            // after the loop so a write failure is never reported as a successful update. IsCompletedSuccessfully
+            // (not just IsFaulted) also catches a Canceled task, which IsFaulted alone would miss.
+            if (!hasError && persistTask != null && !persistTask.IsCompletedSuccessfully) hasError = true;
             www.downloadHandler.Dispose(); www.Dispose();
 
             if (!hasError) {
                 _updateState = 2;
-                if (!managerMode) popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.success");
-            } else _updateState = 3;
-            if (!managerMode) button.SetActive(true);
+                if (!managerMode && popup != null) popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.success");
+            } else {
+                // ROLL BACK: the working DLL was moved aside to .old before the download was written, so
+                // a failed write used to leave the plugin folder with no usable Unknown's Collection at
+                // all (a half-written file, or nothing) - the mod simply stopped loading next start, with
+                // the only trace an update popup that said it had failed. Putting the old file back makes
+                // a failed update a no-op again.
+                try {
+                    if (moved && File.Exists(filePath + ".old")) {
+                        if (File.Exists(filePath)) File.Delete(filePath);
+                        File.Move(filePath + ".old", filePath);
+                        UnknownsCollectionPlugin.Logger?.LogWarning("Update failed - restored the previous plugin file.");
+                    } else if (File.Exists(filePath)) {
+                        // Nothing to roll back to (first install, no ".old" to restore) - don't leave a
+                        // half-written new plugin file sitting in the folder on a failed update. Best
+                        // effort and silent: there is no working file this could clobber (moved==false
+                        // means we never touched an existing one, and moved==true with no ".old" only
+                        // happens when there was nothing there to move in the first place).
+                        try { File.Delete(filePath); } catch { }
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError(
+                        $"Update failed AND the previous plugin file could not be restored ({e.Message}). "
+                        + $"Reinstall Unknown's Collection manually: the working DLL is next to it, named \"{PluginAssetName}.old\".");
+                }
+                _updateState = 3;
+            }
+            if (!managerMode && button != null) button.SetActive(true);
             _busy = false;
         }
 

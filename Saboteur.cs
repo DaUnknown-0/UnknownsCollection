@@ -74,6 +74,11 @@ namespace UnknownsCollection {
         private static int lastProgress;           // local player's last task-progress sum (victim poll)
         private static bool progressInit;          // lastProgress has a valid baseline
         private static Console[] consoleCache;      // task consoles on the map (collected lazily per round)
+        private static bool[] sabotageableCache;    // IsSabotageableConsole() result per consoleCache index, built
+                                                      // once alongside consoleCache (TaskTypes never changes at
+                                                      // runtime, so re-evaluating it per Find call every frame was
+                                                      // wasted Interop + wrapper allocation - see GetConsoles).
+        private static float consoleCacheLivenessCheckTime; // Time.time of the last consoleCache[0]==null probe
 
         // Distance tolerance for "is the player at the sabotaged console" checks. Console transforms sit
         // ~1.5 units from the spot a player actually stands to use them (see FindUsableConsoleInRange, which
@@ -385,6 +390,8 @@ namespace UnknownsCollection {
             progressInit = false;
             lastProgress = 0;
             consoleCache = null;
+            sabotageableCache = null;
+            consoleCacheLivenessCheckTime = 0f;
             lastUsedConsole = null;
             lastUsedConsoleTime = 0f;
             pendingKillPenalty = false;
@@ -722,11 +729,26 @@ namespace UnknownsCollection {
             // changed (new round/game) - otherwise the cache keeps DESTROYED consoles from the previous
             // map and the SABOTAGE / SEARCH buttons find nothing. Tying it to the ShipStatus instance
             // makes it self-heal every game.
-            bool stale = consoleCache == null || consoleCache.Length == 0 || consoleShip != ss
-                         || (consoleCache.Length > 0 && consoleCache[0] == null);
+            // The consoleCache[0]==null check is a Unity lifetime probe (native Interop call), so it's
+            // throttled to twice a second instead of running from every per-frame CouldUse lambda - a
+            // destroyed cache is only reachable in the brief window right around a map/round change, so
+            // a up-to-0.5s delay in noticing it is harmless.
+            bool destroyedCacheEntry = false;
+            if (consoleCache != null && consoleCache.Length > 0 && Time.time - consoleCacheLivenessCheckTime >= 0.5f) {
+                destroyedCacheEntry = consoleCache[0] == null;
+                // Only push the throttle timestamp out when the probe came back clean. If it found a
+                // destroyed entry but the rebuild below doesn't run (ss == null), advancing the
+                // timestamp here would leave the stale cache in place for another 0.5s instead of
+                // re-probing on the very next call once ss is valid again.
+                if (!destroyedCacheEntry) consoleCacheLivenessCheckTime = Time.time;
+            }
+            bool stale = consoleCache == null || consoleCache.Length == 0 || consoleShip != ss || destroyedCacheEntry;
             if (stale && ss != null) {
                 consoleCache = UnityEngine.Object.FindObjectsOfType<Console>();
+                sabotageableCache = new bool[consoleCache.Length];
+                for (int i = 0; i < consoleCache.Length; i++) sabotageableCache[i] = IsSabotageableConsole(consoleCache[i]);
                 consoleShip = ss;
+                consoleCacheLivenessCheckTime = Time.time;
             }
             return consoleCache ?? System.Array.Empty<Console>();
         }
@@ -750,10 +772,13 @@ namespace UnknownsCollection {
             var me = PlayerControl.LocalPlayer;
             if (me == null) return null;
             Vector2 here = me.GetTruePosition();
+            var consoles = GetConsoles();
+            var sabotageable = sabotageableCache;
             Console best = null;
             float bestDist = float.MaxValue;
-            foreach (var c in GetConsoles()) {
-                if (!IsSabotageableConsole(c)) continue;
+            for (int i = 0; i < consoles.Length; i++) {
+                var c = consoles[i];
+                if (c == null || sabotageable == null || i >= sabotageable.Length || !sabotageable[i]) continue;
                 // Be generous: at least 1.5 units. Console transforms are often offset from where the
                 // player stands, so a tight range made the SABOTAGE button never light up (diag showed
                 // consoleInRange=False even while standing in a task room).
@@ -773,10 +798,24 @@ namespace UnknownsCollection {
         private static Console FindConsoleForSearch() {
             var me = PlayerControl.LocalPlayer;
             if (me == null || me.Data == null) return null;
+            Vector2 here = me.GetTruePosition();
+            var consoles = GetConsoles();
+            var sabotageable = sabotageableCache;
             Console best = null;
             float bestDist = float.MaxValue;
-            foreach (var c in GetConsoles()) {
-                if (!IsSabotageableConsole(c)) continue;
+            for (int i = 0; i < consoles.Length; i++) {
+                var c = consoles[i];
+                if (c == null || sabotageable == null || i >= sabotageable.Length || !sabotageable[i]) continue;
+                // Distance pre-filter before the CanUse Interop call: vanilla Console.CanUse's own canUse
+                // result requires distance <= UsableDistance as a necessary condition (see ConsoleCanUsePatch
+                // in UsablesPatch.cs and the same UsableDistance-based checks in Auditor.cs,
+                // PoltergeistManifest.cs, SwapperLightsFix.cs), so skipping consoles that fail this test
+                // first is exactly behavior-preserving - CanUse could never have returned canUse=true for
+                // them anyway. GetTruePosition() differs slightly from the Collider.bounds.center CanUse
+                // itself measures against, so the same generous 1.5-unit floor as FindUsableConsoleInRange
+                // is used, plus a small safety margin to avoid rejecting a borderline-true candidate.
+                float ud = Mathf.Max(c.UsableDistance, 1.5f) + 0.5f;
+                if (Vector2.Distance(here, (Vector2)c.transform.position) > ud) continue;
                 float d;
                 try { d = c.CanUse(me.Data, out bool canUse, out bool _); if (!canUse) continue; }
                 catch { continue; }

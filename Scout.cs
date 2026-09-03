@@ -56,6 +56,12 @@ namespace UnknownsCollection {
         // Scout's own client already had this smoothing via currentAlpha, observers didn't.
         private static float observedAlpha = 1f;
 
+        // Last alpha value actually WRITTEN to the local/observed target's sprites (see SetPlayerAlpha).
+        // -1f means "unknown / not yet written" so the very first call after a reset or a new Scout
+        // always writes regardless of what alpha it's asked for.
+        private static float lastWrittenLocalAlpha = -1f;
+        private static float lastWrittenObservedAlpha = -1f;
+
         // ---- Custom RPC subtypes: module byte 203 in the shared UC channel (UCRpc.CallId = 230) ----
         private const byte RpcId = 203;
         private const byte SubSetScout = 0;
@@ -162,6 +168,11 @@ namespace UnknownsCollection {
             // never fires) and the observer branch below writes it onto the next round's Scout every frame,
             // rendering the NEW Scout transparent from second 0 - a full role reveal.
             syncedScoutAlpha = 1f;
+            // A new Scout means SetPlayerAlpha's "last written" cache no longer describes anything (a
+            // different PlayerControl, or this client's own role just changed) - invalidate so the next
+            // call always writes instead of trusting a stale value from before.
+            lastWrittenLocalAlpha = -1f;
+            lastWrittenObservedAlpha = -1f;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Scout] The Scout is {scout.Data?.PlayerName}.");
         }
 
@@ -261,6 +272,8 @@ namespace UnknownsCollection {
             currentAlpha = 1f;
             observedAlpha = 1f;
             syncedScoutAlpha = 1f; // synced target must not leak into the next round (see ApplySetScout)
+            lastWrittenLocalAlpha = -1f;
+            lastWrittenObservedAlpha = -1f;
             // scoutButton deliberately kept (resetVariables runs after HudManager.Start).
         }
 
@@ -364,12 +377,12 @@ namespace UnknownsCollection {
                     if (local) {
                         float targetAlpha = abilityActive ? GetTransparency() : 1f;
                         currentAlpha = Mathf.Lerp(currentAlpha, targetAlpha, Time.deltaTime * 8f);
-                        SetPlayerAlpha(PlayerControl.LocalPlayer, currentAlpha);
+                        SetPlayerAlpha(PlayerControl.LocalPlayer, currentAlpha, ref lastWrittenLocalAlpha);
                     } else {
                         // Observer view: lerp toward the synced target alpha instead of snapping to it,
                         // mirroring the Scout's own currentAlpha smoothing above (same lerp rate).
                         observedAlpha = Mathf.Lerp(observedAlpha, syncedScoutAlpha, Time.deltaTime * 8f);
-                        SetPlayerAlpha(scout, observedAlpha);
+                        SetPlayerAlpha(scout, observedAlpha, ref lastWrittenObservedAlpha);
                     }
 
                     // Button timer management
@@ -385,10 +398,19 @@ namespace UnknownsCollection {
         }
 
         // ---- Set player transparency ----
-        private static void SetPlayerAlpha(PlayerControl player, float alpha) {
+        // lastWritten tracks the alpha value this call site actually wrote last frame (see
+        // lastWrittenLocalAlpha / lastWrittenObservedAlpha). Perf: the only frame we can safely skip is
+        // one where BOTH the new value and the last written value are fully opaque (1f) - that's the
+        // overwhelmingly common steady state once the ability ends and the lerp has settled. Every other
+        // frame (including all of the lerp transition) still writes, so the priority fight against other
+        // transparency effects that assign these same colors elsewhere (Illusionist dissolve,
+        // Poltergeist) is completely unaffected.
+        private static void SetPlayerAlpha(PlayerControl player, float alpha, ref float lastWritten) {
             try {
                 if (player == null || player.cosmetics == null) return;
                 alpha = Mathf.Clamp01(alpha);
+                if (Mathf.Approximately(alpha, 1f) && Mathf.Approximately(lastWritten, 1f)) return;
+                lastWritten = alpha;
                 player.SetHatAndVisorAlpha(alpha);
                 if (player.cosmetics.currentBodySprite != null && player.cosmetics.currentBodySprite.BodySprite != null) {
                     var c = player.cosmetics.currentBodySprite.BodySprite.color;
@@ -455,7 +477,8 @@ namespace UnknownsCollection {
         // is restored, and any number of effects stack in any order with the same result. The pattern
         // is PlayerTuning's (PlayerTuning.cs:498-527), which is in turn SaboteurTrap's and
         // TrapperLimp's - which is precisely why those three never collided with anything. The
-        // Poltergeist hex is now the only absolute writer left in this mod, so it has nobody to fight.
+        // Poltergeist hex has since been moved to the same pattern too (see its HexSpeedMult), so
+        // nothing in this mod writes MyPhysics.Speed outright anymore.
         //
         // Both sides are patched for the same reason PlayerTuning patches both: the owner's physics
         // drive the real movement, and the remote CustomNetworkTransform drives what everyone else

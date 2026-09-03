@@ -29,6 +29,12 @@ namespace UnknownsCollection {
     public static class UCAssets {
         private static readonly Dictionary<string, Sprite> sprites = new();
         private static readonly Dictionary<string, AudioClip> clips = new();
+        // Negative cache for clip names whose LoadRawClip genuinely failed (missing/corrupt embedded
+        // resource) - separate from `clips` itself, whose "cached != null" check has to keep re-trying a
+        // Unity-destroyed clip (fake-null) to recreate it. Without this a single bad name got
+        // LoadRawClip'd (assembly resource stream + full Vorbis decode) again on EVERY call, e.g. once
+        // per frame from Werewolf's heartbeat loop while it kept failing to acquire an AudioSource.
+        private static readonly HashSet<string> failedClips = new();
 
         // ---- Button icons ----
 
@@ -443,8 +449,10 @@ namespace UnknownsCollection {
 
         private static AudioClip GetClip(string name) {
             if (clips.TryGetValue(name, out var cached) && cached != null) return cached;
+            if (failedClips.Contains(name)) return null; // already known bad - don't hammer LoadRawClip again
             var clip = LoadRawClip($"UnknownsCollection.Resources.{name}.ogg", name);
             clips[name] = clip;
+            if (clip == null) failedClips.Add(name);
             return clip;
         }
 

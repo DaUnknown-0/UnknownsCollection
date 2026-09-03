@@ -143,10 +143,15 @@ namespace UnknownsCollection {
             p != null && Mini.mini != null && p == Mini.mini && !Mini.isGrownUp();
 
         // Untargetable-list for setTarget(): excludes the (not grown-up) Mini from plant/pass targeting.
+        // PERF: reused across calls instead of allocating a new List every FixedUpdate/CouldUse tick -
+        // setTarget()'s only use of it is a read-only `untargetablePlayers.Any(x => x == @object)` inside
+        // its own foreach (PlayerControlPatch.cs), fully consumed synchronously before this returns, so a
+        // shared scratch list is safe.
+        private static readonly List<PlayerControl> bombUntargetablesCache = new List<PlayerControl>(1);
         private static List<PlayerControl> BombUntargetables() {
-            var l = new List<PlayerControl>();
-            if (Mini.mini != null && !Mini.isGrownUp()) l.Add(Mini.mini);
-            return l;
+            bombUntargetablesCache.Clear();
+            if (Mini.mini != null && !Mini.isGrownUp()) bombUntargetablesCache.Add(Mini.mini);
+            return bombUntargetablesCache;
         }
 
         // Whether the bomb's blast may kill this player, given the "Explosion Hits" and "Pierces Shield"

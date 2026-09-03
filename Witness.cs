@@ -352,7 +352,7 @@ namespace UnknownsCollection {
         }
 
         // ====================================================================
-        // Body report (host): if the reported body is the noted killer, queue the public reveal.
+        // Body report (host): if the reported body is the WITNESS's own, queue the public reveal.
         // We hook ReportDeadBody (NOT CmdReportDeadBody): CmdReportDeadBody runs on the REPORTER's own
         // client, so a host-gated patch there only fired when the host personally reported. ReportDeadBody
         // is the host-authoritative method that runs on the host for EVERY report (__instance = reporter).

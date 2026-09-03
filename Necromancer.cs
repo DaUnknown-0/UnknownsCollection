@@ -744,8 +744,12 @@ namespace UnknownsCollection {
         [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
             public static void Prefix() {
-                if (!active || necromancerPlayerId == byte.MaxValue) return;
+                // Cleared unconditionally, even if this round's Necromancer never actually rose: a stale
+                // winnerIds list from a previous round must not survive into this game-end check, or the
+                // Postfix below (gated only on gameOverReason, not on `active`) could hand out a leftover
+                // win snapshot from a Necromancer game that already ended.
                 winnerIds.Clear();
+                if (!active || necromancerPlayerId == byte.MaxValue) return;
                 winnerIds.Add(necromancerPlayerId);
                 foreach (byte id in thralls) winnerIds.Add(id);
             }

@@ -81,8 +81,6 @@ namespace UnknownsCollection {
 
         // ---- Runtime state (local Poltergeist client) ----
         public static float energy;
-        private static float speedHexBase;     // original speed while a speed hex is on the LOCAL player
-        private static bool speedHexApplied;
 
         // Doors we slammed: doorId -> reopen time (every client runs the same timers from the RPC).
         private static readonly Dictionary<int, float> hauntedDoors = new();
@@ -266,11 +264,6 @@ namespace UnknownsCollection {
             hexes.Clear();
             hauntedDoors.Clear();
             handChanneling = false;
-            // Must RESTORE, not just clear the flag: hexes.Clear() above already took the hex away, so
-            // the per-frame driver will never undo the x1.4 - and on a withdrawal (id 255) it stops
-            // running entirely at the !active exit below. Without this the victim stays fast for the
-            // rest of the round and the next hex compounds on top of it.
-            RestoreSpeedHex();
 
             poltergeist = Helpers.playerById(id);
             active = poltergeist != null;
@@ -315,28 +308,6 @@ namespace UnknownsCollection {
             }
         }
 
-        // Central undo for the local speed hex. EVERY path that ends a speed hex must go through here:
-        // setting speedHexApplied = false on its own leaves MyPhysics.Speed multiplied forever, and the
-        // next hex then captures the already-boosted value as its base (1.4 -> 1.96 -> 2.74 -> ...).
-        // Idempotent - a call while nothing is applied is a no-op, so reset paths may call it freely.
-        private static void RestoreSpeedHex() {
-            if (!speedHexApplied) return;
-            // Cleared FIRST: if the write below ever throws, the per-frame driver must not retry forever.
-            speedHexApplied = false;
-            try {
-                var lp = PlayerControl.LocalPlayer;
-                // speedHexBase > 0: writing back a 0 base would freeze the player. It can only be 0 if
-                // the speed was already 0 when the hex landed - then 0 * 1.4 changed nothing anyway.
-                // MyPhysics null-check matters here (unlike in the old inline restore): this now also
-                // runs from resetVariables and MeetingHud.Start, i.e. from shakier lifecycle phases.
-                if (lp != null && lp.MyPhysics != null && speedHexBase > 0f)
-                    lp.MyPhysics.Speed = speedHexBase;
-            } catch (Exception e) {
-                UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] speed-hex restore failed: {e}");
-            }
-            speedHexBase = 0f;
-        }
-
         private static void ApplyHex(byte targetId, byte mode, float duration) {
             var target = Helpers.playerById(targetId);
             if (target == null) return;
@@ -345,14 +316,8 @@ namespace UnknownsCollection {
             // Distance-gated like Door Slam/Poof (design decision): the cast cue is audible around the
             // TARGET's position, not flatly kartenweit - see UCAssets.PlayHexAt.
             UCAssets.PlayHexAt(target.GetTruePosition());
-
-            // Speed is client-authoritative: only the hexed player's own client changes its physics.
-            if (PlayerControl.LocalPlayer != null && PlayerControl.LocalPlayer.PlayerId == targetId
-                && mode == HexSpeed && !speedHexApplied) {
-                speedHexBase = PlayerControl.LocalPlayer.MyPhysics.Speed;
-                PlayerControl.LocalPlayer.MyPhysics.Speed = speedHexBase * 1.4f;
-                speedHexApplied = true;
-            }
+            // Speed itself is no longer touched here - see HexSpeedMult/the FixedUpdate patches below,
+            // which derive the multiplier from `hexes` every tick instead of writing MyPhysics.Speed.
         }
 
         private static void ApplyHandStart() {
@@ -413,6 +378,43 @@ namespace UnknownsCollection {
             _ => UCLocalization.Tr("uc.ui.poltergeist.hexmode_sight")
         };
 
+        // The reactor meltdown (Reactor) and seismic stabilizers (Laboratory) are the same
+        // ReactorSystemType under a different SystemTypes key per map - a given ShipStatus only ever
+        // has ONE of the two (see ReactorMusic.cs header), so "which key this map uses" is stable for
+        // the lifetime of a ShipStatus instance and only needs resolving once, not every call.
+        private static readonly SystemTypes[] ReactorSystems = { SystemTypes.Reactor, SystemTypes.Laboratory };
+
+        // PERF: resolved-system cache, one entry per ShipStatus.Instance (pattern: UsefulTORStuff/
+        // SabotageTuning.cs GetSab). cachedReactor/cachedCritical are the SAME underlying system object
+        // cast two ways; ReactorMusic.cs reuses cachedCritical instead of doing its own ContainsKey +
+        // TryCast every frame. Re-resolved only when ShipStatus.Instance changes (a destroyed/stale
+        // cachedShip compares unequal via Unity's Object == override, same as GetSab relies on) -
+        // IsActive/Countdown are still read LIVE off the cached object every call, never cached
+        // themselves.
+        private static ShipStatus cachedReactorShip;
+        private static SystemTypes cachedReactorSys;
+        private static ReactorSystemType cachedReactor;
+        private static ICriticalSabotage cachedCritical;
+
+        private static void ResolveReactorCache(ShipStatus ship) {
+            cachedReactorShip = ship;
+            cachedReactorSys = 0;
+            cachedReactor = null;
+            cachedCritical = null;
+            try {
+                foreach (var sys in ReactorSystems) {
+                    if (!ship.Systems.ContainsKey(sys)) continue;
+                    var obj = ship.Systems[sys];
+                    var reactor = obj.TryCast<ReactorSystemType>();
+                    if (reactor == null) continue;
+                    cachedReactorSys = sys;
+                    cachedReactor = reactor;
+                    cachedCritical = obj.TryCast<ICriticalSabotage>();
+                    return;
+                }
+            } catch { }
+        }
+
         // Reactor-style critical system that is currently active and holds user consoles, or 0.
         // INTERNAL (was private) so ReactorMusic.cs can reuse the exact same probe instead of
         // growing a second, subtly different one - "reactor or seismic stabilizers, whichever this
@@ -421,13 +423,19 @@ namespace UnknownsCollection {
             try {
                 var ship = ShipStatus.Instance;
                 if (ship == null) return 0;
-                foreach (var sys in new[] { SystemTypes.Reactor, SystemTypes.Laboratory }) {
-                    if (!ship.Systems.ContainsKey(sys)) continue;
-                    var reactor = ship.Systems[sys].TryCast<ReactorSystemType>();
-                    if (reactor != null && reactor.IsActive) return sys;
-                }
+                if (ship != cachedReactorShip) ResolveReactorCache(ship);
+                return (cachedReactor != null && cachedReactor.IsActive) ? cachedReactorSys : 0;
             } catch { }
             return 0;
+        }
+
+        // Same cached system, exposed as ICriticalSabotage for ReactorMusic.cs's Countdown reads -
+        // avoids a second ContainsKey + TryCast pass over the same system every frame (see
+        // ResolveReactorCache). Calling ActiveReactorSystem() first guarantees the cache is fresh for
+        // the current ShipStatus.Instance before cachedCritical is read.
+        internal static ICriticalSabotage ActiveCriticalSabotage() {
+            var sys = ActiveReactorSystem();
+            return sys != 0 ? cachedCritical : null;
         }
 
         // Fixed, PUBLIC anchor for the Ghost Hand FX (start/stop cue + channel ring): the reactor room's
@@ -441,7 +449,7 @@ namespace UnknownsCollection {
             try {
                 var ship = ShipStatus.Instance;
                 if (ship != null && ship.FastRooms != null) {
-                    foreach (var sys in new[] { SystemTypes.Reactor, SystemTypes.Laboratory }) {
+                    foreach (var sys in ReactorSystems) {
                         if (ship.FastRooms.ContainsKey(sys)) {
                             var room = ship.FastRooms[sys];
                             if (room != null && room.roomArea != null)
@@ -489,9 +497,6 @@ namespace UnknownsCollection {
             hexes.Clear();
             hauntedDoors.Clear();
             handChanneling = false;
-            // Restore before the driver dies: active = false above means the per-frame undo in
-            // HudUpdatePatch never runs again, so clearing the flag alone would strand MyPhysics.Speed.
-            RestoreSpeedHex();
             hexMode = HexSpeed;
             // Button statics deliberately kept: resetVariables runs AFTER HudManager.Start at round
             // start - nulling them orphans the live buttons (energy labels died; see Collector.cs).
@@ -505,6 +510,14 @@ namespace UnknownsCollection {
             lastLabelPaintAt = -1f;
             PoltergeistFx.Clear();
             PoltergeistManifest.Reset();
+            // Reactor-system cache: also invalidate here, not just on ShipStatus.Instance change.
+            // A round reset (or a fresh lobby join) can outlive an in-place Systems rebuild (Unknown's
+            // Atlas map swap) that keeps the same ShipStatus instance but replaces its system objects,
+            // which the cachedReactorShip equality check alone would not catch.
+            cachedReactorShip = null;
+            cachedReactorSys = 0;
+            cachedReactor = null;
+            cachedCritical = null;
         }
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
@@ -728,9 +741,9 @@ namespace UnknownsCollection {
                         energy = Mathf.Min(max, energy + (EnergyRegen?.getFloat() ?? 3f) * Time.deltaTime);
                     }
 
-                    // Hex expiry + local speed restore. A regular (non-meeting) expiry gets a small
-                    // dissolve burst + chime at the target's position - the cast burst is public, so
-                    // bookending it the same way (public, distance-gated) leaks nothing new.
+                    // Hex expiry. A regular (non-meeting) expiry gets a small dissolve burst + chime
+                    // at the target's position - the cast burst is public, so bookending it the same
+                    // way (public, distance-gated) leaks nothing new.
                     if (hexes.Count > 0) {
                         // AUDIT-2026-08-16: no LINQ - Where(...).ToList() allocated a new list + closure
                         // every frame on every client even when nothing was due. Scan into a reused
@@ -751,12 +764,6 @@ namespace UnknownsCollection {
                                 UCAssets.PlayPoltergeistHexEndAt(pos);
                             }
                         }
-                    }
-                    if (speedHexApplied) {
-                        bool stillHexed = PlayerControl.LocalPlayer != null
-                            && hexes.TryGetValue(PlayerControl.LocalPlayer.PlayerId, out var h)
-                            && h.mode == HexSpeed;
-                        if (!stillHexed || inMeeting) RestoreSpeedHex();
                     }
 
                     // Haunted-door reopen (plain/mushroom doors; auto doors reopen themselves).
@@ -861,11 +868,6 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     hexes.Clear();
-                    // While a poltergeist is active the per-frame driver already undoes the speed hex
-                    // here (its "|| inMeeting" clause). This closes the one gap it cannot cover: if
-                    // `active` flipped false in the same frame, the driver is gone and hexes.Clear()
-                    // above would otherwise strand the x1.4. Idempotent, so the overlap is free.
-                    RestoreSpeedHex();
                     hauntedDoors.Clear();
                     if (handChanneling && IsLocalPoltergeist()) StopGhostHand(releaseConsole: false);
                     else handChanneling = false;
@@ -874,6 +876,53 @@ namespace UnknownsCollection {
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] meeting reset failed: {e}");
                 }
+            }
+        }
+
+        // ====================================================================
+        // Hex: Speed Boost - a velocity multiply, not an absolute MyPhysics.Speed write
+        // (AUDIT-2026-08-23, M-6, same pattern as Scout.cs). MyPhysics.Speed is ONE global float per
+        // player, and used to be assigned outright here, with speedHexBase/speedHexApplied capturing
+        // and restoring the pre-hex value. That did not compose: a hex cast during a Scout run left a
+        // permanent x1.4 floor once the run ended, and every restore path (ApplySetPoltergeist,
+        // ResetAll, MeetingHud.Start, the per-frame expiry check) had to remember to call it or the
+        // multiplier stuck forever.
+        //
+        // Multiplying the velocity instead is stateless: nothing is captured, nothing is restored,
+        // HexSpeedMult below derives the current multiplier straight from `hexes` every tick, and any
+        // number of effects (Scout/Werewolf/PlayerTuning) stack in any order with the same result.
+        // ====================================================================
+        private static float HexSpeedMult(byte pid) {
+            if (!active) return 1f;
+            if (!hexes.TryGetValue(pid, out var hex)) return 1f;
+            if (hex.mode != HexSpeed || Time.time >= hex.end) return 1f;
+            if (MeetingHud.Instance != null || ExileController.Instance != null) return 1f; // no boost during meetings
+            return 1.4f;
+        }
+
+        [HarmonyPatch(typeof(PlayerPhysics), nameof(PlayerPhysics.FixedUpdate))]
+        static class HexSpeedOwnerPatch {
+            public static void Postfix(PlayerPhysics __instance) {
+                try {
+                    if (!active || __instance.myPlayer == null || __instance.myPlayer.Data == null) return;
+                    if (!__instance.AmOwner || __instance.myPlayer.Data.IsDead || !__instance.myPlayer.CanMove) return;
+                    float m = HexSpeedMult(__instance.myPlayer.PlayerId);
+                    if (m == 1f) return;
+                    __instance.body.velocity *= m;
+                } catch { }
+            }
+        }
+
+        [HarmonyPatch(typeof(CustomNetworkTransform), nameof(CustomNetworkTransform.FixedUpdate))]
+        static class HexSpeedRemotePatch {
+            public static void Postfix(CustomNetworkTransform __instance) {
+                try {
+                    if (!active || __instance.myPlayer == null || __instance.myPlayer.Data == null) return;
+                    if (__instance.AmOwner || __instance.myPlayer.Data.IsDead) return;
+                    float m = HexSpeedMult(__instance.myPlayer.PlayerId);
+                    if (m == 1f) return;
+                    __instance.body.velocity *= m;
+                } catch { }
             }
         }
 

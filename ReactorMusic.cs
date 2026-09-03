@@ -167,12 +167,11 @@ namespace UnknownsCollection {
         // The active reactor/seismic system as ICriticalSabotage, or null. The system LOOKUP is
         // Poltergeist's (Reactor + Laboratory, IsActive checked there); the cast mirrors TOR's own
         // EndGamePatch.cs:470 - ICriticalSabotage is where the readable Countdown lives.
+        // PERF: reuses Poltergeist's per-ShipStatus resolved-system cache (ActiveCriticalSabotage())
+        // instead of doing a second ContainsKey + TryCast pass over the same system every frame.
         private static ICriticalSabotage ActiveCritical() {
             try {
-                var sys = Poltergeist.ActiveReactorSystem();
-                if (sys == 0 || ShipStatus.Instance == null) return null;
-                if (!ShipStatus.Instance.Systems.ContainsKey(sys)) return null;
-                return ShipStatus.Instance.Systems[sys].TryCast<ICriticalSabotage>();
+                return Poltergeist.ActiveCriticalSabotage();
             } catch {
                 return null;
             }

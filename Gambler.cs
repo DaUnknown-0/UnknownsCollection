@@ -155,8 +155,105 @@ namespace UnknownsCollection {
         public static string lastResultText;
         public static float lastResultUntil;
 
-        // Host: pending effect that has to be lifted again (tuning is a permanent multiplier).
-        private static readonly Dictionary<byte, float> tuningUntil = new Dictionary<byte, float>();
+        // Host: pending effect that has to be lifted again (tuning is a permanent multiplier). Also
+        // carries a save-and-restore snapshot of whatever PlayerTuning held for that pid BEFORE we
+        // touched it (AUDIT: SendSetTuning replaces the whole record and SendClear wipes it outright,
+        // which used to blow away Role Control's ForceImpostorMod tuning on the same player). Prev*
+        // is ONLY used for the final restore in RestoreOrClear - the merge writes in
+        // WriteSpeedEffect/WriteCooldownEffect go from the CURRENT live PlayerTuning values instead
+        // (see there), so two different Gambler effects landing on the same player (Tier 6: speed-or-
+        // task AND cooldown) merge instead of the second write silently undoing the first. GamblerSpeedMult/
+        // GamblerCdMult track the multiplier WE currently have applied for each axis, so a re-roll of
+        // the SAME effect (e.g. repeated Tier 1/2 bets) can divide its own prior contribution back out
+        // before applying the new one instead of compounding.
+        // RESIDUAL RISK (accepted): if a Role Control tuning change lands on this player WHILE a Gambler
+        // effect is running, RestoreOrClear still restores to the ORIGINAL pre-Gambler snapshot when the
+        // effect expires, not to whatever Role Control set in between - that in-between value is lost.
+        private readonly struct PreGamblerTune {
+            public readonly float Until;
+            public readonly float PrevSpeed;
+            public readonly float PrevCd;
+            public readonly bool PrevNoVent;
+            public readonly bool PrevCanVent;
+            public readonly float GamblerSpeedMult;
+            public readonly float GamblerCdMult;
+            public PreGamblerTune(float until, float prevSpeed, float prevCd, bool prevNoVent, bool prevCanVent,
+                float gamblerSpeedMult = 1f, float gamblerCdMult = 1f) {
+                Until = until; PrevSpeed = prevSpeed; PrevCd = prevCd; PrevNoVent = prevNoVent; PrevCanVent = prevCanVent;
+                GamblerSpeedMult = gamblerSpeedMult; GamblerCdMult = gamblerCdMult;
+            }
+        }
+        private static readonly Dictionary<byte, PreGamblerTune> tuningUntil = new Dictionary<byte, PreGamblerTune>();
+
+        // First write for a pid this "session" (i.e. while no tuningUntil entry exists for it yet)
+        // captures whatever PlayerTuning currently holds - Role Control's value if any, otherwise the
+        // neutral default the readers already return for an untouched player. A later write for the
+        // same still-tracked pid keeps the ORIGINAL Prev* snapshot and the per-axis Gambler* multipliers
+        // untouched (WriteSpeedEffect/WriteCooldownEffect update those themselves once they know which
+        // axis they're writing) and only extends the expiry - via Math.Max, never a blind overwrite, so
+        // a shorter-lived refresh (e.g. the 30s speed effect) can't cut a longer one (the 600s cooldown
+        // fallback) short.
+        private static PreGamblerTune SnapshotFor(byte pid, float until) {
+            if (tuningUntil.TryGetValue(pid, out var existing)) {
+                var refreshed = new PreGamblerTune(Mathf.Max(existing.Until, until), existing.PrevSpeed, existing.PrevCd,
+                    existing.PrevNoVent, existing.PrevCanVent, existing.GamblerSpeedMult, existing.GamblerCdMult);
+                tuningUntil[pid] = refreshed;
+                return refreshed;
+            }
+            var fresh = new PreGamblerTune(until,
+                PlayerTuning.SpeedMult(pid), PlayerTuning.CdMult(pid), PlayerTuning.VentBanned(pid), PlayerTuning.VentGranted(pid));
+            tuningUntil[pid] = fresh;
+            return fresh;
+        }
+
+        // Writes the Gambler's speed multiplier without touching the cooldown side. Goes from the
+        // CURRENT live PlayerTuning.SpeedMult, first dividing out whatever gambler speed factor we
+        // ourselves already have applied (so a re-roll replaces our own contribution instead of
+        // compounding it), then multiplies in the new factor - anything a concurrent cooldown-axis
+        // write (or Role Control) did to speed in the meantime is preserved rather than reset to the
+        // pre-Gambler snapshot.
+        private static void WriteSpeedEffect(byte pid, float mult, float until) {
+            var snap = SnapshotFor(pid, until);
+            float ownFactor = snap.GamblerSpeedMult != 0f ? snap.GamblerSpeedMult : 1f;
+            float newSpeed = PlayerTuning.SpeedMult(pid) / ownFactor * mult;
+            bool applied = PlayerTuning.SendSetTuning(pid, newSpeed, PlayerTuning.CdMult(pid), PlayerTuning.VentBanned(pid), PlayerTuning.VentGranted(pid));
+            // Only record the new own-factor once SendSetTuning actually applied it (e.g. it returns
+            // false when the handshake with a client isn't complete yet). Recording it unconditionally
+            // would make a later, genuinely successful write divide out a factor that was never really
+            // applied, silently corrupting the "our own contribution" math above.
+            if (applied) {
+                tuningUntil[pid] = new PreGamblerTune(snap.Until, snap.PrevSpeed, snap.PrevCd, snap.PrevNoVent, snap.PrevCanVent,
+                    mult, snap.GamblerCdMult);
+            }
+        }
+
+        // Cooldown counterpart of WriteSpeedEffect - same merge/re-roll rule, on PlayerTuning.CdMult.
+        private static void WriteCooldownEffect(byte pid, float mult, float until) {
+            var snap = SnapshotFor(pid, until);
+            float ownFactor = snap.GamblerCdMult != 0f ? snap.GamblerCdMult : 1f;
+            float newCd = PlayerTuning.CdMult(pid) / ownFactor * mult;
+            bool applied = PlayerTuning.SendSetTuning(pid, PlayerTuning.SpeedMult(pid), newCd, PlayerTuning.VentBanned(pid), PlayerTuning.VentGranted(pid));
+            // Same guard as WriteSpeedEffect: only advance our own-factor bookkeeping when the write
+            // was actually applied, or a later successful write would divide out a never-applied factor.
+            if (applied) {
+                tuningUntil[pid] = new PreGamblerTune(snap.Until, snap.PrevSpeed, snap.PrevCd, snap.PrevNoVent, snap.PrevCanVent,
+                    snap.GamblerSpeedMult, mult);
+            }
+        }
+
+        // Cleanup counterpart of SnapshotFor: hand the pre-effect values back instead of wiping the
+        // slot outright, UNLESS that snapshot was already neutral (1x/1x, no vent change) - in which
+        // case a plain clear is equivalent and avoids leaving a needless no-op tune record behind.
+        private static void RestoreOrClear(byte pid, PreGamblerTune snap) {
+            try {
+                bool neutral = Mathf.Approximately(snap.PrevSpeed, 1f) && Mathf.Approximately(snap.PrevCd, 1f)
+                    && !snap.PrevNoVent && !snap.PrevCanVent;
+                if (neutral) PlayerTuning.SendClear(pid);
+                else PlayerTuning.SendSetTuning(pid, snap.PrevSpeed, snap.PrevCd, snap.PrevNoVent, snap.PrevCanVent);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Gambler] tuning restore failed: {e}");
+            }
+        }
         // AUDIT-2026-08-23, L-30: ApplyCooldownEffect only loops PlayerControl.AllPlayerControls
         // filtered on Role.IsImpostor at the moment a bet settles. A Jackal's Sidekick keeps
         // RoleTypes.Crewmate (see TOR's jackalCreatesSidekick), so it never matches that filter even
@@ -402,9 +499,9 @@ namespace UnknownsCollection {
                 bets.RemoveAll(b => !b.Settled);
                 betCooldownLeft = 0f;
                 if (AmHost()) {
-                    foreach (var kv in new List<KeyValuePair<byte, float>>(tuningUntil)) {
+                    foreach (var kv in new List<KeyValuePair<byte, PreGamblerTune>>(tuningUntil)) {
                         tuningUntil.Remove(kv.Key);
-                        try { PlayerTuning.SendClear(kv.Key); } catch { }
+                        RestoreOrClear(kv.Key, kv.Value);
                     }
                 }
                 return;
@@ -567,8 +664,7 @@ namespace UnknownsCollection {
                 try {
                     if (!AmHost() || !cooldownEffectActiveThisRound) return;
                     if (Sidekick.sidekick == null || Sidekick.sidekick.PlayerId != targetId) return;
-                    PlayerTuning.SendSetTuning(targetId, 1f, lastCooldownMult, false);
-                    tuningUntil[targetId] = Time.time + 600f;
+                    WriteCooldownEffect(targetId, lastCooldownMult, Time.time + 600f);
                     UnknownsCollectionPlugin.Logger?.LogInfo(
                         "[Gambler] fresh sidekick caught up to the round's active cooldown effect.");
                 } catch (Exception e) {
@@ -672,10 +768,11 @@ namespace UnknownsCollection {
                     // ours to manage. Expired -> hand the player back to normal.
                     if (tuningUntil.Count > 0) {
                         var done = new List<byte>();
-                        foreach (var kv in tuningUntil) if (Time.time >= kv.Value) done.Add(kv.Key);
+                        foreach (var kv in tuningUntil) if (Time.time >= kv.Value.Until) done.Add(kv.Key);
                         foreach (var pid in done) {
+                            var snap = tuningUntil[pid];
                             tuningUntil.Remove(pid);
-                            try { PlayerTuning.SendClear(pid); } catch { }
+                            RestoreOrClear(pid, snap);
                         }
                     }
                 } catch { }
@@ -875,8 +972,8 @@ namespace UnknownsCollection {
                 if (gambler == null) return;
                 float pct = (SpeedDelta?.getFloat() ?? 15f) / 100f;
                 float mult = won ? 1f + pct : 1f - pct;
-                PlayerTuning.SendSetTuning(gambler.PlayerId, mult, 1f, false);
-                tuningUntil[gambler.PlayerId] = Time.time + (EffectDuration?.getFloat() ?? 30f);
+                byte pid = gambler.PlayerId;
+                WriteSpeedEffect(pid, mult, Time.time + (EffectDuration?.getFloat() ?? 30f));
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Gambler] speed effect failed: {e}");
             }
@@ -972,10 +1069,9 @@ namespace UnknownsCollection {
                     // let it dodge the whole effect.
                     bool isSidekick = Sidekick.sidekick != null && Sidekick.sidekick.PlayerId == p.PlayerId;
                     if (!p.Data.Role.IsImpostor && !isSidekick) continue;
-                    PlayerTuning.SendSetTuning(p.PlayerId, 1f, mult, false);
-                    // Until the next meeting: MeetingClosePatch clears it. A long fallback keeps a
-                    // dropped meeting from making the effect permanent.
-                    tuningUntil[p.PlayerId] = Time.time + 600f;
+                    // Until the next meeting: MeetingClosePatch restores/clears it. A long fallback keeps
+                    // a dropped meeting from making the effect permanent.
+                    WriteCooldownEffect(p.PlayerId, mult, Time.time + 600f);
                 }
 
                 if (AnnounceToImpostors?.getBool() ?? true) SendAnnounce(won, delta);
@@ -1018,13 +1114,13 @@ namespace UnknownsCollection {
                     // above): AUDIT-2026-08-23, L-30, a Sidekick keeps RoleTypes.Crewmate, so IsImpostor
                     // alone would leave its entry in tuningUntil uncleared here and let it linger on the
                     // 600-second fallback instead of ending with the round like every other target.
-                    foreach (var kv in new List<KeyValuePair<byte, float>>(tuningUntil)) {
+                    foreach (var kv in new List<KeyValuePair<byte, PreGamblerTune>>(tuningUntil)) {
                         var p = Helpers.playerById(kv.Key);
                         if (p == null || p.Data == null || p.Data.Role == null) continue;
                         bool isSidekick = Sidekick.sidekick != null && Sidekick.sidekick.PlayerId == kv.Key;
                         if (!p.Data.Role.IsImpostor && !isSidekick) continue;
                         tuningUntil.Remove(kv.Key);
-                        try { PlayerTuning.SendClear(kv.Key); } catch { }
+                        RestoreOrClear(kv.Key, kv.Value);
                     }
                     cooldownEffectActiveThisRound = false;
                 } catch { }

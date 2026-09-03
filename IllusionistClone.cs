@@ -69,6 +69,33 @@ namespace UnknownsCollection {
         // detaches its Renderer components, the native Material objects they pointed at leak until
         // explicitly destroyed. Tracked here and destroyed alongside the clone in every teardown path.
         private static List<Material> ownedMaterials;
+        // PERF: renderers[k].material cached once at spawn time, parallel to `renderers`/`sources`.
+        // Renderer.material is an Il2Cpp property getter (Interop call) even once the instance already
+        // exists, so re-reading it every frame in MirrorAppearance()/ApplyOutline() was wasted work; the
+        // Material reference itself never changes for the lifetime of a clone.
+        private static Material[] cloneMaterials;
+
+        // PERF: MirrorAppearance() change-detection cache - see MirrorAppearance() for how it's used.
+        // Reset (nulled / cleared) in ResetState() so a fresh clone always does a full copy on its first
+        // frame instead of trusting state left over from a previous clone's renderers.
+        private static bool mirrorInit;
+        // Il2Cpp object references can go stale/get GC'd and reissued at the same managed wrapper while
+        // the underlying native sprite differs, so ReferenceEquals on the wrapper is not a safe identity
+        // check here - compare the native pointer instead (Il2CppHelpers convention used elsewhere in
+        // this repo, e.g. UsefulTORStuff/TorLeakFixes.cs's cachedTaskPtr).
+        private static IntPtr[] lastSourceSprite;      // per source renderer, parallel to sources/renderers (native Sprite pointer, IntPtr.Zero = none)
+        private static Color[] lastSourceColor;
+        private static int[] lastSourceSortingLayer;
+        private static int[] lastSourceSortingOrder;
+        private static bool lastCamoActive;
+        private static bool lastMushroomActive;
+        private static int lastOutfitColorId;
+
+        // PERF: ApplyOutline() change-detection cache + cached shader property ids (see ApplyOutline()).
+        private static bool outlineInit;
+        private static bool lastOutlineShow;
+        private static Color lastOutlineColor;
+        private static int outlineId = -1, outlineColorId = -1;
 
         private static SpriteRenderer bodyClone;     // the clone's body renderer (driven by SpriteAnim)
         private static SpriteAnim bodyAnim;          // plays the vanilla Idle/Run/EnterVent/ExitVent clips
@@ -154,6 +181,7 @@ namespace UnknownsCollection {
                 go = new GameObject("IllusionistClone");
                 var built = new List<SpriteRenderer>(srcList.Count);
                 var newOwnedMaterials = new List<Material>(srcList.Count);
+                var builtMaterials = new List<Material>(srcList.Count);
                 int bodyIdx = -1, skinIdx = -1;
                 foreach (var sr in srcList) {
                     if (sr == bodyRend) bodyIdx = built.Count;
@@ -173,6 +201,11 @@ namespace UnknownsCollection {
                     // real player's rendering, not just the clone's.
                     try { cr.material = new Material(sr.material); newOwnedMaterials.Add(cr.material); }
                     catch { cr.sharedMaterial = sr.sharedMaterial; }
+                    // Read back whichever material ended up assigned (own instance in the normal case;
+                    // in the rare catch-fallback case this is the same lazy own-copy Renderer.material
+                    // would have produced anyway on its first per-frame access before this change) and
+                    // cache it so ApplyOutline()/MirrorAppearance() never need the property getter again.
+                    builtMaterials.Add(cr.material);
                     cr.color = sr.color;
                     cr.flipX = false;                   // facing is handled by the root scale, not per-sprite
                     cr.flipY = sr.flipY;
@@ -184,6 +217,7 @@ namespace UnknownsCollection {
                 renderers = built.ToArray();
                 sources = srcList.ToArray();
                 ownedMaterials = newOwnedMaterials;
+                cloneMaterials = builtMaterials.ToArray();
 
                 // Drive the body (and skin) with the vanilla animation clips so they walk on the clone's
                 // OWN movement instead of the live player's.
@@ -468,21 +502,61 @@ namespace UnknownsCollection {
             bool srcGood = src != null && src.cosmetics != null && src.Data != null
                            && !src.Data.IsDead && !src.inVent;
             if (!srcGood) return;
+
+            // PERF: CopyPropertiesFromMaterial (and the sprite/color/sorting assignments feeding it) is
+            // the expensive part of this loop, run per renderer per frame. Everything it could actually
+            // need to react to boils down to: this renderer's own sprite/color, or one of the three
+            // GLOBAL look-changing signals below (Camouflage tint, Fungle Mushroom-Mixup, an
+            // outfit/color change e.g. Morphling). None of those change most frames, so track the last
+            // seen values and only touch a renderer when something relevant to IT actually changed.
+            bool camoActive = Camouflager.camouflageTimer > 0f;
+            bool mushroomActive = Helpers.MushroomSabotageActive();
+            int outfitColorId = -1;
+            try { outfitColorId = src.CurrentOutfit.ColorId; } catch { }
+            bool globalChanged = !mirrorInit || camoActive != lastCamoActive
+                                  || mushroomActive != lastMushroomActive || outfitColorId != lastOutfitColorId;
+
+            if (lastSourceSprite == null || lastSourceSprite.Length != sources.Length) {
+                lastSourceSprite = new IntPtr[sources.Length];
+                lastSourceColor = new Color[sources.Length];
+                lastSourceSortingLayer = new int[sources.Length];
+                lastSourceSortingOrder = new int[sources.Length];
+                mirrorInit = false; // fresh cache => force a full copy below regardless of `globalChanged`
+            }
+
             for (int k = 0; k < renderers.Length && k < sources.Length; k++) {
                 var s = sources[k];
                 var c = renderers[k];
                 if (s == null || c == null) continue;
                 bool animDriven = (c == bodyClone && useAnim) || (c == skinClone && useSkinAnim);
-                if (!animDriven) c.sprite = s.sprite;            // body/skin sprites are animation-driven
-                c.color = s.color;
-                c.flipX = false;
+
+                IntPtr spritePtr = s.sprite != null ? s.sprite.Pointer : IntPtr.Zero;
+                bool spriteChanged = spritePtr != lastSourceSprite[k];
+                bool colorChanged = s.color != lastSourceColor[k];
+                bool sortChanged = s.sortingLayerID != lastSourceSortingLayer[k]
+                                    || s.sortingOrder != lastSourceSortingOrder[k];
+
+                if (!animDriven && (spriteChanged || !mirrorInit)) c.sprite = s.sprite; // body/skin sprites are animation-driven
+                if (colorChanged || !mirrorInit) { c.color = s.color; c.flipX = false; }
                 // CosmeticsLayer.SetCosmeticZIndices() recomputes hat/visor/skin sort order on the live
                 // player (e.g. on body-type or vent-related changes), so a one-time copy at Spawn() can go
-                // stale and show the hat front/back layers in the wrong order. Re-sync every frame instead.
-                c.sortingLayerID = s.sortingLayerID;
-                c.sortingOrder = s.sortingOrder;
-                try { c.material.CopyPropertiesFromMaterial(s.material); } catch { }
+                // stale and show the hat front/back layers in the wrong order. Re-sync on change instead.
+                if (sortChanged || !mirrorInit) { c.sortingLayerID = s.sortingLayerID; c.sortingOrder = s.sortingOrder; }
+
+                if (spriteChanged || colorChanged || globalChanged) {
+                    var mat = (cloneMaterials != null && k < cloneMaterials.Length) ? cloneMaterials[k] : c.material;
+                    try { if (mat != null) mat.CopyPropertiesFromMaterial(s.material); } catch { }
+                }
+
+                lastSourceSprite[k] = spritePtr;
+                lastSourceColor[k] = s.color;
+                lastSourceSortingLayer[k] = s.sortingLayerID;
+                lastSourceSortingOrder[k] = s.sortingOrder;
             }
+            lastCamoActive = camoActive;
+            lastMushroomActive = mushroomActive;
+            lastOutfitColorId = outfitColorId;
+            mirrorInit = true;
 
             if (colorBlindClone != null && colorBlindSrc != null) {
                 try {
@@ -501,17 +575,43 @@ namespace UnknownsCollection {
             bool show = ShouldShowShield();
             // Kill-block flash: decays from white back to the normal shield color over flashDuration
             // instead of a hard on/off step, so a blocked kill reads as an impact instead of a light switch.
+            bool flashing = Time.time < flashUntil;
             Color outline = Medic.shieldedColor;
-            if (Time.time < flashUntil) {
+            if (flashing) {
                 float decay = Mathf.Clamp01((Time.time - flashStart) / flashDuration);
                 outline = Color.Lerp(Color.white, Medic.shieldedColor, decay);
             }
-            foreach (var r in renderers) {
-                if (r == null || !r.gameObject.activeSelf) continue;
-                var c = r.color; c.a = 1f; r.color = c;
+
+            // PERF: shader property ids resolved once (see UsefulTORStuff/UTSShieldOutlines.cs - the
+            // string overloads marshal + hash the name into Il2Cpp on every call).
+            if (outlineId < 0) {
+                outlineId = Shader.PropertyToID("_Outline");
+                outlineColorId = Shader.PropertyToID("_OutlineColor");
+            }
+            // PERF: show/outline are the same for every renderer this call, so the SetFloat/SetColor
+            // Interop calls are skipped whenever neither changed since the last time we wrote them -
+            // except during the flash decay above, which is a continuous animation and needs every frame.
+            bool changed = !outlineInit || flashing || lastOutlineShow != show
+                           || (show && lastOutlineColor != outline);
+            if (changed) { outlineInit = true; lastOutlineShow = show; lastOutlineColor = outline; }
+
+            for (int k = 0; k < renderers.Length; k++) {
+                var r = renderers[k];
+                if (r == null) continue;
+                // The activeSelf skip only applies to the color write (a disabled renderer doesn't
+                // render, so its alpha doesn't matter right now). The material outline properties still
+                // get written below regardless - otherwise a renderer that happens to be inactive on the
+                // one frame `changed` is true keeps whatever outline state it had, and never catches up
+                // once it reactivates (nothing re-triggers `changed` for it later).
+                if (r.gameObject.activeSelf) {
+                    var c = r.color; c.a = 1f; r.color = c;
+                }
+                if (!changed) continue;
+                var mat = (cloneMaterials != null && k < cloneMaterials.Length) ? cloneMaterials[k] : r.material;
+                if (mat == null) continue;
                 try {
-                    r.material.SetFloat("_Outline", show ? 1f : 0f);
-                    if (show) r.material.SetColor("_OutlineColor", outline);
+                    mat.SetFloat(outlineId, show ? 1f : 0f);
+                    if (show) mat.SetColor(outlineColorId, outline);
                 } catch { }
             }
         }
@@ -636,6 +736,18 @@ namespace UnknownsCollection {
             sources = null;
             src = null;
             ownedMaterials = null;
+            cloneMaterials = null;
+            mirrorInit = false;
+            lastSourceSprite = null;
+            lastSourceColor = null;
+            lastSourceSortingLayer = null;
+            lastSourceSortingOrder = null;
+            lastCamoActive = false;
+            lastMushroomActive = false;
+            lastOutfitColorId = 0;
+            outlineInit = false;
+            lastOutlineShow = false;
+            lastOutlineColor = default;
             bodyClone = null;
             bodyAnim = null;
             idleClip = runClip = enterClip = exitClip = null;

@@ -136,6 +136,11 @@ namespace UnknownsCollection {
         private static bool lightsWereOut;
         private static bool chargeReadyAnnounced;
         private static AudioSource heartbeatSource;
+        // Throttle for the heartbeat (re)acquire attempt in TickCharge: PlayWerewolfHeartbeatLoop can
+        // return null (e.g. UCAssets.GetClip failed to load the clip), and heartbeatSource staying null
+        // used to make TickCharge retry EVERY frame - a full asset-load attempt per frame while it kept
+        // failing. 0f means "try on the next TickCharge call".
+        private static float nextHeartbeatTry;
 
         // Silver bookkeeping. silverHitsTaken counts SHERIFF hits that landed on the WOLF form, per
         // GAME (decision: "the beast is tough ONCE" - a wolf that already carries a silver wound dies
@@ -541,11 +546,15 @@ namespace UnknownsCollection {
                 WerewolfFx.BeginRevertLook();
                 UCMusic.Release(MusicCue);
 
+                // Set on EVERY client, like woundSlowUntil in ApplyWound below - SpeedMultNow reads this
+                // locally for whichever client happens to run it, so a local-only write left every
+                // non-owner client thinking the werewolf was never slowed after reverting.
+                if (ExhaustionSlow == null || ExhaustionSlow.getBool())
+                    exhaustSlowUntil = Time.time + ExhaustSlowSecs;
+
                 if (IsLocalWerewolf()) {
                     chargeLeft = ChargeTimeValue();   // the next transformation must be charged again
                     chargeReadyAnnounced = false;
-                    if (ExhaustionSlow == null || ExhaustionSlow.getBool())
-                        exhaustSlowUntil = Time.time + ExhaustSlowSecs;
                 }
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Werewolf] Wolf form OFF.");
             }
@@ -625,6 +634,7 @@ namespace UnknownsCollection {
                 if (heartbeatSource != null) UCAssets.StopWerewolfHeartbeat();
             } catch { }
             heartbeatSource = null;
+            nextHeartbeatTry = 0f;
         }
 
         // Everything that outlives the wolfForm/charge fields: look, blood rings, round music, the
@@ -666,6 +676,7 @@ namespace UnknownsCollection {
                 lastWoundTime = -99f;
                 woundSlowUntil = 0f;
                 exhaustSlowUntil = 0f;
+                nextHeartbeatTry = 0f;
                 // transformButton deliberately kept (resetVariables runs AFTER HudManager.Start).
 
                 ClearLingeringEffects();
@@ -808,7 +819,12 @@ namespace UnknownsCollection {
                     // 2. Auto end after Y. The OWNER announces it (single sender); every other client
                     //    ends it locally half a second later in case that announcement never arrives.
                     if (wolfForm && Time.time >= formEndTime) {
-                        if (IsLocalWerewolf()) SendSetForm(false, 0f);
+                        if (IsLocalWerewolf()) SendSetForm(false, 0f); // normal revert - grants the exhaustion slow via ApplySetForm
+                        // Desync-recovery fallback only (the owner's SendSetForm above never arrived in
+                        // time): EndFormSilent deliberately does NOT set exhaustSlowUntil, same as the
+                        // death/leave safety net at #1 above - a client that only ever sees this local
+                        // catch-up end should not fabricate a penalty the owner's own ApplySetForm never
+                        // decided on.
                         else if (Time.time >= formEndTime + 0.5f) EndFormSilent();
                     }
 
@@ -843,8 +859,10 @@ namespace UnknownsCollection {
             if (!wolfForm) {
                 if (lightsOut && chargeLeft > 0f) {
                     chargeLeft = Mathf.Max(0f, chargeLeft - Time.deltaTime);
-                    if (heartbeatSource == null && chargeLeft > 0f)
+                    if (heartbeatSource == null && chargeLeft > 0f && Time.time >= nextHeartbeatTry) {
                         heartbeatSource = UCAssets.PlayWerewolfHeartbeatLoop();
+                        if (heartbeatSource == null) nextHeartbeatTry = Time.time + 1f; // failed - stop hammering the asset load every frame
+                    }
                 } else if (!lightsOut) {
                     StopHeartbeat();
                     if (lightsWereOut && ChargeResetOnLightsFix != null && ChargeResetOnLightsFix.getBool()) {

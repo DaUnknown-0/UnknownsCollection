@@ -427,7 +427,9 @@ namespace UnknownsCollection {
 
                     var ap = button.AddComponent<AspectPosition>();
                     ap.Alignment = AspectPosition.EdgeAlignments.RightTop;
-                    ap.DistanceFromEdge = new Vector3(0.5f, 2.3f, -10f);
+                    // y: 2.3 was one button footprint (0.7 world units, the click box below) too high
+                    // and crowded the vanilla buttons above it (playtest 2026-09-04).
+                    ap.DistanceFromEdge = new Vector3(0.5f, 3.0f, -10f);
                     ap.AdjustPosition();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[UCHelpMenu] button creation failed: {e}");

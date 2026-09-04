@@ -37,6 +37,11 @@ namespace UnknownsCollection {
         public static float bombPlacedAt;           // Time.time when bomb was planted
         public static float bombDetectedAt;         // Time.time when carrier was warned
         private static bool bombKillUsed;           // prevent double-kill on explosion
+        // Time.time until which THIS client treats masked Maniac-sourced murders as blast deaths
+        // (armed by ApplyExplode, read by BlastDeathReasonPatch). Deliberately generous: it only has
+        // to outlive the murder RPCs that follow the explosion RPC on the very same reliable channel.
+        private static float blastReasonUntil;
+        private const float BlastReasonWindow = 3f;
         private const float BlastFreezeDuration = 1.5f; // short stun for survivors caught in the explosion
 
         private const byte RpcId = 199;
@@ -310,6 +315,9 @@ namespace UnknownsCollection {
             // Arm the custom kill overlay for the blast: the murder RPCs follow right behind this
             // one, but the victim LIST is only known host-side - hence a short time window.
             UCKillOverlay.ArmWindow(UCKillOverlay.Kind.ManiacBomb);
+            // Same trick, same reason: arm the "these are blast deaths" window for the death-reason
+            // override below (see BlastDeathReasonPatch).
+            blastReasonUntil = Time.time + BlastReasonWindow;
             if (bombCarrier != null && bombCarrier.PlayerId == victimId) {
                 StopFuse();
                 // Red explosion flash for everyone nearby + a distance-attenuated boom + a public
@@ -590,8 +598,30 @@ namespace UnknownsCollection {
                                 if (!BlastCanKill(p)) continue;
                                 victims.Add(p.PlayerId);
                             }
+                            // The blast is the MANIAC's kill, not a row of suicides. The old
+                            // RpcUncheckedMurder(vid, vid) made every victim murder themselves, which
+                            // silently broke two things that read the killer out of TOR's history:
+                            //   - the Bait's forced report (baitUpdate matches on killerIfExisting, so
+                            //     with a self-source the dead Bait was his own killer - nobody reported), and
+                            //   - the Maniac's kill count in the end screen (EndGamePatch counts
+                            //     deadPlayers by killerIfExisting).
+                            // Sourcing the murder at the Maniac is safe because these are MASKED kills
+                            // (showAnimation = 0, see RpcUncheckedMurder): TOR's
+                            // KillAnimationCoPerformKillPatch then rewrites the animation's source to the
+                            // target, so the Maniac is NOT teleported into his own blast and the overlay
+                            // still only ever sees (victim, victim). Exactly what TOR's own Bomber does
+                            // (Objects/Bomb.cs: checkMurderAttemptAndKill(Bomber.bomber, .., showAnimation:
+                            // false, ignoreIfKillerIsDead: true)) and what the Warlock's curse proxy kill
+                            // does. A dead Maniac still gets the attribution, like TOR's dead Bomber.
+                            byte killerId = carrierId;
+                            if (maniac != null) {
+                                killerId = maniac.PlayerId;
+                                // If his own blast catches him, the Maniac dies LAST - every other death is
+                                // then still attributed while he is alive (Bait's delayed report, Medium info).
+                                if (victims.Remove(killerId)) victims.Add(killerId);
+                            }
                             SendExplode(carrierId);
-                            foreach (byte vid in victims) RpcUncheckedMurder(vid, vid);
+                            foreach (byte vid in victims) RpcUncheckedMurder(killerId, vid);
                             SendClear();
                         }
                     }
@@ -600,6 +630,12 @@ namespace UnknownsCollection {
                 }
             }
 
+            // Perform an unchecked murder on every client (local call + RPC), like the Saboteur's
+            // remote task kill. showAnimation = 0 ("masked"): the Maniac is nowhere near the blast, so
+            // the kill animation must be suppressed - passing 0 sets
+            // KillAnimationCoPerformKillPatch.hideNextAnimation, which rewrites the animation's source
+            // to the target and so prevents the killer being teleported onto the victim. The murder
+            // itself still carries the TRUE killer id, which is what makes Bait/kill-count work.
             private static void RpcUncheckedMurder(byte sourceId, byte targetId) {
                 try {
                     MessageWriter w = AmongUsClient.Instance.StartRpcImmediately(
@@ -623,6 +659,7 @@ namespace UnknownsCollection {
                 try {
                     UpdateTargeting();
                     UpdateFuseEscalation();
+                    UpdateMiniBombCooldown();
 
                     // Bomb carrier warning text (local)
                     if (LocalHasBomb() && !InMeeting()) {
@@ -662,6 +699,26 @@ namespace UnknownsCollection {
             }
             currentTarget = PlayerControlFixedUpdatePatch.setTarget(true, untargetablePlayers: BombUntargetables());
             if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, Color);
+        }
+
+        // Mini scaling for the BOMB button, mirroring TOR's own miniCooldownUpdate
+        // (PlayerControlPatch), which does exactly this for every other role ability button
+        // (Sheriff/Vampire/Jackal/Sidekick/Warlock/Cleaner/Witch/Ninja/Thief): a small Mini waits twice
+        // as long, a grown-up one 0.66x. Refreshed per frame rather than once in HudManager.Start,
+        // because isGrownUp() flips mid-round and the base cooldown option can change between games.
+        //
+        // The Mini's normal KILL cooldown needs nothing here: TOR's MurderPlayerPatch postfix already
+        // re-scales it after every murder, and now that the blast is sourced at the Maniac (instead of
+        // at each victim) that block finally sees the right player. With the old self-source it fired
+        // for a Mini VICTIM instead - i.e. it re-timed the wrong person's kill button.
+        private static void UpdateMiniBombCooldown() {
+            if (bombButton == null) return;
+            float baseCooldown = BombCooldown != null ? BombCooldown.getFloat() : 25f;
+            float multiplier = 1f;
+            var me = PlayerControl.LocalPlayer;
+            if (Mini.mini != null && me != null && me.PlayerId == Mini.mini.PlayerId)
+                multiplier = Mini.isGrownUp() ? 0.66f : 2f;
+            bombButton.MaxTimer = baseCooldown * multiplier;
         }
 
         // Ramps the fuse loop's volume/pitch upward as the pass window runs out, for the local
@@ -742,6 +799,55 @@ namespace UnknownsCollection {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] Button creation failed: {e}");
                 }
             }
+        }
+
+        // Death reason: TOR's MurderPlayerPatch files every murder as CustomDeathReason.Kill, so a
+        // blast victim read as "killed by <Maniac>" in the end screen and as "Kill" in the
+        // TrackerExport. TOR's own Bomber overrides that to CustomDeathReason.Bomb right after the
+        // murder (Objects/Bomb.cs) - the blast does the same, so the summary says "bombed by" and the
+        // export records "Bomb". Runs on every client (so does the murder RPC) and touches nothing but
+        // the history entry; the guards are tight enough that only blast kills can match:
+        //   - showAnimation == 0: the Maniac's normal knife kill never even reaches this method
+        //     (vanilla kills go through CmdCheckMurder/RpcMurderPlayer), and a masked kill sourced at
+        //     the Maniac exists nowhere else in the mod family.
+        //   - inside the window armed by ApplyExplode, which every client receives immediately BEFORE
+        //     the murder RPCs (same sender, reliable channel -> Hazel keeps the order).
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.uncheckedMurderPlayer))]
+        static class BlastDeathReasonPatch {
+            public static void Postfix(byte sourceId, byte targetId, byte showAnimation) {
+                try {
+                    if (showAnimation != 0 || maniac == null || sourceId != maniac.PlayerId) return;
+                    if (Time.time > blastReasonUntil) return;
+                    var victim = Helpers.playerById(targetId);
+                    if (victim == null) return;
+                    OverrideDeathReasonAndKiller(victim, DeadPlayer.CustomDeathReason.Bomb, maniac);
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Maniac] blast death reason failed: {e.Message}");
+                }
+            }
+        }
+
+        // TheOtherRoles.GameHistory is internal, so overrideDeathReasonAndKiller can't be called
+        // directly from this assembly - resolve it once via reflection (same pattern the rest of the
+        // mod family uses for TOR internals, cf. UsefulTORStuff's SpyExtras).
+        private static System.Reflection.MethodInfo overrideDeathReasonMethod;
+        private static bool overrideDeathReasonResolved;
+
+        private static void OverrideDeathReasonAndKiller(
+                PlayerControl player, DeadPlayer.CustomDeathReason deathReason, PlayerControl killer) {
+            if (!overrideDeathReasonResolved) {
+                overrideDeathReasonResolved = true;
+                var type = typeof(CustomOption).Assembly.GetType("TheOtherRoles.GameHistory");
+                overrideDeathReasonMethod = type?.GetMethod(
+                    "overrideDeathReasonAndKiller",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static, null,
+                    new[] { typeof(PlayerControl), typeof(DeadPlayer.CustomDeathReason), typeof(PlayerControl) },
+                    null);
+                if (overrideDeathReasonMethod == null)
+                    UnknownsCollectionPlugin.Logger?.LogWarning(
+                        "[Maniac] GameHistory.overrideDeathReasonAndKiller not found - blast deaths stay tagged as \"Kill\".");
+            }
+            overrideDeathReasonMethod?.Invoke(null, new object[] { player, deathReason, killer });
         }
 
         [HarmonyPatch(typeof(RoleInfo), nameof(RoleInfo.getRoleInfoForPlayer))]

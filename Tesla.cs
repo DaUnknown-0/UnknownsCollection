@@ -534,10 +534,14 @@ namespace UnknownsCollection {
             // an electrocution burst on a player who visibly survives would be a false public tell.
             SendKillFx(killPlus ? plus.PlayerId : byte.MaxValue, killMinus ? minus.PlayerId : byte.MaxValue);
 
-            // Source = the victim themselves (self-kill pattern, same as the Maniac's blast): vanilla
-            // MurderPlayer snaps the SOURCE onto the target, so using the Tesla as source teleported
-            // them across the map to the electrocution - a hard identity reveal. Self-source also
-            // keeps killer-attribution info (Detective/Medic reports) from pointing at the Tesla.
+            // Source = the victim themselves: vanilla MurderPlayer snaps the SOURCE onto the target, so
+            // using the Tesla as source teleported them across the map to the electrocution - a hard
+            // identity reveal. Self-source also keeps killer-attribution info (Detective/Medic reports)
+            // from pointing at the Tesla. Note this is NOT the Maniac's blast pattern: that one sources
+            // the murder at the Maniac and suppresses the teleport with showAnimation = 0 instead,
+            // because his kills are meant to be attributed (Bait, kill count). The Tesla can't do that -
+            // it WANTS the electrocution animation (showAnimation = byte.MaxValue), and showing it is
+            // exactly what would drag the killer along.
             if (killPlus) RpcUncheckedMurder(plusId, plusId);
             if (killMinus) RpcUncheckedMurder(minusId, minusId);
 

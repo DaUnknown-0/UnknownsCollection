@@ -153,14 +153,18 @@ namespace UnknownsCollection {
             // Wolf/Hunter/Pelican kill that happens to land inside the blast window must keep its own
             // cutscene instead of being swallowed by the window. The window itself still has no victim
             // binding (blast victims are host-only), so require the kill to at least LOOK like a blast
-            // death - every blast kill fires as a masked self-kill (RpcUncheckedMurder(vid, vid), see
-            // Maniac.cs) - and that the Maniac who armed the window is still the one actually in play.
+            // death - every blast kill fires MASKED (showAnimation = 0, see Maniac.cs), and a masked
+            // kill reaches ShowKillAnimation as (victim, victim) because TOR's
+            // KillAnimationCoPerformKillPatch rewrote the animation's source to the target. The murder
+            // itself carries the Maniac as killer (that is what makes Bait/kill-count work) - only the
+            // ANIMATION is self-sourced, which is exactly what this check reads.
+            // Also require that the Maniac who armed the window is still the one actually in play.
             if (windowKind != Kind.None) {
                 if (now <= windowUntil) {
-                    bool maskedSelfKill = killer != null && victim != null && killer.PlayerId == victim.PlayerId;
+                    bool maskedKill = killer != null && victim != null && killer.PlayerId == victim.PlayerId;
                     bool maniacBehindIt = Maniac.active && Maniac.maniac != null
                         && Maniac.maniac.PlayerId == windowManiacId;
-                    if (maskedSelfKill && maniacBehindIt) return windowKind;
+                    if (maskedKill && maniacBehindIt) return windowKind;
                 } else {
                     windowKind = Kind.None;
                 }

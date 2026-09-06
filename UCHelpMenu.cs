@@ -60,11 +60,13 @@ namespace UnknownsCollection {
                 E("Werewolf", Faction.Impostor, () => Werewolf.Color, () => Werewolf.SpawnRate, "uc.help.werewolf"),
 
                 E("Gambler", Faction.Modifier, () => Gambler.Color, () => Gambler.SpawnRate, "uc.help.gambler"),
+                E("Void", Faction.Modifier, () => VoidModifier.Color, () => VoidModifier.SpawnRate, "uc.help.void"),
 
                 E("Siphoner", Faction.Crew, () => Siphoner.Color, () => Siphoner.SpawnRate, "uc.help.siphoner"),
                 E("Witness", Faction.Crew, () => Witness.Color, () => Witness.SpawnRate, "uc.help.witness"),
                 E("Scout", Faction.Crew, () => Scout.Color, () => Scout.SpawnRate, "uc.help.scout"),
                 E("Beacon", Faction.Crew, () => Beacon.Color, () => Beacon.SpawnRate, "uc.help.beacon"),
+                E("King", Faction.Crew, () => King.Color, () => King.SpawnRate, "uc.help.king"),
                 // The Hunter has no spawn rate of his own (he is the Sheriff's endgame inside a
                 // Werewolf round), so his visibility gate is borrowed: the WEREWOLF rate decides
                 // whether he can exist at all, and returning null while option 1502 is off makes the
@@ -85,6 +87,7 @@ namespace UnknownsCollection {
                 // table falls back to it automatically via Tr()/TrIn(), so no per-language work is
                 // needed here.
                 E("Necromancer", Faction.Neutral, () => Necromancer.Color, () => Necromancer.SpawnRate, "uc.help.necromancer"),
+                E("Stalker", Faction.Neutral, () => Stalker.Color, () => Stalker.SpawnRate, "uc.help.stalker"),
 
                 E("Poltergeist", Faction.Ghost, () => Poltergeist.Color, () => Poltergeist.SpawnRate, "uc.help.poltergeist"),
             };

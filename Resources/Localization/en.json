@@ -540,5 +540,21 @@
   "uc.colorgrant.hex_hint": "Type six hex digits (or three), Enter to send. Backspace deletes.",
   "uc.colorgrant.hex_ok": "Looks good - Enter or Send.",
   "uc.colorgrant.send": "Send request",
-  "uc.colorgrant.no_slot": "{0} accepted, but every free colour slot is taken."
+  "uc.colorgrant.no_slot": "{0} accepted, but every free colour slot is taken.",
+  "uc.ui.stalker.target_assigned": "You are the Stalker. Your target is {0}: keep them inside your torch cone while nobody could see you. At 100% you may strike.",
+  "uc.ui.stalker.flash_ready": "Ready to strike",
+  "uc.ui.stalker.became_pursuer": "Your target is gone before you were done. You are the Pursuer now.",
+  "uc.ui.stalker.button_stalk": "STALK {0}%",
+  "uc.ui.stalker.button_locked": "WATCHING {0}%",
+  "uc.ui.stalker.button_seen": "SEEN {0}%",
+  "uc.ui.stalker.button_strike": "STRIKE",
+  "uc.ui.stalker.meter": "Someone is stalking you: {0}s left",
+  "uc.ui.stalker.meter_ready": "Your stalker is ready to strike",
+  "uc.ui.stalker.win_banner": "Watched. Followed. Finished.",
+  "uc.help.stalker": "A neutral with a single target. The Stalker keeps normal vision and carries a narrow torch cone that reaches further than crew sight; the target must stand inside that cone. A stalking clock runs only while the target is in the cone AND nobody alive (the target included) could see the Stalker with standard crew vision - sabotaged lights help him. Every 15 seconds the target sees a stalk meter (option: never / from 50% / always). At 100% the Stalker gets a kill button for his target; any death of the target after that (his strike, an ejection, a guess) wins him the game at once. If the target dies before 100%, he becomes the Pursuer (option: new target instead).",
+  "uc.ui.void.exile_text": "The vote vanished into the void.",
+  "uc.help.void": "An after-death crew modifier (hidden like VIP, Bait and Bloody while TOR's 'VIP, Bait & Bloody Are Hidden' is on - even from its carrier, until they die): the first ejection that would hit the Void does not happen - the exile screen runs as a skip with a glitching void line, and the meeting ends without an ejection. After that he can be voted out like anyone else. In return his own vote never counts (option), although the icon still shows where it landed.",
+  "uc.ui.king.advisor_chat": "You are the King. Your advisor is {0}, appointed as {1}. You have no tasks and no powers - rule wisely.",
+  "uc.ui.king.fallen": "The King has fallen!",
+  "uc.help.king": "A crewmate with no tasks and no abilities. At the start the King learns the role of one other crewmate, his advisor, and sees it under their name for the whole game (the advisor is not told, later role changes are not tracked). Option: the King is always a VIP, on top of the VIPs TOR rolls (those keep their tag), and his death notifies everyone with a royal flash. While that option is on, TOR's VIP rate cannot be set to 0."
 }

@@ -113,6 +113,14 @@ namespace UnknownsCollection {
         private static bool NecromancerGuessable() =>
             Necromancer.SpawnRate != null && Necromancer.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
+        // Neutral over a plain Crewmate -> crew half of the grid (Bug/Collector/Pelican placement).
+        private static bool StalkerGuessable() =>
+            Stalker.SpawnRate != null && Stalker.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+        private static bool KingGuessable() =>
+            King.SpawnRate != null && King.SpawnRate.getSelection() > 0
+            && TeslaVersionHandshake.EveryoneHasMod();
+        // The Void is a modifier: TOR does not offer modifiers in the guess grid, neither do we.
 
         // The Auditor watches every completed crew task go by, so he can read off who is racing
         // through their list - which is exactly how you spot the Snitch. Option 1608 therefore drops
@@ -146,6 +154,8 @@ namespace UnknownsCollection {
             SetEntry(Hunter.HunterInfo(),     add && HunterGuessable(),     RoleInfo.crewmate);
             SetEntry(Pelican.PelicanInfo(),   add && PelicanGuessable(),    RoleInfo.crewmate);
             SetEntry(Necromancer.NecromancerInfo(), add && NecromancerGuessable(), RoleInfo.crewmate);
+            SetEntry(Stalker.StalkerInfo(),   add && StalkerGuessable(),    RoleInfo.crewmate);
+            SetEntry(King.KingInfo(),         add && KingGuessable(),       RoleInfo.crewmate);
             SyncSnitchHide(add);
         }
 

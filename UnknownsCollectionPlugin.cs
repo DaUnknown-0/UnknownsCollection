@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.2.18";
+    public const string PluginVersion = "1.2.4.1";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -81,8 +81,11 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte PlayerTuningRpcId = 213; // host tooling: per-player speed/cooldown/vent/tasks
     public const byte AuditorRpcId = 214;
     public const byte GamblerRpcId = 215;  // crew MODIFIER, no draft entry (rides on top of a role)
-    public const byte NecromancerRpcId = 216;
-    public const byte ColorGrantRpcId = 217;   // host tooling: ask a player to change colour  // neutral; raises corpses (Sub 0 set, Sub 1 raise)
+    public const byte NecromancerRpcId = 216;  // neutral; raises corpses (Sub 0 set, Sub 1 raise)
+    public const byte ColorGrantRpcId = 217;   // host tooling: ask a player to change colour
+    public const byte StalkerRpcId = 218;      // neutral; stalk a target unseen, then strike (Sub 0 set, 1 meter, 2 complete, 3 fallback, 4 set-target)
+    public const byte VoidRpcId = 219;         // crew MODIFIER; one ejection passes through (Sub 0 set, Sub 1 triggered)
+    public const byte KingRpcId = 220;         // crew; no tasks, knows the advisor's role, carries the VIP (Sub 0 set)
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -273,6 +276,21 @@ public class UnknownsCollectionPlugin : BasePlugin
         // dies the army. Mutually exclusive with the Poltergeist (option), see Necromancer.cs.
         Necromancer.CreateOptions();
         Necromancer.TryPatch(harmony);
+
+        // The Stalker (Neutral): watches one target from a narrow torch cone without being seen by
+        // anyone; at 100 % he may strike, and any death of the target then wins him the game.
+        Stalker.CreateOptions();
+        Stalker.TryPatch(harmony);
+
+        // The Void (crew MODIFIER): one ejection passes through him (the exile screen shows the void
+        // swallowing him instead), his own vote never counts.
+        VoidModifier.CreateOptions();
+        VoidModifier.TryPatch(harmony);
+
+        // The King (Crewmate): no tasks, no powers; knows his advisor's starting role and carries the
+        // VIP crown with a royal death flash.
+        King.CreateOptions();
+        King.TryPatch(harmony);
 
         // Reactor music (Paket R) - not a role: a score for the reactor/seismic sabotage that is
         // written against the REAL ICriticalSabotage countdown, so the blast in its finale lands on

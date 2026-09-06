@@ -139,6 +139,7 @@ namespace UnknownsCollection {
                 (UCAssets.WerewolfRevertIcon,       "werewolf_revert",      115f),
                 (UCAssets.HunterShootIcon,          "hunter_shoot",         115f),
                 (UCAssets.PelicanSwallowIcon,       "pelican_swallow",      115f),
+                (UCAssets.StalkerIcon,              "stalker_strike",       115f),
             };
 
             var map = new Dictionary<int, AnimSet>();

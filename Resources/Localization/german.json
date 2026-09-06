@@ -519,5 +519,21 @@
  "uc.gambler.result_push": "Wette ungültig: {0}",
  "uc.gambler.announce_worse": "Ein Gambler hat gewonnen: dein Kill-Cooldown ist diese Runde {0}s länger.",
  "uc.gambler.announce_better": "Ein Gambler hat verloren: dein Kill-Cooldown ist diese Runde {0}s kürzer.",
- "uc.help.gambler": "Ein Crew-Modifier: Er wettet auf den Verlauf der Runde - wer rausgewählt wird, wie viele Stimmen jemand bekommt, ob ein Mord passiert, ob ein Ziel wirklich Tasks erledigt. Nie auf sich selbst. Jede Wette wird erst IM Meeting abgerechnet, ein Gewinn verrät ihm also nie etwas vorzeitig. Die Stufe ist der Einsatz: kleine Wetten ändern nur sein eigenes Tempo, mittlere schenken oder nehmen ihm eine eigene Task, und die höchsten verlängern oder verkürzen den Kill-Cooldown aller Impostoren - die davon erfahren, aber nicht von wem."
+ "uc.help.gambler": "Ein Crew-Modifier: Er wettet auf den Verlauf der Runde - wer rausgewählt wird, wie viele Stimmen jemand bekommt, ob ein Mord passiert, ob ein Ziel wirklich Tasks erledigt. Nie auf sich selbst. Jede Wette wird erst IM Meeting abgerechnet, ein Gewinn verrät ihm also nie etwas vorzeitig. Die Stufe ist der Einsatz: kleine Wetten ändern nur sein eigenes Tempo, mittlere schenken oder nehmen ihm eine eigene Task, und die höchsten verlängern oder verkürzen den Kill-Cooldown aller Impostoren - die davon erfahren, aber nicht von wem.",
+ "uc.ui.stalker.target_assigned": "Du bist der Stalker. Dein Ziel ist {0}: Halte es in deinem Lichtkegel, solange dich niemand sehen könnte. Bei 100% darfst du zuschlagen.",
+ "uc.ui.stalker.flash_ready": "Bereit zum Zuschlagen",
+ "uc.ui.stalker.became_pursuer": "Dein Ziel ist weg, bevor du fertig warst. Du bist jetzt der Pursuer.",
+ "uc.ui.stalker.button_stalk": "STALKEN {0}%",
+ "uc.ui.stalker.button_locked": "IM BLICK {0}%",
+ "uc.ui.stalker.button_seen": "GESEHEN {0}%",
+ "uc.ui.stalker.button_strike": "ZUSCHLAGEN",
+ "uc.ui.stalker.meter": "Jemand stalkt dich: noch {0}s",
+ "uc.ui.stalker.meter_ready": "Dein Stalker ist bereit zuzuschlagen",
+ "uc.ui.stalker.win_banner": "Beobachtet. Verfolgt. Erledigt.",
+ "uc.help.stalker": "Ein Neutraler mit einem einzigen Ziel. Der Stalker behält normale Sicht und trägt zusätzlich einen schmalen Lichtkegel, der weiter reicht als Crew-Sicht; das Ziel muss in diesem Kegel stehen. Die Stalk-Uhr läuft nur, solange das Ziel im Kegel ist UND niemand Lebendes (das Ziel eingeschlossen) den Stalker mit Standard-Crew-Sicht sehen könnte - sabotierte Lichter helfen ihm. Alle 15 Sekunden sieht das Ziel ein Stalk-Meter (Option: nie / ab 50% / immer). Bei 100% bekommt der Stalker einen Kill-Button für sein Ziel; jeder Tod des Ziels danach (sein Schlag, ein Rauswurf, ein Guess) lässt ihn sofort gewinnen. Stirbt das Ziel vor 100%, wird er zum Pursuer (Option: stattdessen neues Ziel).",
+ "uc.ui.void.exile_text": "Die Stimme verschwand im Nichts.",
+ "uc.help.void": "Ein After-Death-Crew-Modifier (verborgen wie VIP, Bait und Bloody, solange TORs 'VIP, Bait & Bloody Are Hidden' an ist - auch vor dem Träger selbst, bis er stirbt): Der erste Rauswurf, der den Void treffen würde, findet nicht statt - der Exile-Bildschirm läuft als Skip mit einer glitchenden Void-Zeile, und das Meeting endet ohne Rauswurf. Danach ist er wie jeder andere rauswählbar. Dafür zählt seine eigene Stimme nie (Option), auch wenn das Icon weiter zeigt, wo sie gelandet ist.",
+ "uc.ui.king.advisor_chat": "Du bist der King. Dein Ratgeber ist {0}, ernannt als {1}. Du hast keine Tasks und keine Fähigkeiten - regiere weise.",
+ "uc.ui.king.fallen": "Der King ist gefallen!",
+ "uc.help.king": "Ein Crewmate ohne Tasks und ohne Fähigkeiten. Zu Beginn erfährt der King die Rolle eines anderen Crewmates, seines Ratgebers, und sieht sie das ganze Spiel unter dessen Namen (der Ratgeber erfährt nichts, spätere Rollenwechsel werden nicht verfolgt). Option: Der King ist immer ein VIP, zusätzlich zu den VIPs, die TOR auslost (die behalten ihren Tag), und sein Tod benachrichtigt alle mit einem königlichen Flash. Solange die Option an ist, lässt sich TORs VIP-Rate nicht auf 0 stellen."
 }

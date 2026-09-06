@@ -74,6 +74,9 @@ namespace UnknownsCollection {
                 Add(table, "Auditor",     Auditor.Color,     Auditor.SpawnRate);
                 Add(table, "Gambler",     Gambler.Color,     Gambler.SpawnRate);
                 Add(table, "Necromancer", Necromancer.Color, Necromancer.SpawnRate);
+                Add(table, "Stalker",     Stalker.Color,     Stalker.SpawnRate);
+                Add(table, "Void",        VoidModifier.Color, VoidModifier.SpawnRate);
+                Add(table, "King",        King.Color,        King.SpawnRate);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[UCOptionColors] published {table.Count} option colour entries.");

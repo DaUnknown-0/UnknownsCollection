@@ -101,6 +101,8 @@ namespace UnknownsCollection {
         public static Sprite CollectorIcon => GetSprite("UnknownsCollection.Resources.collector_collect.png", 115f);
         public static Sprite GamblerIcon => GetSprite("UnknownsCollection.Resources.gambler_bet.png", 115f);
         public static Sprite NecromancerIcon => GetSprite("UnknownsCollection.Resources.necromancer_raise.png", 115f);
+        // Stalker (night indigo): the strike button, animated like every other UC button.
+        public static Sprite StalkerIcon => GetSprite("UnknownsCollection.Resources.stalker_strike.png", 115f);
         public static Sprite ManipulatorIcon => GetSprite("UnknownsCollection.Resources.manipulator_fake.png", 115f);
         // WORLD sprite (in-map object): 200 ppu -> the ~110 px crystal stands ~0.55 units tall.
         public static Sprite CollectorRelicSprite => GetSprite("UnknownsCollection.Resources.collector_relic.png", 200f);

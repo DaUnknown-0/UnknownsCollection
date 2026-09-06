@@ -59,6 +59,9 @@ namespace UnknownsCollection {
         public const byte PelicanDraftId = 217;
         public const byte AuditorDraftId = 218;
         public const byte NecromancerDraftId = 219;
+        public const byte StalkerDraftId = 220;
+        public const byte KingDraftId = 221;
+        // NO Void entry: the Void is a MODIFIER (rides on top of a drafted role), like the Gambler.
         // NO Hunter entry, deliberately: the Hunter is not a rolled role at all. He is an EVENT inside
         // a Werewolf round - the living original Sheriff is promoted the moment the beast is the last
         // Impostor standing (Hunter.cs, host-authoritative trigger). He has no spawn rate to inject
@@ -124,6 +127,11 @@ namespace UnknownsCollection {
                 // Neutral over a plain Crewmate, drafted from the crew pool like Bug/Collector/Pelican.
                 Make(NecromancerDraftId, "Necromancer", Necromancer.Color,   "Raise fresh corpses into your silent army",
                      false, () => Necromancer.SpawnRate, () => Necromancer.SpawnMinPlayers, Necromancer.MarkFromDraft),
+                // Neutral over a plain Crewmate (crew pool); the host appoints the target right after the pick.
+                Make(StalkerDraftId,     "Stalker",     Stalker.Color,       "Watch your target unseen, then strike",
+                     false, () => Stalker.SpawnRate,    () => Stalker.SpawnMinPlayers,    Stalker.MarkFromDraft),
+                Make(KingDraftId,        "King",        King.Color,          "No tasks, no powers - but you know your advisor's role",
+                     false, () => King.SpawnRate,       () => King.SpawnMinPlayers,       King.MarkFromDraft),
             };
             return entries;
         }

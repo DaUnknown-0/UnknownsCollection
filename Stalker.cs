@@ -316,7 +316,16 @@ namespace UnknownsCollection {
             meterPercent = 0;
             lastMeterSent = -1f;
             nextMeterSend = Time.time + 15f;
-            if (!active) { targetId = byte.MaxValue; return; }
+            strikeTarget = null;
+            inConeNow = false;
+            seenNow = false;
+            if (!active) {
+                // Withdrawal (255, host tooling) or a corrupt id: leave nothing behind - the cone
+                // light is dropped by TickCone on the next frame, the meter goes now.
+                targetId = byte.MaxValue;
+                HideMeter();
+                return;
+            }
             UCPromotion.Claim(id);
             ApplySetTarget(target);
             UnknownsCollectionPlugin.Logger?.LogInfo(
@@ -485,13 +494,16 @@ namespace UnknownsCollection {
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {
+                    // The cone is edge-triggered on "do I still want it": run this BEFORE the active
+                    // gate, so a local ex-Stalker (role withdrawn or moved by host tooling mid-game)
+                    // loses his cone light at once instead of keeping it until the round resets.
+                    TickCone();
                     if (!active) { HideMeter(); return; }
 
                     if (IsLocalStalker()) {
                         ClockTick();
                         StrikeTargetTick();
                         ButtonLabelTick();
-                        TickCone();
                     }
                     NameColorTick();
                     MeterTick();

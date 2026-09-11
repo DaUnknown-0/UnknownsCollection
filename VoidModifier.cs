@@ -236,11 +236,14 @@ namespace UnknownsCollection {
         }
 
         // Crew only (design decision): no impostor, no neutral - whatever crew role they already have.
+        // But never on top of another modifier (TOR's or the Gambler): one modifier per player, TOR's
+        // own rule (UCPromotion.HasAnyModifier).
         private static bool IsModifierCandidate(PlayerControl p) {
             try {
                 if (!UCPromotion.IsAlive(p) || p.Data.Role == null || p.Data.Role.IsImpostor) return false;
                 var info = RoleInfo.getRoleInfoForPlayer(p, false).FirstOrDefault();
                 if (info != null && info.isNeutral) return false;
+                if (UCPromotion.HasAnyModifier(p)) return false;
                 return true;
             } catch { return false; }
         }

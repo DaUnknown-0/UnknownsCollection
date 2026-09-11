@@ -82,6 +82,47 @@ namespace UnknownsCollection {
             return info != null && info.roleId == RoleId.Crewmate;
         }
 
+        // Does the player already carry ANY modifier - one of TOR's twelve or one of UC's own (Gambler,
+        // Void)? The UC modifiers are picked on the host at IntroCutscene.OnDestroy, i.e. AFTER TOR's
+        // assignModifiers has handed out its modifiers, so this is the "one modifier per player" gate
+        // for those picks: TOR itself never stacks two modifiers on one player (a shared player pool
+        // in assignModifiersToPlayers), and the UC modifiers must not undo that rule from outside.
+        //
+        // Two sources, on purpose: TOR's statics cover the host-visible truth for all twelve (Bait /
+        // Bloody / VIP are read directly because getRoleInfoForPlayer hides that family from a living
+        // local player while option 1009 is on). The RoleInfo pass on top catches holders that only a
+        // sibling mod knows about - UTS's extra Minis / Armored / Tiebreakers are tracked in its own
+        // lists and appended to getRoleInfoForPlayer via postfix, never written into TOR's single
+        // statics - restricted to TOR's modifier id range so a display-only sentinel of some other
+        // mod (ChanceMod's Chance tag, which by design rides on top of a TOR modifier) is not mistaken
+        // for one.
+        public static bool HasAnyModifier(PlayerControl p) {
+            if (p == null) return false;
+            byte id = p.PlayerId;
+            try {
+                if (Bait.bait != null && Bait.bait.Any(x => x != null && x.PlayerId == id)) return true;
+                if (Bloody.bloody != null && Bloody.bloody.Any(x => x != null && x.PlayerId == id)) return true;
+                if (Vip.vip != null && Vip.vip.Any(x => x != null && x.PlayerId == id)) return true;
+                if (AntiTeleport.antiTeleport != null && AntiTeleport.antiTeleport.Any(x => x != null && x.PlayerId == id)) return true;
+                if (Sunglasses.sunglasses != null && Sunglasses.sunglasses.Any(x => x != null && x.PlayerId == id)) return true;
+                if (Invert.invert != null && Invert.invert.Any(x => x != null && x.PlayerId == id)) return true;
+                if (Chameleon.chameleon != null && Chameleon.chameleon.Any(x => x != null && x.PlayerId == id)) return true;
+                if (Lovers.lover1 != null && Lovers.lover1.PlayerId == id) return true;
+                if (Lovers.lover2 != null && Lovers.lover2.PlayerId == id) return true;
+                if (Tiebreaker.tiebreaker != null && Tiebreaker.tiebreaker.PlayerId == id) return true;
+                if (Mini.mini != null && Mini.mini.PlayerId == id) return true;
+                if (Armored.armored != null && Armored.armored.PlayerId == id) return true;
+                if (Shifter.shifter != null && Shifter.shifter.PlayerId == id) return true;
+
+                if (Gambler.active && Gambler.gambler != null && Gambler.gambler.PlayerId == id) return true;
+                if (VoidModifier.active && VoidModifier.voidPlayer != null && VoidModifier.voidPlayer.PlayerId == id) return true;
+
+                foreach (var ri in RoleInfo.getRoleInfoForPlayer(p, true))
+                    if (ri != null && ri.isModifier && ri.roleId >= RoleId.Lover && ri.roleId <= RoleId.Shifter) return true;
+            } catch { }
+            return false;
+        }
+
         // Clear claims on a full game-state reset (next game's start).
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
         static class ResetPatch {

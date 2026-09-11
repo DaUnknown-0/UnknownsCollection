@@ -302,29 +302,33 @@ namespace UnknownsCollection {
             Mathf.Clamp01((KillCooldownReduction != null ? KillCooldownReduction.getFloat() : 30f) / 100f);
         // ---- The torch (option 1515) ----
         //
-        // The visible choices and the numbers behind them. Index 0 is "no limit at all", the rest are
-        // multipliers of the STANDARD crew sight (see CrewBaseRadius below). The two arrays are kept in
-        // lockstep and everything reads the FACTOR BY INDEX, never by parsing the visible text:
-        // UCLocalization replaces opt.selections with translated strings (UCLocalization.cs:178), so a
-        // text-based lookup would break in every non-English client.
+        // The visible choices and the numbers behind them, ASCENDING by radius (darkest first,
+        // "Infinite" last): TOR's "+" button calls updateSelection(selection + 1) (CustomOptions.cs
+        // StringOptionIncreasePatch), i.e. it always walks FORWARD through this array. With the list
+        // sorted descending (as it originally shipped: Infinite, 2.0x, ..., 0.5x) "+" therefore walked
+        // toward smaller radii and "-" toward larger ones - inverted from what +/- means everywhere
+        // else. Ascending order makes "+" brighten and "-" darken, like every other slider option.
+        // The two arrays are kept in lockstep and everything reads the FACTOR BY INDEX, never by
+        // parsing the visible text: UCLocalization replaces opt.selections with translated strings
+        // (UCLocalization.cs:178), so a text-based lookup would break in every non-English client.
         private static readonly string[] FlashlightChoices = {
+            "0.5x", "0.6x", "0.7x", "0.8x", "0.9x", "1.0x", "1.1x", "1.2x", "1.3x", "1.4x",
+            "1.5x", "1.6x", "1.7x", "1.8x", "1.9x", "2.0x",
             "Infinite",
-            "2.0x", "1.9x", "1.8x", "1.7x", "1.6x", "1.5x", "1.4x", "1.3x", "1.2x", "1.1x",
-            "1.0x", "0.9x", "0.8x", "0.7x", "0.6x", "0.5x",
         };
         private static readonly float[] FlashlightFactors = {
-            0f,   // index 0 = infinite, handled separately - never used as a factor
-            2.0f, 1.9f, 1.8f, 1.7f, 1.6f, 1.5f, 1.4f, 1.3f, 1.2f, 1.1f,
-            1.0f, 0.9f, 0.8f, 0.7f, 0.6f, 0.5f,
+            0.5f, 0.6f, 0.7f, 0.8f, 0.9f, 1.0f, 1.1f, 1.2f, 1.3f, 1.4f,
+            1.5f, 1.6f, 1.7f, 1.8f, 1.9f, 2.0f,
+            0f,   // last index = infinite, handled separately - never used as a factor
         };
         // 0.5x - the darkest setting, and the closest one to the old fixed 35%-of-MaxLightRadius value.
-        private const int DefaultFlashlightIndex = 16;
+        private const int DefaultFlashlightIndex = 0;
 
         private static int FlashlightIndex() {
             if (FlashlightRadius == null) return DefaultFlashlightIndex;
             return Mathf.Clamp(FlashlightRadius.getSelection(), 0, FlashlightFactors.Length - 1);
         }
-        private static bool FlashlightInfinite() => FlashlightIndex() == 0;
+        private static bool FlashlightInfinite() => FlashlightIndex() == FlashlightFactors.Length - 1;
         private static float FlashlightFactor() => FlashlightFactors[FlashlightIndex()];
         private static bool RestrictionsOn() => WolfFormRestrictions == null || WolfFormRestrictions.getBool();
 

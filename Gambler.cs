@@ -1163,6 +1163,8 @@ namespace UnknownsCollection {
                     // A MODIFIER, so unlike the UC roles this does not need a plain crewmate: any
                     // living crew member qualifies, whatever role they already have. Neutrals and
                     // impostors are out - the payouts are built around crew tasks and crew interests.
+                    // Whoever already carries a modifier (TOR's or the Void) is out too: one modifier
+                    // per player, TOR's own rule (UCPromotion.HasAnyModifier).
                     var candidates = PlayerControl.AllPlayerControls.ToArray().Where(IsModifierCandidate).ToList();
                     if (candidates.Count == 0) return;
                     SendSetGambler(candidates[rnd.Next(candidates.Count)].PlayerId);
@@ -1177,6 +1179,7 @@ namespace UnknownsCollection {
                 if (!UCPromotion.IsAlive(p) || p.Data.Role == null || p.Data.Role.IsImpostor) return false;
                 var info = RoleInfo.getRoleInfoForPlayer(p, false).FirstOrDefault();
                 if (info != null && info.isNeutral) return false;
+                if (UCPromotion.HasAnyModifier(p)) return false;
                 return true;
             } catch { return false; }
         }

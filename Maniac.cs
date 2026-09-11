@@ -660,6 +660,7 @@ namespace UnknownsCollection {
                     UpdateTargeting();
                     UpdateFuseEscalation();
                     UpdateMiniBombCooldown();
+                    UpdatePassButtonPosition();
 
                     // Bomb carrier warning text (local)
                     if (LocalHasBomb() && !InMeeting()) {
@@ -745,6 +746,28 @@ namespace UnknownsCollection {
         private static TheOtherRoles.Objects.CustomButton bombButton;
         private static TheOtherRoles.Objects.CustomButton passButton;
 
+        // PASS lives at upperRowLeft, the slot every impostor-side special-role ability button
+        // uses (Sheriff/Vampire/Warlock/Cleaner/Witch/Ninja/Thief/...) - safe under TOR's own
+        // assumption that a player has at most one such role. The bomb, unlike those roles, can be
+        // planted on or passed to ANY player, so a special-role player who ends up carrying it gets
+        // their own ability button rendered exactly on top of PASS, silently swallowing every click
+        // meant for it (reported: a Witch holding the bomb could not pass it on). Nudged above the
+        // slot whenever another currently-shown button already claims it.
+        private static readonly Vector3 PassButtonDefaultPos = TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft;
+        private static readonly Vector3 PassButtonNudgedPos = PassButtonDefaultPos + new Vector3(0f, 0.6f, 0f);
+
+        private static void UpdatePassButtonPosition() {
+            if (passButton == null) return;
+            bool collides = false;
+            foreach (var b in TheOtherRoles.Objects.CustomButton.buttons) {
+                if (b == null || b == passButton || b == bombButton) continue;
+                if (b.HasButton == null) continue;
+                try { if (!b.HasButton()) continue; } catch { continue; }
+                if (b.PositionOffset == PassButtonDefaultPos) { collides = true; break; }
+            }
+            passButton.PositionOffset = collides ? PassButtonNudgedPos : PassButtonDefaultPos;
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
@@ -791,7 +814,7 @@ namespace UnknownsCollection {
                               && PlayerControlFixedUpdatePatch.setTarget(untargetablePlayers: BombUntargetables()) != null,
                         () => { },
                         passSprite,
-                        TheOtherRoles.Objects.CustomButton.ButtonPositions.upperRowLeft,
+                        PassButtonDefaultPos,
                         __instance, KeyCode.G, false, UCLocalization.Tr("uc.ui.maniac.button_pass"));
                     passButton.MaxTimer = 0f;
                     passButton.Timer = 0f;

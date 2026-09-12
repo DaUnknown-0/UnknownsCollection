@@ -579,11 +579,11 @@
  "uc.ui.colorblind.scan3": "ZAPFENZELLEN: 0%",
  "uc.ui.colorblind.scan4": "NETZHAUT WIRD KALIBRIERT...",
  "uc.ui.colorblind.scan5": "FARBSEHEN: WIEDERHERGESTELLT",
- "uc.ui.colorblind.scan_progress": "KALIBRIERUNG... {0}%",
+ "uc.ui.colorblind.scan_progress": "NETZHAUT-KALIBRIERUNG ........ {0}% ........",
  "uc.option.colorblind.noncrew_cure": "Heilung für Neutrale und Impostor",
- "uc.option.colorblind.noncrew_cure.choice.off": "Aus",
- "uc.option.colorblind.noncrew_cure.choice.normal": "Normaler Scan",
- "uc.option.colorblind.noncrew_cure.choice.long": "Langer Scan",
- "uc.option.colorblind.noncrew_cure.choice.very_long": "Sehr langer Scan",
- "uc.help.colorblind": "Ein Modifier (standardmäßig jeder, Option: nur Crew). Der Träger spielt auf einem Schwarz-Weiß-Fernseher: Der ganze Bildschirm ist entsättigt, tot oder lebendig: die Map, jeder Spieler, Hüte, das HUD, Meetings und Chat. 'Rot hat gevented' kann der Colorblind nicht sagen; er muss mit Namen, Hüten und Positionen arbeiten. Sonst merkt niemand etwas. Option (standardmäßig an): Task-Minispiele bleiben farbig, damit Wires und das Probensortieren lösbar bleiben. Option (standardmäßig an): Der MedBay-Scan ist die Heilung. Der Träger bekommt die Task 'Submit Scan' immer zusätzlich; der Scanner zeigt statt der üblichen Zeilen eine Diagnose, und wenn er durch ist, kommt die Farbe dauerhaft zurück. Neutrale und Impostor (Option): Sie bekommen die Heilung ebenfalls, ein Impostor darf dafür sogar den Scanner benutzen (standardmäßig dauert ihr Scan länger: Langer Scan, oder Sehr lang). Jeder Heilungs-Scan zeigt einen violetten statt des grünen Strahls, bei Crew, Neutralen und Impostor gleichermaßen: Mit Visual Tasks markiert er eine Heilung, nie ein Clear. Maps ohne Scanner (Airship, Fungle) haben keine Heilung."
+ "uc.option.colorblind.scan_length": "Länge des Heilungs-Scans",
+ "uc.option.colorblind.scan_length.choice.normal": "Normal",
+ "uc.option.colorblind.scan_length.choice.long": "Lang",
+ "uc.option.colorblind.scan_length.choice.very_long": "Sehr lang",
+ "uc.help.colorblind": "Ein Modifier (standardmäßig jeder, Option: nur Crew). Der Träger spielt auf einem Schwarz-Weiß-Fernseher: Der ganze Bildschirm ist entsättigt, tot oder lebendig: die Map, jeder Spieler, Hüte, das HUD, Meetings und Chat. 'Rot hat gevented' kann der Colorblind nicht sagen; er muss mit Namen, Hüten und Positionen arbeiten. Sonst merkt niemand etwas. Option (standardmäßig an): Task-Minispiele bleiben farbig, damit Wires und das Probensortieren lösbar bleiben. Option (standardmäßig an): Der MedBay-Scan ist die Heilung. Der Träger bekommt die Task 'Submit Scan' immer zusätzlich; der Scanner zeigt statt der üblichen Zeilen eine Diagnose, und wenn er durch ist, kommt die Farbe dauerhaft zurück. Neutrale und Impostor (Option, standardmäßig an) bekommen die Heilung ebenfalls, ein Impostor darf dafür sogar den Scanner benutzen. Jeder Heilungs-Scan sieht bei Crew, Neutralen und Impostor gleich aus: violetter statt grüner Strahl und eine gemeinsame Länge (Option: normal, lang oder sehr lang). Mit Visual Tasks markiert er also eine Heilung, nie ein Clear, und weder Farbe noch Dauer verraten die Fraktion. Maps ohne Scanner (Airship, Fungle) haben keine Heilung."
 }

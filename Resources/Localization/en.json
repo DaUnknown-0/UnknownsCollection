@@ -600,11 +600,11 @@
   "uc.ui.colorblind.scan3": "CONE CELLS: 0%",
   "uc.ui.colorblind.scan4": "RECALIBRATING RETINA...",
   "uc.ui.colorblind.scan5": "COLOR VISION: RESTORED",
-  "uc.ui.colorblind.scan_progress": "RECALIBRATING... {0}%",
+  "uc.ui.colorblind.scan_progress": "RECALIBRATING RETINA ........ {0}% ........",
   "uc.option.colorblind.noncrew_cure": "Neutral And Impostor Cure",
-  "uc.option.colorblind.noncrew_cure.choice.off": "Off",
-  "uc.option.colorblind.noncrew_cure.choice.normal": "Normal Scan",
-  "uc.option.colorblind.noncrew_cure.choice.long": "Long Scan",
-  "uc.option.colorblind.noncrew_cure.choice.very_long": "Very Long Scan",
-  "uc.help.colorblind": "A modifier (anyone by default, option: crew only). The carrier plays on a black-and-white TV: the whole screen is desaturated, dead or alive: the map, every player, hats, the HUD, meetings and chat. 'Red vented' is not a sentence the Colorblind can say; they have to work with names, hats and positions. Nobody else notices anything. Option (on by default): task minigames stay in colour, so Wires and the sample sorting remain solvable. Option (on by default): the MedBay scan is the cure. The carrier always gets the 'Submit Scan' task on top of their list; the scanner prints a diagnosis instead of the usual lines, and when it finishes colour returns for good. Neutrals and impostors (option): they get the cure too, an impostor may even use the scanner for it (by default their scan takes longer: Long Scan, or Very Long). Every cure scan shows a violet beam instead of the green one, for crew, neutrals and impostors alike: with visual tasks on it marks a cure, never a clear. Maps without a scanner (Airship, Fungle) have no cure."
+  "uc.option.colorblind.scan_length": "Cure Scan Length",
+  "uc.option.colorblind.scan_length.choice.normal": "Normal",
+  "uc.option.colorblind.scan_length.choice.long": "Long",
+  "uc.option.colorblind.scan_length.choice.very_long": "Very Long",
+  "uc.help.colorblind": "A modifier (anyone by default, option: crew only). The carrier plays on a black-and-white TV: the whole screen is desaturated, dead or alive: the map, every player, hats, the HUD, meetings and chat. 'Red vented' is not a sentence the Colorblind can say; they have to work with names, hats and positions. Nobody else notices anything. Option (on by default): task minigames stay in colour, so Wires and the sample sorting remain solvable. Option (on by default): the MedBay scan is the cure. The carrier always gets the 'Submit Scan' task on top of their list; the scanner prints a diagnosis instead of the usual lines, and when it finishes colour returns for good. Neutrals and impostors (option, on by default) get the cure too, an impostor may even use the scanner for it. Every cure scan looks the same for crew, neutrals and impostors, a violet beam instead of the green one and one shared length (option: normal, long or very long), so with visual tasks on it marks a cure, never a clear, and neither colour nor timing gives a faction away. Maps without a scanner (Airship, Fungle) have no cure."
 }

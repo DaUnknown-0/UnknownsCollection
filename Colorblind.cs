@@ -60,7 +60,8 @@ namespace UnknownsCollection {
         public static CustomOption WhoCanBe;            // 0 crew only, 1 anyone
         public static CustomOption TasksInColour;
         public static CustomOption ScanCures;
-        public static CustomOption NonCrewCure;         // 0 off, 1 normal scan, 2 long, 3 very long
+        public static CustomOption NonCrewCure;         // neutrals and impostors get the cure too
+        public static CustomOption CureScanLength;      // 0 normal, 1 long, 2 very long (everyone alike)
 
         // ---- Runtime state ----
         public static PlayerControl carrier;
@@ -83,7 +84,8 @@ namespace UnknownsCollection {
             "Sees everything in black and white", ColorblindRoleId, false, true);
 
         private static bool CureEnabled() => ScanCures?.getBool() ?? true;
-        private static int NonCrewCureMode() => NonCrewCure?.getSelection() ?? 2;
+        private static bool NonCrewCureOn() => NonCrewCure?.getBool() ?? true;
+        private static int ExtraScanLines() => (CureScanLength?.getSelection() ?? 1) switch { 1 => 2, 2 => 3, _ => 0 };
 
         // Impostor or neutral: the scanner is not theirs by vanilla rules (impostors are refused by
         // the console, neutrals may use it but their tasks count for nothing).
@@ -97,7 +99,7 @@ namespace UnknownsCollection {
         }
 
         // Does the carrier get the cure at all (option 1689, and 1690 for non-crew)?
-        private static bool CureFor(PlayerControl p) => CureEnabled() && (!IsNonCrew(p) || NonCrewCureMode() > 0);
+        private static bool CureFor(PlayerControl p) => CureEnabled() && (!IsNonCrew(p) || NonCrewCureOn());
 
         public static void CreateOptions() {
             try {
@@ -111,9 +113,13 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 ScanCures = CustomOption.Create(1689, Types.Modifier, "MedBay Scan Cures The Colorblind",
                     true, SpawnRate);
+                NonCrewCure = CustomOption.Create(1690, Types.Modifier, "Neutral And Impostor Cure",
+                    true, ScanCures);
+                // One length for EVERY cure scan: observers can time a scan, so a per-faction length
+                // would give the faction away just like a per-faction beam colour would.
                 // Constructor form for a non-zero default (Create(string[]) always defaults to index 0).
-                NonCrewCure = new CustomOption(1690, Types.Modifier, "Neutral And Impostor Cure",
-                    new object[] { "Off", "Normal Scan", "Long Scan", "Very Long Scan" }, "Long Scan", ScanCures, false);
+                CureScanLength = new CustomOption(1691, Types.Modifier, "Cure Scan Length",
+                    new object[] { "Normal", "Long", "Very Long" }, "Long", ScanCures, false);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Colorblind] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Colorblind] CreateOptions failed: {e}");
@@ -141,7 +147,12 @@ namespace UnknownsCollection {
                 if (!IsLocalCarrier() || cured || ShipStatus.Instance == null) return false;
                 if (AmongUsClient.Instance == null
                     || AmongUsClient.Instance.GameState != InnerNet.InnerNetClient.GameStates.Started) return false;
-                if ((TasksInColour?.getBool() ?? true) && Minigame.Instance != null) return false;
+                if ((TasksInColour?.getBool() ?? true) && Minigame.Instance != null) {
+                    // The cure scan itself stays grey: colour has to come back on "RESTORED", not the
+                    // moment the scanner opens.
+                    bool cureScan = Minigame.Instance.TryCast<MedScanMinigame>() != null && CureFor(PlayerControl.LocalPlayer);
+                    if (!cureScan) return false;
+                }
                 return true;
             } catch { return false; }
         }
@@ -159,7 +170,23 @@ namespace UnknownsCollection {
                 w.Write(id);
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 ApplySet(id);
+                // Host tooling (Role Control) assigns through this path too, before the intro or
+                // mid-game. Tasks exist only once the game runs; before that the intro-end postfix
+                // takes care of the scan task.
+                if (active && AmHost() && ShipStatus.Instance != null && !IntroRunning()) HostCureTaskStep();
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Colorblind] SendSet failed: {e}"); }
+        }
+
+        private static bool IntroRunning() {
+            try { return DestroyableSingleton<IntroCutscene>.InstanceExists; } catch { return false; }
+        }
+
+        // Host: give the carrier the cure task if they qualify (idempotent, logs why not).
+        private static void HostCureTaskStep() {
+            if (!active || carrier == null) return;
+            if (!CureEnabled()) return;
+            if (CureFor(carrier)) HostEnsureScanTask();
+            else UnknownsCollectionPlugin.Logger?.LogInfo("[Colorblind] non-crew carrier and the non-crew cure is off - no scan task.");
         }
 
         private static void SendCured() {
@@ -217,7 +244,9 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
-                    if (active) return;   // forced by host tooling before the intro ended
+                    // Forced by host tooling before the intro ended: no pick, but the cure task still
+                    // has to be handed out here (the tasks did not exist when SendSet ran).
+                    if (active) { HostCureTaskStep(); return; }
                     if (SpawnRate == null || SpawnRate.getSelection() <= 0) return;
                     if (!TeslaVersionHandshake.EveryoneHasMod()) return;
                     if (LobbyPlayerCount() < (SpawnMinPlayers?.getFloat() ?? 5f)) return;
@@ -228,8 +257,9 @@ namespace UnknownsCollection {
                     var candidates = PlayerControl.AllPlayerControls.ToArray().Where(IsModifierCandidate).ToList();
                     if (candidates.Count == 0) return;
                     SendSet(candidates[rnd.Next(candidates.Count)].PlayerId);
-                    if (CureFor(carrier)) HostEnsureScanTask();
-                    else if (CureEnabled()) UnknownsCollectionPlugin.Logger?.LogInfo("[Colorblind] non-crew carrier and the non-crew cure is off - no scan task.");
+                    // SendSet skips the task while it still sees the intro singleton (OnDestroy timing
+                    // is not guaranteed either way); the step is idempotent, so run it here as well.
+                    HostCureTaskStep();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Colorblind] IntroEnd pick failed: {e}");
                 }
@@ -289,8 +319,10 @@ namespace UnknownsCollection {
                     string name = me?.Data?.PlayerName ?? "?";
                     var lines = new List<string>();
                     for (int i = 1; i <= 4; i++) lines.Add(string.Format(UCLocalization.Tr("uc.ui.colorblind.scan" + i), name));
-                    int extra = 0;
-                    if (IsNonCrew(me)) extra = NonCrewCureMode() switch { 2 => 3, 3 => 7, _ => 0 };
+                    // The scanner panel holds about eight lines: five of ours plus at most three
+                    // progress lines, which are long on purpose (the typewriter pays per character).
+                    // Same count for everyone, see CureScanLength.
+                    int extra = ExtraScanLines();
                     string progress = UCLocalization.Tr("uc.ui.colorblind.scan_progress");
                     for (int k = 1; k <= extra; k++)
                         lines.Add(string.Format(progress, Mathf.RoundToInt(100f * k / (extra + 1))));
@@ -392,12 +424,24 @@ namespace UnknownsCollection {
         }
 
         // ---- The post effect ----
+        // No CommandBuffer: the runtime interop cannot build a RenderTargetIdentifier from
+        // BuiltinRenderTextureType (the NuGet reference interop could, the game's generated one
+        // throws "Method not found" - playtest 2026-09-12). So the main camera renders into a
+        // screen-sized RenderTexture and a second, higher-depth camera (its own layer, nothing else
+        // on it) draws one quad that shows that texture through the desaturation material. Screen
+        // space UGUI overlays render after every camera and stay untouched.
         private static Material desatMaterial;
         private static bool shaderMissing;
-        private static Camera fxCamera;
-        private static CommandBuffer fxBuffer;
+        private static bool attachFailed;           // one failure per game, no retry spam
+        private static Camera mainCam;               // Camera.main at attach time (change detection)
+        private static readonly List<Camera> redirected = new();   // every screen camera we pointed at the RT
+        private static RenderTexture frameRt;
+        private static GameObject fxRoot;            // holds the quad camera and the quad
+        private static Camera quadCam;
+        private static MeshRenderer quadRenderer;
         private static float nextPoll;
-        private const CameraEvent FxEvent = CameraEvent.AfterEverything;
+        private const int FxLayer = 31;              // Nightfall isolates on 30; 31 is free
+        private static readonly Vector3 FarAway = new Vector3(5000f, 5000f, 0f);
 
         // Unity destroys a script-made Material on a scene change (the InvertVision lesson in UTS):
         // HideAndDontSave + DontDestroyOnLoad keep it, and a fake-null one is simply rebuilt.
@@ -429,37 +473,128 @@ namespace UnknownsCollection {
             }
         }
 
+        private static Mesh BuildQuad(float halfW, float halfH) {
+            var mesh = new Mesh();
+            mesh.hideFlags = HideFlags.HideAndDontSave;
+            mesh.vertices = new Vector3[] {
+                new Vector3(-halfW, -halfH, 0f), new Vector3(halfW, -halfH, 0f),
+                new Vector3(-halfW,  halfH, 0f), new Vector3(halfW,  halfH, 0f)
+            };
+            mesh.uv = new Vector2[] { new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 1f), new Vector2(1f, 1f) };
+            mesh.colors = new Color[] { Color.white, Color.white, Color.white, Color.white };
+            mesh.triangles = new int[] { 0, 2, 1, 2, 3, 1 };
+            mesh.RecalculateBounds();
+            return mesh;
+        }
+
         private static void AttachFx(Camera cam) {
             EnsureMaterial();
             if (desatMaterial == null || cam == null) return;
             try {
-                var cb = new CommandBuffer();
-                cb.name = "UCColorblind";
-                int temp = Shader.PropertyToID("_UCColorblindTemp");
-                // The interop exposes the struct's implicit conversions, not its constructors.
-                RenderTargetIdentifier target = BuiltinRenderTextureType.CameraTarget;
-                RenderTargetIdentifier scratch = temp;
-                cb.GetTemporaryRT(temp, -1, -1, 0, FilterMode.Bilinear);
-                cb.Blit(target, scratch);
-                cb.Blit(scratch, target, desatMaterial);
-                cb.ReleaseTemporaryRT(temp);
-                cam.AddCommandBuffer(FxEvent, cb);
-                fxBuffer = cb;
-                fxCamera = cam;
-                UnknownsCollectionPlugin.Logger?.LogInfo("[Colorblind] black-and-white view attached.");
+                int w = Mathf.Max(8, Screen.width), h = Mathf.Max(8, Screen.height);
+                frameRt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32);
+                frameRt.name = "UCColorblindFrame";
+                frameRt.Create();
+                desatMaterial.mainTexture = frameRt;
+
+                // The main camera must not see the quad: a layer outside its culling mask.
+                int layer = FxLayer;
+                for (int l = 31; l >= 24; l--)
+                    if ((cam.cullingMask & (1 << l)) == 0) { layer = l; break; }
+
+                fxRoot = new GameObject("UCColorblindFx");
+                fxRoot.transform.position = FarAway;
+                var camGo = new GameObject("QuadCam") { layer = layer };
+                camGo.transform.SetParent(fxRoot.transform, false);
+                camGo.transform.localPosition = new Vector3(0f, 0f, -5f);
+                quadCam = camGo.AddComponent<Camera>();
+                quadCam.orthographic = true;
+                quadCam.orthographicSize = 1f;
+                quadCam.nearClipPlane = 0.1f;
+                quadCam.farClipPlane = 20f;
+                quadCam.cullingMask = 1 << layer;
+                quadCam.clearFlags = CameraClearFlags.SolidColor;
+                quadCam.backgroundColor = Color.black;
+                quadCam.depth = cam.depth + 1f;
+                quadCam.allowHDR = false;
+                quadCam.allowMSAA = false;
+
+                var quadGo = new GameObject("Quad") { layer = layer };
+                quadGo.transform.SetParent(fxRoot.transform, false);
+                quadGo.transform.localPosition = Vector3.zero;
+                float aspect = (float)w / h;
+                quadGo.AddComponent<MeshFilter>().mesh = BuildQuad(aspect, 1f);
+                quadRenderer = quadGo.AddComponent<MeshRenderer>();
+                quadRenderer.sharedMaterial = desatMaterial;
+                quadRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                quadRenderer.receiveShadows = false;
+
+                // Every enabled camera that draws to the screen (the world camera AND the HUD camera,
+                // which is a separate one in Among Us) renders into the same RT in its own depth
+                // order; cameras with their own target (lighting, Nightfall captures) are left alone.
+                float topDepth = cam.depth;
+                foreach (var c in ScreenCameras()) {
+                    c.targetTexture = frameRt;
+                    redirected.Add(c);
+                    if (c.depth > topDepth) topDepth = c.depth;
+                }
+                quadCam.depth = topDepth + 1f;
+                mainCam = cam;
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Colorblind] black-and-white view attached ({w}x{h}, layer {layer}): " +
+                    string.Join(", ", redirected.Select(c => $"{c.name}@{c.depth}")) + ".");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Colorblind] attach failed: {e.Message}");
-                fxBuffer = null;
-                fxCamera = null;
+                attachFailed = true;
+                DetachFx();
             }
         }
 
-        private static void DetachFx() {
+        // Enabled cameras without a render target of their own, i.e. the ones that compose the screen.
+        private static List<Camera> ScreenCameras() {
+            var list = new List<Camera>();
             try {
-                if (fxCamera != null && fxBuffer != null) fxCamera.RemoveCommandBuffer(FxEvent, fxBuffer);
-            } catch { }
-            fxBuffer = null;
-            fxCamera = null;
+                var all = Camera.allCameras;
+                if (all == null) return list;
+                for (int i = 0; i < all.Count; i++) {
+                    var c = all[i];
+                    if (c == null || !c.enabled || c == quadCam) continue;
+                    if (c.targetTexture != null && c.targetTexture != frameRt) continue;
+                    list.Add(c);
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Colorblind] camera scan failed: {e.Message}");
+            }
+            return list;
+        }
+
+        private static void DetachFx() {
+            foreach (var c in redirected) {
+                try { if (c != null && c.targetTexture == frameRt) c.targetTexture = null; } catch { }
+            }
+            redirected.Clear();
+            try { if (fxRoot != null) UnityEngine.Object.Destroy(fxRoot); } catch { }
+            try { if (desatMaterial != null) desatMaterial.mainTexture = null; } catch { }
+            try { if (frameRt != null) { frameRt.Release(); UnityEngine.Object.Destroy(frameRt); } } catch { }
+            fxRoot = null;
+            quadCam = null;
+            quadRenderer = null;
+            frameRt = null;
+            mainCam = null;
+        }
+
+        private static bool FxAttached => fxRoot != null && frameRt != null && mainCam != null;
+
+        // A screen camera appeared (the HUD camera is created after the world camera) or one of ours
+        // lost the redirect (something reset its target): rebuild the whole redirect.
+        private static bool CameraSetChanged() {
+            try {
+                var now = ScreenCameras();
+                if (now.Count != redirected.Count) return true;
+                foreach (var c in now)
+                    if (c.targetTexture != frameRt) return true;
+                return false;
+            } catch { return false; }
         }
 
         private static void Tick() {
@@ -467,15 +602,18 @@ namespace UnknownsCollection {
                 if (Time.time < nextPoll) return;
                 nextPoll = Time.time + 0.25f;
                 bool want = GreyWanted();
-                if (!want) {
-                    if (fxBuffer != null) DetachFx();
+                if (!want || attachFailed) {
+                    if (FxAttached) DetachFx();
                     return;
                 }
                 var cam = Camera.main;
-                if (cam == null) { if (fxBuffer != null) DetachFx(); return; }
-                // A destroyed camera compares equal to null through the Unity operator; a new camera
-                // object after a scene change is simply a different reference.
-                if (fxBuffer != null && fxCamera != null && fxCamera == cam) return;
+                if (cam == null) { if (FxAttached) DetachFx(); return; }
+                // Same camera, same screen size, redirect still in place: nothing to do. A destroyed
+                // camera compares equal to null through the Unity operator; a new camera object after
+                // a scene change is simply a different reference. A resolution change needs a new RT.
+                if (FxAttached && mainCam == cam && cam.targetTexture == frameRt
+                    && frameRt.width == Screen.width && frameRt.height == Screen.height
+                    && !CameraSetChanged()) return;
                 DetachFx();
                 AttachFx(cam);
             } catch (Exception e) {
@@ -501,6 +639,7 @@ namespace UnknownsCollection {
         // ---- Resets ----
         private static void FullReset() {
             DetachFx();
+            attachFailed = false;
             carrier = null;
             active = false;
             cured = false;

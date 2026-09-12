@@ -77,6 +77,10 @@ namespace UnknownsCollection {
                 Add(table, "Stalker",     Stalker.Color,     Stalker.SpawnRate);
                 Add(table, "Void",        VoidModifier.Color, VoidModifier.SpawnRate);
                 Add(table, "King",        King.Color,        King.SpawnRate);
+                Add(table, "Sleepwalker", Sleepwalker.Color, Sleepwalker.SpawnRate);
+                Add(table, "Last Words",  LastWords.Color,   LastWords.SpawnRate);
+                Add(table, "Sixth Sense", SixthSense.Color,  SixthSense.SpawnRate);
+                Add(table, "Colorblind",  Colorblind.Color,  Colorblind.SpawnRate);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[UCOptionColors] published {table.Count} option colour entries.");

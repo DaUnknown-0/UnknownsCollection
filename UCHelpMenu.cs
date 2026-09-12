@@ -61,6 +61,10 @@ namespace UnknownsCollection {
 
                 E("Gambler", Faction.Modifier, () => Gambler.Color, () => Gambler.SpawnRate, "uc.help.gambler"),
                 E("Void", Faction.Modifier, () => VoidModifier.Color, () => VoidModifier.SpawnRate, "uc.help.void"),
+                E("Sleepwalker", Faction.Modifier, () => Sleepwalker.Color, () => Sleepwalker.SpawnRate, "uc.help.sleepwalker"),
+                E("Last Words", Faction.Modifier, () => LastWords.Color, () => LastWords.SpawnRate, "uc.help.lastwords"),
+                E("Sixth Sense", Faction.Modifier, () => SixthSense.Color, () => SixthSense.SpawnRate, "uc.help.sixthsense"),
+                E("Colorblind", Faction.Modifier, () => Colorblind.Color, () => Colorblind.SpawnRate, "uc.help.colorblind"),
 
                 E("Siphoner", Faction.Crew, () => Siphoner.Color, () => Siphoner.SpawnRate, "uc.help.siphoner"),
                 E("Witness", Faction.Crew, () => Witness.Color, () => Witness.SpawnRate, "uc.help.witness"),

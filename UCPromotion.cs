@@ -83,7 +83,7 @@ namespace UnknownsCollection {
         }
 
         // Does the player already carry ANY modifier - one of TOR's twelve or one of UC's own (Gambler,
-        // Void)? The UC modifiers are picked on the host at IntroCutscene.OnDestroy, i.e. AFTER TOR's
+        // Void, Sleepwalker, Last Words, Sixth Sense, Colorblind)? The UC modifiers are picked on the host at IntroCutscene.OnDestroy, i.e. AFTER TOR's
         // assignModifiers has handed out its modifiers, so this is the "one modifier per player" gate
         // for those picks: TOR itself never stacks two modifiers on one player (a shared player pool
         // in assignModifiersToPlayers), and the UC modifiers must not undo that rule from outside.
@@ -116,6 +116,10 @@ namespace UnknownsCollection {
 
                 if (Gambler.active && Gambler.gambler != null && Gambler.gambler.PlayerId == id) return true;
                 if (VoidModifier.active && VoidModifier.voidPlayer != null && VoidModifier.voidPlayer.PlayerId == id) return true;
+                if (Sleepwalker.active && Sleepwalker.sleepwalker != null && Sleepwalker.sleepwalker.PlayerId == id) return true;
+                if (LastWords.active && LastWords.carrier != null && LastWords.carrier.PlayerId == id) return true;
+                if (SixthSense.active && SixthSense.carrier != null && SixthSense.carrier.PlayerId == id) return true;
+                if (Colorblind.active && Colorblind.carrier != null && Colorblind.carrier.PlayerId == id) return true;
 
                 foreach (var ri in RoleInfo.getRoleInfoForPlayer(p, true))
                     if (ri != null && ri.isModifier && ri.roleId >= RoleId.Lover && ri.roleId <= RoleId.Shifter) return true;

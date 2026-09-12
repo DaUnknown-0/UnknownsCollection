@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.5.1";
+    public const string PluginVersion = "1.2.5.2";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -86,6 +86,10 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte StalkerRpcId = 218;      // neutral; stalk a target unseen, then strike (Sub 0 set, 1 meter, 2 complete, 3 fallback, 4 set-target)
     public const byte VoidRpcId = 219;         // crew MODIFIER; one ejection passes through (Sub 0 set, Sub 1 triggered)
     public const byte KingRpcId = 220;         // crew; no tasks, knows the advisor's role, carries the VIP (Sub 0 set)
+    public const byte SleepwalkerRpcId = 221;  // MODIFIER; wakes up elsewhere after meetings (Sub 0 set, Sub 1 wake x/y)
+    public const byte LastWordsRpcId = 222;    // MODIFIER; a sentence posted after the carrier's death (Sub 0 set, Sub 1 words)
+    public const byte SixthSenseRpcId = 223;   // crew MODIFIER; pulses near a ready killer (Sub 0 set, Sub 1 ready)
+    public const byte ColorblindRpcId = 224;   // MODIFIER; sees everyone in grey (Sub 0 set)
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -291,6 +295,26 @@ public class UnknownsCollectionPlugin : BasePlugin
         // VIP crown with a royal death flash.
         King.CreateOptions();
         King.TryPatch(harmony);
+
+        // The Sleepwalker (MODIFIER): dozes off in the meeting and wakes up in a random room after
+        // the exile screen - no start-of-round alibi, always alone at first. Host picks the spot.
+        Sleepwalker.CreateOptions();
+        Sleepwalker.TryPatch(harmony);
+
+        // Last Words (MODIFIER): one sentence written during the round (N), posted anonymously in
+        // the first meeting after the carrier's death. Lies included.
+        LastWords.CreateOptions();
+        LastWords.TryPatch(harmony);
+
+        // Sixth Sense (crew MODIFIER): the screen edge pulses while a killer with a READY kill
+        // stands in range - that, never who. Killers announce their own readiness transitions.
+        SixthSense.CreateOptions();
+        SixthSense.TryPatch(harmony);
+
+        // Colorblind (MODIFIER): every player is camouflage-grey for the carrier, all game long,
+        // on the map, in the meeting and in the chat. Names and hats stay (option).
+        Colorblind.CreateOptions();
+        Colorblind.TryPatch(harmony);
 
         // Reactor music (Paket R) - not a role: a score for the reactor/seismic sabotage that is
         // written against the REAL ICriticalSabotage countdown, so the blast in its finale lands on

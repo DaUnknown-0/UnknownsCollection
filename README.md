@@ -12,6 +12,8 @@ modified**. The plugin only takes a hard dependency on TheOtherRoles.
 
 📖 **Full documentation:** <https://daunknown-0.github.io/tor-mods-wiki/unknowns.html> (searchable, EN/DE).
 
+This mod is not affiliated with Among Us or Innersloth LLC, and the content contained therein is not endorsed or otherwise sponsored by Innersloth LLC. Portions of the materials contained herein are property of Innersloth LLC. © Innersloth LLC.
+
 ---
 
 ## Roles

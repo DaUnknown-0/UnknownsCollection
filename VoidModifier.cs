@@ -35,6 +35,16 @@
  * milliseconds a short burst shoves them further apart, flickers the main colour and replaces a
  * couple of the ghosts' characters with ASCII noise (the HUD font has no exotic glyphs).
  *
+ * THE SCENE (2026-09-23, User: "finale Animation fuer den Void", einstellbar Atlas-Karten / alle Karten):
+ * option 1658 turns the plain skip screen into a full exile scene played by the shared EjectEngine
+ * (EjectEngine.cs, the same file as in Unknown's Atlas; directed in UnknownsAtlas/tools/eject_scenes.py,
+ * previewed in the Atlas "Rauswurf-Kino"): the Void drifts into a violet nothing, a rift opens behind
+ * them, the ballots fly at them - and through them (glitching, half transparent) into the rift, which
+ * collapses; the Void stays. UC plays it by itself, on any map; "Atlas Maps Only" asks for the AppDomain
+ * key "UnknownsAtlas.ActiveMap". While it runs, "UnknownsCollection.VoidScene" = true tells Atlas to
+ * keep its own skip scene out of this exile. The glitch line keeps working: the scene moves the text
+ * into the top letterbox bar first, the styling then takes that position as its home.
+ *
  * ARCHITECTURE: modifier over any crew role (the Gambler pattern), host-authoritative pick, custom
  * RPC module 219 on UCRpc.CallId = 230, gated on "everyone has the mod". Options 1655-1657, display
  * RoleId sentinel 231 (Gambler 230), no draft entry (modifiers are not drafted). See ID-Registry.md.
@@ -44,6 +54,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using BepInEx.Unity.IL2CPP.Utils.Collections;
 using HarmonyLib;
 using Hazel;
 using TMPro;
@@ -66,6 +77,10 @@ namespace UnknownsCollection {
         public static CustomOption SpawnRate;
         public static CustomOption SpawnMinPlayers;
         public static CustomOption OwnVoteCounts;
+        public static CustomOption ExileScene;                 // 1658: All Maps / Atlas Maps Only / Off
+        private const string VoidSceneKey = "UnknownsCollection.VoidScene";
+        private const string AtlasMapKey = "UnknownsAtlas.ActiveMap";
+        private static EjectEngine.Doc sceneDoc;
 
         // ---- Runtime state ----
         public static PlayerControl voidPlayer;
@@ -98,6 +113,8 @@ namespace UnknownsCollection {
                     5f, 4f, 15f, 1f, SpawnRate);
                 OwnVoteCounts = CustomOption.Create(1657, Types.Modifier, "Void's Own Vote Counts",
                     false, SpawnRate);
+                ExileScene = CustomOption.Create(1658, Types.Modifier, "Void Exile Scene",
+                    new[] { "All Maps", "Atlas Maps Only", "Off" }, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Void] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Void] CreateOptions failed: {e}");
@@ -317,11 +334,51 @@ namespace UnknownsCollection {
                     if (!pending) return;
                     pending = false;
                     if (__instance == null) return;
+                    TryStartScene(__instance, voidPlayer != null ? voidPlayer.Data : null);   // first: it moves the text, the styling takes that as home
                     StartStyling(__instance);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Void] exile styling failed: {e}");
                     StopStyling();
                 }
+            }
+        }
+
+        // The exile scene (option 1658). Host-synced option, same decision on every client.
+        private static bool SceneWanted() {
+            int mode = ExileScene?.getSelection() ?? 0;
+            if (mode == 2) return false;
+            if (mode == 1) {
+                try { return AppDomain.CurrentDomain.GetData(AtlasMapKey) is string m && m.Length > 0; }
+                catch { return false; }
+            }
+            return true;
+        }
+
+        /// <summary>Autotest (Atlas TaskTest "voidscene", per Reflection): Void-Szene mit Glitch-Zeile
+        /// auf einem frisch gestarteten Skip-Rauswurf, unabhaengig von Option und Void-Zustand.</summary>
+        public static void DiagScene(ExileController ec, NetworkedPlayerInfo who) {
+            TryStartScene(ec, who, force: true);
+            StartStyling(ec);
+        }
+
+        private static void TryStartScene(ExileController ec, NetworkedPlayerInfo showAs, bool force = false) {
+            try {
+                if (!force && !SceneWanted()) return;
+                if (sceneDoc == null) {
+                    EjectEngine.Log = m => UnknownsCollectionPlugin.Logger?.LogInfo($"[Void] {m}");
+                    EjectEngine.Warn = m => UnknownsCollectionPlugin.Logger?.LogWarning($"[Void] {m}");
+                    sceneDoc = EjectEngine.LoadDoc("eject_void.json");
+                }
+                if (sceneDoc == null || sceneDoc.Scenes.Count == 0) return;
+                var run = new EjectEngine.Run(sceneDoc.Scenes[0], sceneDoc);
+                run.Setup(ec, showAs);
+                AppDomain.CurrentDomain.SetData(VoidSceneKey, true);
+                ec.StopAllCoroutines();
+                ec.StartCoroutine(EjectEngine.Play(run).WrapToIl2Cpp());
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Void] exile scene started (player {(run.P != null ? "shown" : "missing")}).");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Void] exile scene failed, plain screen stays: {e}");
+                try { AppDomain.CurrentDomain.SetData(VoidSceneKey, false); } catch { }
             }
         }
 
@@ -341,7 +398,7 @@ namespace UnknownsCollection {
         }
 
         private static void StartStyling(ExileController ctrl) {
-            StopStyling();
+            StopStylingCore(clearScene: false);   // the scene may have started a moment ago - keep its claim
             mainText = ctrl.Text;
             if (mainText == null) return;
             try { ctrl.completeString = UCLocalization.Tr("uc.ui.void.exile_text"); } catch { }
@@ -440,8 +497,11 @@ namespace UnknownsCollection {
             return sb.ToString();
         }
 
-        private static void StopStyling() {
+        private static void StopStyling() => StopStylingCore(clearScene: true);
+
+        private static void StopStylingCore(bool clearScene) {
             styling = false;
+            if (clearScene) { try { AppDomain.CurrentDomain.SetData(VoidSceneKey, false); } catch { } }
             try {
                 if (mainText != null) {
                     mainText.color = mainOriginalColor;

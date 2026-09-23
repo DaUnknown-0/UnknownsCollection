@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.2.6</Version>
+        <Version>1.2.6.1</Version>
         <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade, Manipulator, Werewolf, Auditor (Impostor); Siphoner, Witness, Scout, Beacon, Hunter, King (Crewmate); Bug, Follower, Copycat, Collector, Pelican, Necromancer, Stalker (Neutral); Poltergeist (ghost, keeps its team); Gambler, Void (crew modifiers).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
@@ -18,6 +18,10 @@
          next to them (deliberately NOT embedded any more - see tmp\OGG_MESSBERICHT.md). -->
     <ItemGroup>
         <EmbeddedResource Include="Resources\tesla_warning.ogg" />
+        <!-- Void-Rauswurfszene (EjectEngine): Regie + Grafik aus UnknownsAtlas/tools (eject_scenes.py, gen_eject.py) -->
+        <EmbeddedResource Include="Resources\eject_void.json" />
+        <EmbeddedResource Include="Resources\task_eject_*.png" />
+        <EmbeddedResource Include="Resources\task_eject_*.jpg" />
         <EmbeddedResource Include="Resources\beacon_share.ogg" />
         <EmbeddedResource Include="Resources\collector_channel.ogg" />
         <EmbeddedResource Include="Resources\collector_ready.ogg" />

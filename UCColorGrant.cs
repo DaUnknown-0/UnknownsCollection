@@ -256,6 +256,7 @@ namespace UnknownsCollection {
 
         private static readonly Dictionary<Color, Sprite> solids = new();
         private GameObject lobbyButton, panel, prompt;
+        private RectTransform lobbyButtonRect;
         private bool promptShown;
         private float nextPoll;
 
@@ -433,7 +434,8 @@ namespace UnknownsCollection {
                 bool host = AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost;
                 bool show = host && UCColorGrant.InLobby() && UCColors.Installed;
                 if (show && lobbyButton == null) BuildLobbyButton();
-                if (!show && lobbyButton != null) { Destroy(lobbyButton); lobbyButton = null; ClosePanel(); }
+                if (!show && lobbyButton != null) { Destroy(lobbyButton); lobbyButton = null; lobbyButtonRect = null; ClosePanel(); }
+                if (lobbyButtonRect != null) lobbyButtonRect.anchoredPosition = new Vector2(28, LobbyRowY());
 
                 if (UCColorGrant.HasPending && !promptShown) BuildPrompt();
                 if (!UCColorGrant.HasPending && prompt != null) ClosePrompt();
@@ -471,11 +473,23 @@ namespace UnknownsCollection {
             } catch { }
         }
 
+        /*
+         * UTS stacks its own lobby buttons (mod sync, newcomer shield, early-death shield) in the same
+         * bottom-left column and publishes the next free row. A fixed row sat exactly on top of the
+         * early-death button. Without UTS, or with one too old to publish, the old row stays.
+         */
+        [HideFromIl2Cpp]
+        private static float LobbyRowY() {
+            try { if (AppDomain.CurrentDomain.GetData("UTS.LobbyButtons.NextFreeY") is float y) return y; } catch { }
+            return 140f;
+        }
+
         [HideFromIl2Cpp]
         private void BuildLobbyButton() {
             lobbyButton = Canvas("UCColorGrantButton", 9000);
             var b = Box(lobbyButton, Vector2.zero, Vector2.zero, Vector2.zero,
-                        new Vector2(28, 140), new Vector2(330, 46), new Color(0.35f, 0.1f, 0.5f, 0.95f));
+                        new Vector2(28, LobbyRowY()), new Vector2(330, 46), new Color(0.35f, 0.1f, 0.5f, 0.95f));
+            lobbyButtonRect = b.GetComponent<RectTransform>();
             Label(b, UCLocalization.Tr("uc.colorgrant.lobby_button"), 18, Color.white,
                   TMPro.TextAlignmentOptions.Center).fontStyle = TMPro.FontStyles.Bold;
             OnClick(b, TogglePanel);

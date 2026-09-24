@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.6.1";
+    public const string PluginVersion = "1.2.6.2";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -168,6 +168,8 @@ public class UnknownsCollectionPlugin : BasePlugin
         Illusionist.TryPatch(harmony);
 
         // Per-player settings (config file + in-game toggle via UC Options menu).
+        Sleepwalker.DiagProbe = Config.Bind("Diagnostics", "Sleepwalker Probe", 0,
+            "Autotest only: starts a Freeplay on map (value - 1, e.g. 3 = Polus), probes wake-up spots once and photographs them into UCShots. 0 = off (default).");
         BugGlitchEnabled = Config.Bind("Bug", "Bug Win Glitch Effects", true,
             "Enable visual/sound glitch effects on the Bug win screen");
         ButtonPulseEnabled = Config.Bind("Buttons", "Button Ready Pulse", false,

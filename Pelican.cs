@@ -1003,6 +1003,9 @@ namespace UnknownsCollection {
 
                 // Movement is owner-authoritative - only his own client may put him back on the floor.
                 if (p.AmOwner) {
+                    // Submerged keeps a per-player floor and mirrors a snap onto the other deck by
+                    // 48 units; switch the floor first, the way TOR's own teleports do (Buttons.cs).
+                    if (SubmergedCompatibility.IsSubmerged) { try { SubmergedCompatibility.ChangeFloor(at.y > -7); } catch { } }
                     try { p.NetTransform.RpcSnapTo(at); } catch { p.transform.position = at; }
                     try { Helpers.showFlash(Color, 1.5f, UCLocalization.Tr("uc.ui.pelican.freed_flash")); } catch { }
                 } else {

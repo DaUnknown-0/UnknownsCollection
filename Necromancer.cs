@@ -402,8 +402,12 @@ namespace UnknownsCollection {
                 if (PlayerControl.LocalPlayer != null && PlayerControl.LocalPlayer.PlayerId == pid) {
                     // The owner client moves its own pawn - everyone else gets the sync (the ghost
                     // may have floated anywhere; the thrall must RISE where the corpse lay).
-                    if (bodyPos != null)
+                    if (bodyPos != null) {
+                        // Submerged: the corpse may lie on the other deck than the ghost floated to;
+                        // switch the floor first like TOR's teleports, or the snap is mirrored by 48.
+                        if (SubmergedCompatibility.IsSubmerged) { try { SubmergedCompatibility.ChangeFloor(bodyPos.Value.y > -7); } catch { } }
                         try { PlayerControl.LocalPlayer.NetTransform.SnapTo(bodyPos.Value); } catch { }
+                    }
                     Helpers.showFlash(Color, 1f);
                     var hud = FastDestroyableSingleton<HudManager>.Instance;
                     if (hud != null && hud.Chat != null)

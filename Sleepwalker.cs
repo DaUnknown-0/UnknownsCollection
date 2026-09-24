@@ -31,9 +31,14 @@
  * WrapUp runs) and logged with the room name - host-verifiable in the log, one source of truth.
  * Map-agnostic: anchors are every task console and vent (both exist on every map, custom ones
  * included), a candidate is a small random offset from an anchor that (a) is inside some ship
- * room, (b) touches no solid ship collider (triggers ignored - room areas are triggers), and (c)
- * keeps the table distance. Sixty tries, else no wake-up this round (logged). Submerged is off:
- * its floors would need the floor switch on top.
+ * room, (b) touches no solid ship collider (triggers ignored - room areas are triggers), (c) is
+ * REACHABLE on foot from where the players stand, and (d) keeps the table distance. Sixty tries,
+ * else no wake-up this round (logged). Submerged is off: its floors would need the floor switch.
+ * (c) was added after a Polus round (User 24.09.) woke the Sleepwalker up outside the map: room
+ * areas reach past the outer walls, walls are thin edge colliders and the void behind them has no
+ * collider at all, so a point 1.3 m from a wall console could land behind the wall. The host now
+ * floods a 0.5 m grid from every living player (a step may not cross a solid collider) once per
+ * pick and only accepts cells that flood reached.
  *
  * ARCHITECTURE: modifier over any role (the Gambler pattern), host-authoritative pick, custom RPC
  * module 221 on UCRpc.CallId = 230, gated on "everyone has the mod". Options 1665-1670, display
@@ -279,7 +284,7 @@ namespace UnknownsCollection {
         }
 
         // ---- Position search (host) ----
-        private static Vector2? PickWakePosition() {
+        private static Vector2? PickWakePosition(ReachGrid reachGiven = null) {
             try {
                 var ship = ShipStatus.Instance;
                 if (ship == null) return null;
@@ -300,6 +305,7 @@ namespace UnknownsCollection {
 
                 float minTable = MinTableDistance?.getFloat() ?? 10f;
                 Vector2 table = ship.MeetingSpawnCenter;
+                var reach = reachGiven ?? BuildReach(ship);
                 int tries = 0;
                 foreach (var a in anchors) {
                     if (Vector2.Distance(a.pos, table) < minTable) continue;
@@ -309,7 +315,7 @@ namespace UnknownsCollection {
                         float r = a.spread * (0.25f + 0.75f * (float)rnd.NextDouble());
                         var p = a.pos + new Vector2(Mathf.Cos(ang) * r, Mathf.Sin(ang) * r);
                         if (Vector2.Distance(p, table) < minTable) continue;
-                        if (IsWalkable(p)) return p;
+                        if (IsWalkable(p) && (reach == null || reach.Contains(p))) return p;
                     }
                     if (tries >= 60) break;
                 }
@@ -331,6 +337,227 @@ namespace UnknownsCollection {
                 foreach (var h in hits)
                     if (h != null && !h.isTrigger) return false;
             return true;
+        }
+
+        // ---- Reachability (host): which floor can a player actually walk to? ----
+        // Seeds are the living players (they stand around the table during the exile screen, which is
+        // always floor) plus the meeting spawn centre. A cell is open when no solid collider touches a
+        // 0.2 circle at its centre; a step to a neighbour is allowed when the straight line between
+        // the centres hits no solid collider (the thin edge-collider walls). Doors are open at this
+        // point (a meeting resets them). Bounded by the room areas, so the void is never flooded far.
+        private sealed class ReachGrid {
+            public const float Cell = 0.5f;
+            public Vector2 Min;
+            public int W, H;
+            public bool[] Hit;
+            public bool Contains(Vector2 p) {
+                int x = Mathf.FloorToInt((p.x - Min.x) / Cell), y = Mathf.FloorToInt((p.y - Min.y) / Cell);
+                if (x < 0 || y < 0 || x >= W || y >= H) return false;
+                // the point itself or a direct neighbour: a candidate near a cell edge still counts
+                for (int dy = -1; dy <= 1; dy++)
+                    for (int dx = -1; dx <= 1; dx++) {
+                        int nx = x + dx, ny = y + dy;
+                        if (nx < 0 || ny < 0 || nx >= W || ny >= H || !Hit[ny * W + nx]) continue;
+                        var c = Min + new Vector2((nx + 0.5f) * Cell, (ny + 0.5f) * Cell);
+                        if (!Blocked(c, p)) return true;
+                    }
+                return false;
+            }
+        }
+
+        private static bool Solid(Vector2 p, float r) {
+            var hits = Physics2D.OverlapCircleAll(p, r, Constants.ShipAndObjectsMask);
+            if (hits != null) foreach (var h in hits) if (h != null && !h.isTrigger) return true;
+            return false;
+        }
+
+        private static bool Blocked(Vector2 a, Vector2 b) {
+            var hits = Physics2D.LinecastAll(a, b, Constants.ShipAndObjectsMask);
+            if (hits != null) foreach (var h in hits) if (h.collider != null && !h.collider.isTrigger) return true;
+            return false;
+        }
+
+        private static ReachGrid BuildReach(ShipStatus ship) {
+            try {
+                if (ship.FastRooms == null || ship.FastRooms.Count == 0) return null;
+                bool any = false;
+                Bounds b = default;
+                foreach (var room in ship.FastRooms.Values) {
+                    if (room == null || room.roomArea == null) continue;
+                    if (!any) { b = room.roomArea.bounds; any = true; } else b.Encapsulate(room.roomArea.bounds);
+                }
+                if (!any) return null;
+                var g = new ReachGrid { Min = (Vector2)b.min - Vector2.one };
+                g.W = Mathf.CeilToInt((b.size.x + 2f) / ReachGrid.Cell);
+                g.H = Mathf.CeilToInt((b.size.y + 2f) / ReachGrid.Cell);
+                if (g.W <= 0 || g.H <= 0 || g.W * g.H > 250000) return null;
+                g.Hit = new bool[g.W * g.H];
+                var open = new sbyte[g.W * g.H];                         // 0 unknown, 1 open, -1 solid
+                Vector2 C(int x, int y) => g.Min + new Vector2((x + 0.5f) * ReachGrid.Cell, (y + 0.5f) * ReachGrid.Cell);
+                bool IsOpen(int x, int y) {
+                    int i = y * g.W + x;
+                    if (open[i] == 0) open[i] = (sbyte)(Solid(C(x, y), 0.2f) ? -1 : 1);
+                    return open[i] > 0;
+                }
+                var queue = new Queue<int>();
+                var seeds = new List<Vector2> { ship.MeetingSpawnCenter };
+                foreach (var pc in PlayerControl.AllPlayerControls)
+                    if (pc != null && pc.Data != null && !pc.Data.IsDead && !pc.Data.Disconnected) seeds.Add(pc.GetTruePosition());
+                foreach (var sp in seeds) {
+                    int x = Mathf.FloorToInt((sp.x - g.Min.x) / ReachGrid.Cell), y = Mathf.FloorToInt((sp.y - g.Min.y) / ReachGrid.Cell);
+                    if (x < 0 || y < 0 || x >= g.W || y >= g.H) continue;
+                    int i = y * g.W + x;
+                    if (g.Hit[i] || !IsOpen(x, y)) continue;
+                    g.Hit[i] = true;
+                    queue.Enqueue(i);
+                }
+                int count = 0;
+                while (queue.Count > 0) {
+                    int i = queue.Dequeue(), x = i % g.W, y = i / g.W;
+                    count++;
+                    for (int k = 0; k < 4; k++) {
+                        int nx = x + (k == 0 ? 1 : k == 1 ? -1 : 0), ny = y + (k == 2 ? 1 : k == 3 ? -1 : 0);
+                        if (nx < 0 || ny < 0 || nx >= g.W || ny >= g.H) continue;
+                        int j = ny * g.W + nx;
+                        if (g.Hit[j] || !IsOpen(nx, ny) || Blocked(C(x, y), C(nx, ny))) continue;
+                        g.Hit[j] = true;
+                        queue.Enqueue(j);
+                    }
+                }
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Sleepwalker] reachable floor: {count} of {g.W * g.H} cells ({count * ReachGrid.Cell * ReachGrid.Cell:F0} m2)");
+                return count > 20 ? g : null;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Sleepwalker] reachability grid failed, falling back to room test: {e.Message}");
+                return null;
+            }
+        }
+
+        // ---- Diagnose (nur Freeplay, Standard aus): Diagnostics/Sleepwalker Probe = 1 ----
+        // Wuerfelt 200 Punkte mit der ALTEN Pruefung (Raum + kein fester Kollider) und zaehlt, wie viele
+        // davon nicht erreichbar sind; setzt den Spieler dann auf bis zu zwei solche alten Fehlgriffe und
+        // sechs Punkte der neuen Wahl und fotografiert jeden (UCShots/). Beweis fuer den Polus-Fix 24.09.
+        internal static BepInEx.Configuration.ConfigEntry<int> DiagProbe;
+
+        // Autostart fuer die Probe: Wert = MapNames + 1 (1 Skeld, 2 Mira, 3 Polus, 5 Airship, 6 Fungle).
+        [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
+        static class ProbeAutoStart {
+            private static bool _fired;
+            public static void Postfix(MainMenuManager __instance) {
+                if (_fired || DiagProbe == null || DiagProbe.Value <= 0) return;
+                _fired = true;
+                BepInEx.Unity.IL2CPP.Utils.MonoBehaviourExtensions.StartCoroutine(__instance, Run((MapNames)(DiagProbe.Value - 1)));
+            }
+
+            private static System.Collections.IEnumerator Run(MapNames map) {
+                float t0 = Time.time;
+                while (true) {
+                    bool ok = false;
+                    try { ok = EOSManager.Instance != null && EOSManager.Instance.HasFinishedLoginFlow(); } catch { }
+                    if (ok) break;
+                    if (Time.time - t0 > 45f) { UnknownsCollectionPlugin.Logger?.LogError("[Sleepwalker] probe: EOS login timeout"); yield break; }
+                    yield return null;
+                }
+                try {
+                    var popover = UnityEngine.Object.FindObjectOfType<FreeplayPopover>(true);
+                    if (popover == null) { UnknownsCollectionPlugin.Logger?.LogError("[Sleepwalker] probe: no FreeplayPopover"); yield break; }
+                    for (var t = popover.transform; t != null; t = t.parent) if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
+                    popover.Show();
+                    popover.PlayMap(map);
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Sleepwalker] probe: freeplay started on {map}");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Sleepwalker] probe autostart failed: {e}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        static class ProbePatch {
+            private static int _phase, _i;
+            private static float _at;
+            private static readonly List<(Vector2 P, string Tag)> Pts = new();
+
+            public static void Postfix() {
+                try {
+                    if (DiagProbe == null || DiagProbe.Value <= 0) return;
+                    var ac = AmongUsClient.Instance;
+                    var me = PlayerControl.LocalPlayer;
+                    if (ac == null || ac.NetworkMode != NetworkModes.FreePlay || ShipStatus.Instance == null || me == null) { _phase = 0; return; }
+                    switch (_phase) {
+                        // 30 s: auf Atlas-Karten setzt der Atlas-Autotest den Spieler vorher fuer seine Ansichtsfotos um
+                        case 0: _at = Time.time + 30f; _phase = 1; break;
+                        case 1:
+                            if (Time.time < _at) return;
+                            {
+                                var sh = ShipStatus.Instance;
+                                string dir0 = System.IO.Path.Combine(BepInEx.Paths.GameRootPath, "UCShots");
+                                System.IO.Directory.CreateDirectory(dir0);
+                                ScreenCapture.CaptureScreenshot(System.IO.Path.Combine(dir0, $"sleep_start_{DateTime.Now:HHmmss}.png"));
+                                UnknownsCollectionPlugin.Logger?.LogInfo($"[Sleepwalker] probe: ship {sh.GetIl2CppType().Name}, map type {(int)sh.Type}, rooms {sh.FastRooms?.Count ?? 0}, submerged {SubmergedCompatibility.IsSubmerged}");
+                            }
+                            Probe(ShipStatus.Instance);
+                            _i = 0; _at = Time.time; _phase = 2;
+                            break;
+                        case 2:
+                            if (Time.time < _at) return;
+                            if (_i >= Pts.Count) { UnknownsCollectionPlugin.Logger?.LogInfo("[Sleepwalker] probe done"); _phase = 4; return; }
+                            // offene Minispiele (Atlas laesst nach seinen Ansichtsfotos die Kameras offen) zuerst schliessen
+                            if (Minigame.Instance != null) { try { Minigame.Instance.ForceClose(); } catch { } _at = Time.time + 0.8f; return; }
+                            me.NetTransform.RpcSnapTo(Pts[_i].P);
+                            _at = Time.time + 1.2f; _phase = 3;
+                            break;
+                        case 3:
+                            if (Time.time < _at) return;
+                            string dir = System.IO.Path.Combine(BepInEx.Paths.GameRootPath, "UCShots");
+                            System.IO.Directory.CreateDirectory(dir);
+                            string file = System.IO.Path.Combine(dir, $"sleep_{_i}_{Pts[_i].Tag}_{DateTime.Now:HHmmss}.png");
+                            ScreenCapture.CaptureScreenshot(file);
+                            UnknownsCollectionPlugin.Logger?.LogInfo($"[Sleepwalker] probe shot {_i} {Pts[_i].Tag} ({Pts[_i].P.x:F1}, {Pts[_i].P.y:F1}) in {RoomNameAt(Pts[_i].P, false)} -> {file}");
+                            _i++; _at = Time.time + 0.4f; _phase = 2;
+                            break;
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Sleepwalker] probe failed: {e}");
+                    _phase = 4;
+                }
+            }
+
+            private static void Probe(ShipStatus ship) {
+                Pts.Clear();
+                var reach = BuildReach(ship);
+                var anchors = new List<(Vector2 pos, float spread)>();
+                foreach (var c in UnityEngine.Object.FindObjectsOfType<Console>()) if (c != null) anchors.Add((c.transform.position, 1.3f));
+                if (ship.AllVents != null) foreach (var v in ship.AllVents) if (v != null) anchors.Add((v.transform.position, 0.4f));
+                int accepted = 0, lost = 0, tries = 0;
+                while (accepted < 200 && tries < 5000 && anchors.Count > 0) {
+                    tries++;
+                    var a = anchors[rnd.Next(anchors.Count)];
+                    float ang = (float)(rnd.NextDouble() * Math.PI * 2);
+                    float r = a.spread * (0.25f + 0.75f * (float)rnd.NextDouble());
+                    var pt = a.pos + new Vector2(Mathf.Cos(ang) * r, Mathf.Sin(ang) * r);
+                    if (!IsWalkable(pt)) continue;
+                    accepted++;
+                    if (reach != null && !reach.Contains(pt)) {
+                        lost++;
+                        if (lost <= 2) Pts.Add((pt, "old_unreachable"));
+                        if (lost <= 8) UnknownsCollectionPlugin.Logger?.LogInfo($"[Sleepwalker] probe: old test accepts unreachable ({pt.x:F1}, {pt.y:F1}) in {RoomNameAt(pt, false)}");
+                    }
+                }
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Sleepwalker] probe: old test accepted {accepted}, of those unreachable {lost} (reach grid {(reach != null ? "ok" : "none")})");
+                // Verteilung der neuen Wahl ueber 300 Zuege, dann 12 Punkte zum Fotografieren
+                var perRoom = new Dictionary<string, int>();
+                int none = 0;
+                for (int k = 0; k < 300; k++) {
+                    var w = PickWakePosition(reach);
+                    if (w == null) { none++; continue; }
+                    string room = RoomNameAt(w.Value, false);
+                    perRoom[room] = perRoom.TryGetValue(room, out var n) ? n + 1 : 1;
+                    if (reach != null && !reach.Contains(w.Value))
+                        UnknownsCollectionPlugin.Logger?.LogError($"[Sleepwalker] probe: NEW pick not reachable ({w.Value.x:F1}, {w.Value.y:F1})");
+                    if (k < 12) Pts.Add((w.Value, "new"));
+                }
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Sleepwalker] probe: 300 new picks, none {none}, rooms {perRoom.Count}: " +
+                    string.Join(", ", perRoom.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")));
+            }
         }
 
         // Name of the room containing `p` (null when none); translated for the HUD line, the raw

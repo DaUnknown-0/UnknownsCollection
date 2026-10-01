@@ -651,7 +651,7 @@ internal static class EjectSynth {
         try {
             if (SoundManager.Instance == null) return;
             if (!Clips.TryGetValue(name, out var c) || c == null) {
-                var s = Make(name);
+                var s = Samples(name);
                 if (s == null || s.Length < 2) return;
                 c = AudioClip.Create("eject_" + name, s.Length, 1, Sr, false);
                 c.hideFlags |= HideFlags.HideAndDontSave;
@@ -660,6 +660,33 @@ internal static class EjectSynth {
             }
             SoundManager.Instance.PlaySound(c, false, vol * 0.8f);
         } catch (Exception e) { EjectEngine.Warn($"eject: sound {name}: {e.Message}"); }
+    }
+
+    /// <summary>Samples eines Klangs: eine eingebettete Aufnahme sfx_&lt;name&gt;.wav (PCM 16 bit, 22050 Hz) hat
+    /// Vorrang vor dem Synth-Klang (Atlas: sfx_roar.wav, erzeugt von tools/gen_roar.py).</summary>
+    internal static float[] Samples(string name) => LoadWav(name) ?? Make(name);
+
+    private static float[] LoadWav(string name) {
+        try {
+            using var st = typeof(EjectSynth).Assembly.GetManifestResourceStream(typeof(EjectSynth).Namespace + ".Resources.sfx_" + name + ".wav");
+            if (st == null) return null;
+            using var br = new BinaryReader(st);
+            br.ReadBytes(12);                                                   // "RIFF", Groesse, "WAVE"
+            int ch = 1, rate = 0, bits = 0;
+            while (st.Position + 8 <= st.Length) {
+                string id = System.Text.Encoding.ASCII.GetString(br.ReadBytes(4));
+                int len = br.ReadInt32();
+                if (id == "fmt ") { br.ReadInt16(); ch = br.ReadInt16(); rate = br.ReadInt32(); br.ReadBytes(6); bits = br.ReadInt16(); br.ReadBytes(len - 16); }
+                else if (id == "data") {
+                    if (bits != 16 || rate != Sr || ch < 1) { EjectEngine.Warn($"eject: sfx_{name}.wav needs 16 bit / {Sr} Hz"); return null; }
+                    int n = len / 2 / ch; var s = new float[n];
+                    for (int i = 0; i < n; i++) { s[i] = br.ReadInt16() / 32768f; for (int k = 1; k < ch; k++) br.ReadInt16(); }
+                    return s;
+                }
+                else br.ReadBytes(len + (len & 1));
+            }
+        } catch (Exception e) { EjectEngine.Warn($"eject: sfx_{name}.wav unreadable: {e.Message}"); }
+        return null;
     }
 
     private static float[] Make(string name) {
@@ -687,6 +714,29 @@ internal static class EjectSynth {
             case "step": { int n = (int)(Sr * 0.18f); s = new float[n]; for (int i = 0; i < n; i++) { float t = (float)i / Sr; s[i] = (Mathf.Sin(2f * PI * (90f - 60f * t) * t) * Mathf.Exp(-t * 28f) + N() * 0.25f * Mathf.Exp(-t * 60f)) * 0.8f; } return s; }
             case "zap": { int n = (int)(Sr * 0.22f); s = new float[n]; float f = 300f; for (int i = 0; i < n; i++) { float t = (float)i / Sr; if (i % 441 == 0) f = 180f + (N() + 1f) / 2f * 900f; float sq = Mathf.Sin(2f * PI * f * t) > 0f ? 1f : -1f; s[i] = (sq * 0.28f + N() * 0.18f) * Mathf.Exp(-t * 9f) * ((i >> 6) % 3 == 0 ? 0.2f : 1f); } return s; }
             case "click": { int n = (int)(Sr * 0.12f); s = new float[n]; for (int i = 0; i < n; i++) { float t = (float)i / Sr; s[i] = (i < 90 ? N() * 0.8f * (1f - i / 90f) : 0f) + Mathf.Sin(2f * PI * 1800f * t) * 0.35f * Mathf.Exp(-t * 60f); } return s; }
+            // Park (Moonlight Carnival)
+            case "boom": { int n = (int)(Sr * 1.8f); s = Brown(n, 0.04f, 2.4f); for (int i = 0; i < n; i++) { float t = (float)i / Sr, crack = i < 600 ? N() * (1f - i / 600f) : 0f; s[i] = Mathf.Clamp((s[i] * 0.8f + Mathf.Sin(2f * PI * (55f - 25f * t) * t) * 1.1f) * Mathf.Exp(-t * 2.6f) + crack * 0.9f, -1f, 1f); } return s; }
+            case "pop": { int n = (int)(Sr * 0.09f); s = new float[n]; for (int i = 0; i < n; i++) { float t = (float)i / Sr; s[i] = (Mathf.Sin(2f * PI * (1100f - 3500f * t) * t) * 0.5f + (i < 60 ? N() * 0.6f * (1f - i / 60f) : 0f)) * Mathf.Exp(-t * 45f); } return s; }
+            case "sizzle": { int n = (int)(Sr * 1.7f); s = new float[n]; float prev = 0f; for (int i = 0; i < n; i++) { float t = (float)i / Sr, w = N(), hp = w - prev; prev = w; s[i] = hp * 0.22f * (0.7f + 0.3f * Mathf.Sin(t * 40f)) * Mathf.Clamp01((1.7f - t) / 0.2f); } return s; }
+            case "clack": { int n = (int)(Sr * 0.1f); s = new float[n]; for (int i = 0; i < n; i++) { float t = (float)i / Sr; s[i] = (i < 50 ? N() * 0.7f * (1f - i / 50f) : 0f) + (i >= 900 && i < 950 ? N() * 0.5f * (1f - (i - 900) / 50f) : 0f) + Mathf.Sin(2f * PI * 210f * t) * 0.3f * Mathf.Exp(-t * 40f); } return s; }
+            case "chime": { int n = (int)(Sr * 1.3f); s = new float[n]; for (int i = 0; i < n; i++) { float t = (float)i / Sr; s[i] = Mathf.Sin(2f * PI * 1568f * t) * 0.3f * Mathf.Exp(-t * 3f) + (t > 0.12f ? Mathf.Sin(2f * PI * 2093f * (t - 0.12f)) * 0.25f * Mathf.Exp(-(t - 0.12f) * 3f) : 0f) + (t > 0.24f ? Mathf.Sin(2f * PI * 2637f * (t - 0.24f)) * 0.2f * Mathf.Exp(-(t - 0.24f) * 3f) : 0f); } return s; }
+            case "organ": {
+                // Drehorgel-Walzer: Melodie in Achteln, Bass auf jedem dritten Ton
+                int[] mel = { 67, 72, 76, 79, 76, 72, 69, 74, 77, 81, 77, 74, 67, 71, 74, 79, 74, 71, 72, 76, 79, 84, 79, 76 };
+                int[] roots = { 48, 50, 43, 48 };
+                const float step = 0.24f;
+                int n = (int)((mel.Length * step + 0.3f) * Sr); s = new float[n];
+                for (int k = 0; k < mel.Length; k++) {
+                    float f = 440f * Mathf.Pow(2f, (mel[k] - 69) / 12f), len = step * 0.95f;
+                    int i0 = (int)(k * step * Sr);
+                    for (int j = 0; j < (int)(len * Sr) && i0 + j < n; j++) { float tt = (float)j / Sr, vib = 1f + 0.006f * Mathf.Sin(2f * PI * 6f * tt), env = Mathf.Min(1f, tt / 0.02f) * Mathf.Min(1f, (len - tt) / 0.05f); s[i0 + j] += (Mathf.Sin(2f * PI * f * vib * tt) + 0.45f * Mathf.Sin(4f * PI * f * tt) + 0.2f * Mathf.Sin(6f * PI * f * tt)) * 0.16f * env; }
+                    if (k % 3 != 0) continue;
+                    float fb = 440f * Mathf.Pow(2f, (roots[k / 6] - 69) / 12f);
+                    for (int j = 0; j < (int)(0.22f * Sr) && i0 + j < n; j++) { float tt = (float)j / Sr; s[i0 + j] += Mathf.Sin(2f * PI * fb * tt) * 0.3f * Mathf.Exp(-tt * 9f); }
+                }
+                for (int i = 0; i < n; i++) s[i] = Mathf.Clamp(s[i], -1f, 1f);
+                return s;
+            }
             default: return null;
         }
     }

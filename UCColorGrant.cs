@@ -49,6 +49,7 @@ namespace UnknownsCollection {
         private const byte SubRequest = 0;  // host -> target: would you take this colour?
         private const byte SubAnswer  = 1;  // target -> host: yes / no
         private const byte SubSetSlot = 2;  // host -> everyone: slot N is now this colour
+        private const byte SubRelease = 3;  // player -> host: I picked a palette colour myself, forget my grant
 
         /// The colour the LOCAL player is being asked about, if any.
         public static bool HasPending { get; private set; }
@@ -100,6 +101,23 @@ namespace UnknownsCollection {
             ReceiveRequest(target.PlayerId, rgb);          // the host may be asking himself
         }
 
+        /// The round started before the player answered: the prompt must not stay on screen.
+        internal static void DropPending() { HasPending = false; }
+
+        /// Sent by the player's own client when he picks a palette colour in the wardrobe while wearing
+        /// a granted one: his own choice ends the grant (the host otherwise restored it every 0.5 s).
+        internal static void SendRelease() {
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (me == null || AmongUsClient.Instance == null) return;
+                var w = UCRpc.Begin(RpcId);
+                w.Write(SubRelease);
+                w.Write(me.PlayerId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                if (AmongUsClient.Instance.AmHost) UCColors.ForgetGrant(me.PlayerId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[UCColorGrant] release failed: {e}"); }
+        }
+
         public static void Answer(bool accepted) {
             if (!HasPending || PlayerControl.LocalPlayer == null) return;
             var rgb = PendingColour;
@@ -135,6 +153,11 @@ namespace UnknownsCollection {
                     var sender = UCRpc.Sender;
                     if (sender == null || sender.PlayerId != who) return;
                     ReceiveAnswer(who, rgb, ok);
+                } else if (sub == SubRelease) {
+                    byte who = r.ReadByte();
+                    var sender = UCRpc.Sender;
+                    if (sender == null || sender.PlayerId != who) return;   // only for oneself
+                    if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) UCColors.ForgetGrant(who);
                 } else if (sub == SubSetSlot) {
                     if (!UCRpc.SenderIsHost) return;
                     byte slot = r.ReadByte();
@@ -155,8 +178,16 @@ namespace UnknownsCollection {
         }
 
         private static void ReceiveAnswer(byte who, Color32 rgb, bool accepted) {
+            bool asked = Outstanding.TryGetValue(who, out var askedRgb);
             Outstanding.Remove(who);
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+            // Only an answer to a question the host actually asked, for exactly that colour: an
+            // unasked "yes" let a modified client give itself any colour and use up slots (Opus audit
+            // round 2, the same class as the AUDIT H-3 hardening).
+            if (accepted && (!asked || askedRgb.r != rgb.r || askedRgb.g != rgb.g || askedRgb.b != rgb.b)) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[UCColorGrant] ignored an answer from player {who} to a question the host never asked.");
+                return;
+            }
 
             var target = PlayerControl.AllPlayerControls.ToArray()
                                       .FirstOrDefault(p => p != null && p.PlayerId == who);
@@ -437,6 +468,8 @@ namespace UnknownsCollection {
                 if (!show && lobbyButton != null) { Destroy(lobbyButton); lobbyButton = null; lobbyButtonRect = null; ClosePanel(); }
                 if (lobbyButtonRect != null) lobbyButtonRect.anchoredPosition = new Vector2(28, LobbyRowY());
 
+                // A question that outlives the lobby (the game started first) is dropped (Opus audit round 2).
+                if (UCColorGrant.HasPending && !UCColorGrant.InLobby()) UCColorGrant.DropPending();
                 if (UCColorGrant.HasPending && !promptShown) BuildPrompt();
                 if (!UCColorGrant.HasPending && prompt != null) ClosePrompt();
             } catch (Exception e) {

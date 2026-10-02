@@ -989,8 +989,14 @@ namespace UnknownsCollection {
                 var p = Helpers.playerById(id);
                 if (p == null || p.Data == null || p.Data.Disconnected || !p.Data.IsDead) return;
 
+                // The ghost role the death gave him stays after Revive (a released Impostor could not
+                // kill or vent, a crewmate ran on ghost task logic) - every other UC revive sets the
+                // living role and recounts tasks (Opus audit round 2, 2026-10-02).
+                bool wasImp = p.Data.Role != null && p.Data.Role.IsImpostor;
                 p.Revive();
                 p.Data.IsDead = false;
+                try { RoleManager.Instance.SetRole(p, wasImp ? AmongUs.GameOptions.RoleTypes.Impostor : AmongUs.GameOptions.RoleTypes.Crewmate); } catch { }
+                try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
 
                 // TOR's own death ledger drives the meeting/end-screen "died at" lines and several
                 // roles' information - leaving the entry in would report a living player as murdered.
@@ -1297,9 +1303,7 @@ namespace UnknownsCollection {
                 try {
                     if (!active || pelican == null || pelican.Data == null) return;
                     if (HasTasks?.getBool() ?? false) return;
-                    var (done, total) = TasksHandler.taskInfo(pelican.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= done;
+                    UCTaskCount.Subtract(__instance, pelican.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] TaskPatch failed: {e}");
                 }

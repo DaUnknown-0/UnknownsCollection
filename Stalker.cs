@@ -895,9 +895,7 @@ namespace UnknownsCollection {
                 try {
                     if (!active || stalker == null || stalker.Data == null) return;
                     if (HasTasks?.getBool() ?? false) return;
-                    var (done, total) = TasksHandler.taskInfo(stalker.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= done;
+                    UCTaskCount.Subtract(__instance, stalker.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Stalker] TaskPatch failed: {e}");
                 }

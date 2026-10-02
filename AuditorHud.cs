@@ -57,7 +57,7 @@ namespace UnknownsCollection {
         private static bool cachedOverflowActive;
         private static readonly List<byte> cachedEntryIds = new List<byte>();
         private static readonly List<bool> cachedEntryLocked = new List<bool>();
-        private static readonly Dictionary<byte, string> taskLineCache = new Dictionary<byte, string>();
+        private static readonly Dictionary<byte, (int Step, bool Done, string Line)> taskLineCache = new Dictionary<byte, (int, bool, string)>();
 
         private static void ResetHudCache() {
             panelDirty = true;
@@ -135,9 +135,13 @@ namespace UnknownsCollection {
         // can never survive to be read back for a different entry.
         private static string CachedTaskLine(Auditor.Entry e) {
             if (e == null) return "?";
-            if (taskLineCache.TryGetValue(e.id, out var cached)) return cached;
+            // The step counter is part of the line, so a cached line is only reused while the task's
+            // step and completion are unchanged (it stayed at "(0/3)" before; Opus audit round 2).
+            int step = -1; bool done = false;
+            try { if (e.localTask != null) { step = e.localTask.taskStep; done = e.localTask.IsComplete; } } catch { }
+            if (taskLineCache.TryGetValue(e.id, out var cached) && cached.Step == step && cached.Done == done) return cached.Line;
             string line = ComputeTaskLine(e.localTask);
-            taskLineCache[e.id] = line;
+            taskLineCache[e.id] = (step, done, line);
             return line;
         }
 

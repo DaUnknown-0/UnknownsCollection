@@ -328,6 +328,9 @@ namespace UnknownsCollection {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || poisoner == null || target == null) return;
                     if (__instance.PlayerId != poisoner.PlayerId) return;
+                    // His own death (Lover suicide, Tesla charge: source == target) leaves no poisoned
+                    // body; otherwise whoever reports the dead Poisoner was poisoned (Opus audit round 2).
+                    if (target.PlayerId == poisoner.PlayerId) return;
                     if (bodiesPoisonedThisRound.Count >= MaxPoisonedValue()) return;
                     SendMarkBody(target.PlayerId);
                 } catch (Exception e) {
@@ -418,6 +421,15 @@ namespace UnknownsCollection {
 
         private static List<byte> _pendingPoisonDeaths = new();
 
+        private static byte exiledThisMeeting = byte.MaxValue;
+
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.VotingComplete))]
+        static class VotingCompletePatch {
+            public static void Postfix([HarmonyArgument(1)] NetworkedPlayerInfo exiled) {
+                exiledThisMeeting = exiled != null ? exiled.PlayerId : byte.MaxValue;
+            }
+        }
+
         // ---- Meeting end: execute pending poison deaths ----
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
         static class MeetingClosePatch {
@@ -432,6 +444,9 @@ namespace UnknownsCollection {
                         // ...or if they already died some other way (avoids a duplicate corpse).
                         var p = Helpers.playerById(id);
                         if (p == null || !IsAlive(p)) { poisonedReporters.Remove(id); continue; }
+                        // Voted out in this very meeting: the exile kills him a moment later; a poison death
+                        // on top ran Exiled() twice (double GameHistory entry, Lover/Lawyer logic twice).
+                        if (id == exiledThisMeeting) { poisonedReporters.Remove(id); continue; }
                         SendPoisonDeath(id);
                     }
                     _pendingPoisonDeaths.Clear();

@@ -63,6 +63,10 @@ namespace UnknownsCollection {
         // Passes the REAL killer's color along: masked kills reach ShowKillAnimation as
         // (victim, victim), so the killer figure's color must come from the arming side.
         private static void Arm(Kind kind, byte victimId, byte killerId) {
+            // An entry armed BEFORE this murder is the more specific one: the Tesla's self-sourced
+            // charge kill, the Thief's steal (TOR repoints the stolen role to the thief first), a host
+            // test cutscene. The killer-role match here used to overwrite it (Opus audit round 2).
+            if (IsArmedVictim(victimId)) return;
             int color = -1;
             try {
                 var k = TheOtherRoles.Helpers.playerById(killerId);

@@ -311,6 +311,15 @@ namespace UnknownsCollection {
         }
 
         // ---- Button creation ----
+        // Built once with the lobby HUD; the cooldown is refreshed at every round start from the
+        // (by then host-synced) option (Opus audit round 2, 2026-10-02).
+        [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
+        static class RefreshButtonPatch {
+            public static void Postfix() {
+                try { if (scoutButton != null) scoutButton.MaxTimer = Cooldown != null ? Cooldown.getFloat() : 25f; } catch { }
+            }
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         static class HudStartPatch {
             [HarmonyPriority(Priority.Low)]

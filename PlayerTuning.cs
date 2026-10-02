@@ -295,6 +295,8 @@ namespace UnknownsCollection {
             }
         }
 
+        private static readonly HashSet<string> ModifierClasses = new HashSet<string> { "Mini", "Tiebreaker", "Armored", "Shifter" };
+
         private static void ApplyScrubTorRoles(byte pid) {
             try {
                 var target = Helpers.playerById(pid);
@@ -305,6 +307,9 @@ namespace UnknownsCollection {
                 var cleared = new List<string>();
                 foreach (var type in asm.GetTypes()) {
                     if (type.Namespace != "TheOtherRoles" || !type.IsAbstract || !type.IsSealed) continue; // static classes
+                    // Modifier classes have an owner field of the same shape (Mini.mini, ...); TOR's erase
+                    // keeps modifiers (ignoreModifier), so the scrub must too (Opus audit round 2).
+                    if (ModifierClasses.Contains(type.Name)) continue;
                     foreach (var f in type.GetFields(System.Reflection.BindingFlags.Public
                                                      | System.Reflection.BindingFlags.Static)) {
                         if (f.FieldType != typeof(PlayerControl)) continue;

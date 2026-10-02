@@ -569,6 +569,13 @@ namespace UnknownsCollection {
         // Who the silver is allowed to touch. The beast first - in wolf form the toughness rule from W1
         // may still turn this into a mere wound, which is decided in Werewolf.SilverBulletPatch, not
         // here.
+        private static bool Is(PlayerControl holder, PlayerControl t) => holder != null && t != null && holder.PlayerId == t.PlayerId;
+
+        private static bool UcPassiveNeutral(PlayerControl t) =>
+            (Bug.active && Is(Bug.bug, t)) || (Collector.active && Is(Collector.collector, t))
+            || (Follower.active && !Follower.hasCopied && Is(Follower.follower, t))
+            || (Copycat.active && Is(Copycat.copycat, t)) || (Necromancer.active && Is(Necromancer.necromancer, t));
+
         private static bool IsLegalPrey(PlayerControl t) {
             try {
                 if (t == null || t.Data == null) return false;
@@ -581,7 +588,10 @@ namespace UnknownsCollection {
                 // the neutral killers the option talks about.
                 bool neutrals = CanKillNeutralKillers == null || CanKillNeutralKillers.getBool();
                 if (neutrals && (Jackal.jackal == t || Sidekick.sidekick == t)) return true;
-                if (neutrals && Helpers.isNeutral(t) && Helpers.isKiller(t)) return true;
+                // TOR's isKiller counts every neutral except its own passive ones; UC's passive
+                // neutrals (Bug, Collector, an un-copied Follower, Copycat, Necromancer) cannot kill,
+                // so a shot at them backfires like at any innocent (Opus audit round 2).
+                if (neutrals && Helpers.isNeutral(t) && Helpers.isKiller(t) && !UcPassiveNeutral(t)) return true;
                 return false;
             } catch {
                 return false;

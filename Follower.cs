@@ -339,9 +339,7 @@ namespace UnknownsCollection {
             public static void Postfix(GameData __instance) {
                 try {
                     if (!active || hasCopied || follower == null || follower.Data == null) return;
-                    var (completed, total) = TasksHandler.taskInfo(follower.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= completed;
+                    UCTaskCount.Subtract(__instance, follower.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Follower] TaskPatch failed: {e}");
                 }

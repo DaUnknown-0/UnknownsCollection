@@ -104,6 +104,30 @@ namespace UnknownsCollection {
 
         private static readonly Dictionary<byte, Grant> grants = new Dictionary<byte, Grant>();
 
+        /// The player picked a palette colour himself: his grant ends here (Opus audit round 2).
+        internal static void ForgetGrant(byte playerId) {
+            if (grants.Remove(playerId))
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[UCColors] player {playerId} picked his own colour - the granted one is released.");
+        }
+
+        // The wardrobe's colour tab: a player wearing a granted slot who equips a palette colour
+        // releases the grant, BEFORE the colour request goes out, so the host's restore tick never
+        // sees the change as a reset to undo.
+        [HarmonyPatch(typeof(PlayerTab), nameof(PlayerTab.ClickEquip))]
+        static class WardrobeReleasePatch {
+            public static void Prefix(object __instance) {
+                try {
+                    // Only the colour tab (should ClickEquip resolve to the shared base method, a hat
+                    // or skin equip must not release the colour).
+                    var tab = __instance as Il2CppInterop.Runtime.InteropTypes.Il2CppObjectBase;
+                    if (tab == null || tab.TryCast<PlayerTab>() == null) return;
+                    var me = PlayerControl.LocalPlayer;
+                    if (me == null || me.Data == null || !IsCustom(me.Data.DefaultOutfit.ColorId)) return;
+                    UCColorGrant.SendRelease();
+                } catch { }
+            }
+        }
+
         /// Who a player is, for the record above. Friend code first: a name can be changed and can
         /// repeat, a friend code is the player.
         private static string Ident(PlayerControl p) {

@@ -171,11 +171,26 @@ namespace UnknownsCollection {
         // instead of doing a second ContainsKey + TryCast pass over the same system every frame.
         private static ICriticalSabotage ActiveCritical() {
             try {
-                return Poltergeist.ActiveCriticalSabotage();
+                var c = Poltergeist.ActiveCriticalSabotage();
+                if (c != null) return c;
+                // Airship: the critical sabotage is the crash course (HeliSabotage), not a
+                // ReactorSystemType, so the reactor probe never saw it and the score never played
+                // there although the header lists the Airship (Opus audit round 2, 2026-10-02).
+                var ship = ShipStatus.Instance;
+                if (ship == null) return null;
+                if (ship != heliShip) {
+                    heliShip = ship;
+                    heli = null;
+                    try { if (ship.Systems.ContainsKey(SystemTypes.HeliSabotage)) heli = ship.Systems[SystemTypes.HeliSabotage].TryCast<HeliSabotageSystem>(); } catch { }
+                }
+                return heli != null && heli.IsActive ? heli.TryCast<ICriticalSabotage>() : null;
             } catch {
                 return null;
             }
         }
+
+        private static ShipStatus heliShip;
+        private static HeliSabotageSystem heli;
 
         // ====================================================================
         // Variant selection (no RPC - see the file header)

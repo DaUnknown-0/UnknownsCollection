@@ -343,6 +343,20 @@ namespace UnknownsCollection {
         // starts the drain, the green effect timer counts the active window down, and when it
         // hits zero OnEffectEnds stops the drain and arms the cooldown — no manual toggle-off.
         // ====================================================================
+        // The HUD (and this button) is built once when the lobby loads - before the host changes options,
+        // and on a guest before the host's options arrive. TOR refreshes its own buttons every round
+        // (resetVariables -> setCustomButtonCooldowns); this does the same at intro end (Opus audit round 2).
+        [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
+        static class RefreshButtonPatch {
+            public static void Postfix() {
+                try {
+                    if (drainButton == null) return;
+                    drainButton.EffectDuration = DrainDuration != null ? DrainDuration.getFloat() : 10f;
+                    drainButton.MaxTimer = DrainCooldown != null ? DrainCooldown.getFloat() : 20f;
+                } catch { }
+            }
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         static class HudStartPatch {
             [HarmonyPriority(Priority.Low)]

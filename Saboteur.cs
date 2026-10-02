@@ -323,10 +323,13 @@ namespace UnknownsCollection {
                             ApplySetSabotagedConsole(x, y);
                         break;
                     }
-                    // Host-only: every sender sits behind an AmHost gate (HostHandleRequestKill,
-                    // HandleSaboteurDeath).
+                    // Host (HostHandleRequestKill, HandleSaboteurDeath) OR the crewmate who just
+                    // defused the console in the scan UI. Host-only dropped every non-host defuse, so
+                    // the console stayed armed for everyone else and killed the next crewmate (Opus
+                    // audit round 2, 2026-10-02). A living non-impostor may clear it.
                     case SubClearSabotage:
-                        if (UCRpc.RequireHost("Saboteur.ClearSabotage")) ApplyClearSabotage();
+                        if (UCRpc.SenderIsHost || DefuserMayClear(UCRpc.Sender)) ApplyClearSabotage();
+                        else UCRpc.RequireHost("Saboteur.ClearSabotage");   // logs the refusal
                         break;
                     case SubRequestKill: {
                         byte victimId = reader.ReadByte();
@@ -469,6 +472,10 @@ namespace UnknownsCollection {
                 ApplySetSabotagedConsole(x, y);
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] SendSetSabotagedConsole failed: {e}"); }
         }
+
+        private static bool DefuserMayClear(PlayerControl p) =>
+            p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected
+            && p.Data.Role != null && !p.Data.Role.IsImpostor;
 
         public static void SendClearSabotage() {
             try {
@@ -1147,7 +1154,7 @@ namespace UnknownsCollection {
                         GetSearchSprite(),
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
                         __instance,
-                        KeyCode.F,
+                        (KeyCode?)null,   // no hotkey: F is TOR's shared ability key, every crew ability opened the scan too (Opus audit round 2)
                         false,
                         UCLocalization.Tr("uc.ui.saboteur.button_search")
                     );

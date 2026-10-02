@@ -164,6 +164,7 @@ namespace UnknownsCollection {
                 if (!anyVisible) return;
 
                 float viewerAlpha = ViewerAlpha();
+                bool impostorSense = ImpostorSensing();
                 foreach (var r in relics) {
                     if (r.go == null) continue;
                     // Idle bob + glow pulse + orbiting sparkles.
@@ -175,7 +176,9 @@ namespace UnknownsCollection {
                     r.body.transform.localScale = Vector3.one * pulse;
 
                     float targetAlpha = viewerAlpha;
-                    if (targetAlpha > 0f && viewerAlpha < 0.9f) {
+                    // Only the impostor sense fades with distance; ghosts see every relic (the alpha
+                    // threshold used before also caught the dead at 0.85 - Opus audit round 2).
+                    if (targetAlpha > 0f && impostorSense) {
                         // Impostor sense: fade with distance inside the radius.
                         float dist = PlayerControl.LocalPlayer != null
                             ? Vector2.Distance(PlayerControl.LocalPlayer.GetTruePosition(), r.pos) : float.MaxValue;
@@ -235,6 +238,12 @@ namespace UnknownsCollection {
 
         // Full visibility for the Collector and for dead viewers; faint base alpha for impostors when
         // the sense option is on (distance fade happens per relic); nothing for everyone else.
+        private static bool ImpostorSensing() {
+            var me = PlayerControl.LocalPlayer;
+            return me != null && me.Data != null && !me.Data.IsDead && !Collector.IsLocalCollector()
+                   && me.Data.Role != null && me.Data.Role.IsImpostor && (Collector.ImpostorsSense?.getBool() ?? false);
+        }
+
         private static float ViewerAlpha() {
             var me = PlayerControl.LocalPlayer;
             if (me == null || me.Data == null) return 0f;

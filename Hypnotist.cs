@@ -203,6 +203,9 @@ namespace UnknownsCollection {
 
         private static void ApplyPick(byte target) {
             if (!active || victimId == byte.MaxValue) return;
+            // A Hypnotist who died during the meeting (wrong guess, guessed) picks nothing any more,
+            // like one who died before it and never got the buttons (Opus audit round 2, 2026-10-02).
+            if (!HypnotistAlive()) return;
             if (VotingOver(MeetingHud.Instance)) return;
             pick = target;
             if (AmHost()) UnknownsCollectionPlugin.Logger?.LogInfo($"[Hypnotist] redirect pick: {(target == SkipPick ? "skip" : target == NoPick ? "none" : target.ToString())}.");
@@ -286,6 +289,7 @@ namespace UnknownsCollection {
             public static void Postfix(MeetingHud __instance) {
                 try {
                     pickButtons.Clear();
+                    overlayChecked = false;
                     originalVote = NoPick;
                     if (!IsLocalHypnotist() || !HypnosisHolds()) return;
                     if (PlayerControl.LocalPlayer.Data == null || PlayerControl.LocalPlayer.Data.IsDead) return;
@@ -298,6 +302,7 @@ namespace UnknownsCollection {
                         var pc = Helpers.playerById(pva.TargetPlayerId);
                         if (pc == null || pc.Data == null || pc.Data.IsDead) continue;
                         AddButton(pva, pva.TargetPlayerId, x, sprite);
+                    shiftedForGuesser = x > -0.9f;
                     }
                     if (__instance.SkipVoteButton != null) AddButton(__instance.SkipVoteButton, SkipPick, x, sprite);
                     Helpers.showFlash(new Color(Spiral.r, Spiral.g, Spiral.b, 0.4f), 1f,
@@ -340,6 +345,35 @@ namespace UnknownsCollection {
                     if (kv.Value != null) kv.Value.color = kv.Key == next ? Spiral : Color.white;
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Hypnotist] pick click failed: {e}");
+            }
+        }
+
+        // During the meeting: a Hypnotist who dies loses his buttons; and when the icons were moved to
+        // -0.5 for a Guesser they sit on TOR's Witch spell marker, which TOR itself moves aside only for
+        // a Swapper-Guesser - moved the same way here, once, after TOR built it in MeetingHud.Start.
+        private static bool overlayChecked, shiftedForGuesser;
+
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Update))]
+        static class MeetingTickPatch {
+            public static void Postfix(MeetingHud __instance) {
+                try {
+                    if (pickButtons.Count == 0 || __instance == null) return;
+                    var me = PlayerControl.LocalPlayer;
+                    if (me != null && me.Data != null && me.Data.IsDead) {
+                        foreach (var kv in pickButtons)
+                            if (kv.Value != null && kv.Value.gameObject.activeSelf) kv.Value.gameObject.SetActive(false);
+                        return;
+                    }
+                    if (overlayChecked || !shiftedForGuesser) return;
+                    overlayChecked = true;
+                    var spelled = Witch.getSpelledOverlaySprite();
+                    if (spelled == null) return;
+                    foreach (var pva in __instance.playerStates) {
+                        if (pva == null) continue;
+                        foreach (var sr in pva.GetComponentsInChildren<SpriteRenderer>(true))
+                            if (sr != null && sr.sprite == spelled) sr.transform.localPosition = new Vector3(-0.725f, -0.15f, -1f);
+                    }
+                } catch { }
             }
         }
 

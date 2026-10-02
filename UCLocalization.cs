@@ -138,9 +138,34 @@ namespace UnknownsCollection {
             return null;
         }
 
+        // UC's in-round RoleInfos reuse vanilla ids (RoleId.Impostor/Crewmate/Sheriff), so TOR's
+        // roleInfoById.TryAdd keeps TOR's own entry and the loop below never saw them: descriptions
+        // stayed English in every language (Opus audit round 2, 2026-10-02). They are collected from
+        // every role's own public static XxxInfo() accessor (cached there with ??=) once.
+        private static List<System.Reflection.MethodInfo> ucInfoGetters;
+
+        private static IEnumerable<RoleInfo> UcRoleInfos() {
+            if (ucInfoGetters == null) {
+                ucInfoGetters = new List<System.Reflection.MethodInfo>();
+                try {
+                    foreach (var t in typeof(UCLocalization).Assembly.GetTypes())
+                        foreach (var m in t.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static))
+                            if (m.ReturnType == typeof(RoleInfo) && m.GetParameters().Length == 0 && m.Name.EndsWith("Info", StringComparison.Ordinal))
+                                ucInfoGetters.Add(m);
+                } catch { }
+            }
+            foreach (var m in ucInfoGetters) {
+                RoleInfo ri = null;
+                try { ri = m.Invoke(null, null) as RoleInfo; } catch { }
+                if (ri != null) yield return ri;
+            }
+        }
+
         private static void ApplyRoles() {
             var nameToKey = EnToKey("uc.role.", ".name");
-            foreach (var ri in RoleInfo.roleInfoById.Values) {
+            var all = new HashSet<RoleInfo>(RoleInfo.roleInfoById.Values);
+            foreach (var ri in UcRoleInfos()) all.Add(ri);
+            foreach (var ri in all) {
                 if (ri == null) continue;
                 if (!roleOriginals.TryGetValue(ri, out var orig)) {
                     // only capture/translate UC's own roles: match by pristine English name

@@ -374,9 +374,7 @@ namespace UnknownsCollection {
             public static void Postfix(GameData __instance) {
                 try {
                     if (!active || king == null || king.Data == null) return;
-                    var (done, total) = TasksHandler.taskInfo(king.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= done;
+                    UCTaskCount.Subtract(__instance, king.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[King] TaskPatch failed: {e}");
                 }

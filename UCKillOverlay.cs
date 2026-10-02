@@ -78,6 +78,9 @@ namespace UnknownsCollection {
         private static byte windowManiacId = NoManiacId;
         private static int lastArmedKillerColor = -1;   // set by SelectRaw when consuming an armed entry
 
+        internal static bool IsArmedVictim(byte victimId) =>
+            armedVictims.TryGetValue(victimId, out var e) && Time.time <= e.until;
+
         public static void ArmVictim(Kind kind, byte victimId, float ttl = 5f, int killerColor = -1) {
             armedVictims[victimId] = (kind, Time.time + ttl, killerColor);
         }
@@ -133,7 +136,10 @@ namespace UnknownsCollection {
                 }
             }
             // Shade: every murder BY the Shade gets the vanishing-body overlay.
-            if (killer != null && victim != null && Shade.active && Shade.shade != null
+            // Not in a meeting: a Shade who is also a Guesser shoots there, and the vanishing-body
+            // sequence would both be the wrong cutscene and name him to the victim (Opus audit round 2;
+            // same rule as the wolf pack below).
+            if (killer != null && victim != null && Shade.active && Shade.shade != null && MeetingHud.Instance == null
                 && killer.PlayerId == Shade.shade.PlayerId && killer.PlayerId != victim.PlayerId)
                 return Kind.Shade;
             // Paket W4: Werewolf / Hunter / Pelican, matched by KILLER IDENTITY like the Shade above -

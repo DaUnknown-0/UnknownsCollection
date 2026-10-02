@@ -943,9 +943,7 @@ namespace UnknownsCollection {
             public static void Postfix(GameData __instance) {
                 try {
                     if (!active || copycat == null || copycat.Data == null) return;
-                    var (completed, total) = TasksHandler.taskInfo(copycat.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= completed;
+                    UCTaskCount.Subtract(__instance, copycat.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] TaskPatch failed: {e}");
                 }

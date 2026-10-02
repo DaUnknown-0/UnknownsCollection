@@ -199,6 +199,11 @@ namespace UnknownsCollection {
         // RPC receiver, registered on the shared UC channel in TryPatch. UCRpc's dispatcher
         // already consumed the module byte, so this starts at the subtype byte - the wire
         // format behind the module byte is byte-for-byte what the old per-callId RPC used.
+        private static bool ImpostorSender() {
+            var p = UCRpc.Sender;
+            return p != null && p.Data != null && !p.Data.IsDead && p.Data.Role != null && p.Data.Role.IsImpostor;
+        }
+
         private static void HandleModuleRpc(MessageReader reader) {
             try {
                 byte subtype = reader.ReadByte();
@@ -229,7 +234,9 @@ namespace UnknownsCollection {
                     case SubFlash:
                         // Owner-authored (AUDIT-2026-08-15): a forged flash is a minor visual/sound spoof, but
                         // it stays gated to keep the module's threat model consistent with SpawnClone/Despawn.
-                        if (UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.Flash")) {
+                        // Also from a living impostor partner: his blocked kill near the clone sends the
+                        // flash from HIS client, which owner-or-host dropped everywhere (Opus audit round 2).
+                        if (UCRpc.SenderIsHost || ImpostorSender() || UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.Flash")) {
                             IllusionistClone.Flash(0.4f);
                             // Sound is Illusionist-only: on non-Illusionist clients this is skipped, so the
                             // block ping no longer leaks the clone-hit to bystanders. Flash stays public.

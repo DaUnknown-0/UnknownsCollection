@@ -730,7 +730,10 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     PoltergeistFx.Tick();
-                    if (!active || poltergeist == null) return;
+                    // NOT "|| poltergeist == null": when the Poltergeist leaves, his PlayerControl is
+                    // gone, and returning here skipped the hex expiry and the haunted-door reopen
+                    // below - a hexed player kept 35 % vision until the next meeting (Opus audit round 2).
+                    if (!active) return;
 
                     float now = Time.time;
                     bool inMeeting = MeetingHud.Instance != null || ExileController.Instance != null;
@@ -784,6 +787,9 @@ namespace UnknownsCollection {
                             }
                         }
                     }
+
+                    // Everything below needs the Poltergeist himself; a channel he left behind ends here.
+                    if (poltergeist == null) { if (handChanneling) ApplyHandStop(); return; }
 
                     // Ghost Hand channel: drain + keep FX on the ghost, stop when spent or fixed.
                     if (handChanneling) {
@@ -957,9 +963,7 @@ namespace UnknownsCollection {
                     if (!active || poltergeist == null || poltergeist.Data == null) return;
                     if (KeepsTasks?.getBool() ?? false) return;
                     if (IsImpostorTeam()) return; // impostors have no real tasks anyway
-                    var (completed, total) = TasksHandler.taskInfo(poltergeist.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= completed;
+                    UCTaskCount.Subtract(__instance, poltergeist.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] TaskPatch failed: {e}");
                 }

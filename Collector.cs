@@ -738,9 +738,7 @@ namespace UnknownsCollection {
                 try {
                     if (!active || collector == null || collector.Data == null) return;
                     if (HasTasks?.getBool() ?? false) return;
-                    var (done, total) = TasksHandler.taskInfo(collector.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= done;
+                    UCTaskCount.Subtract(__instance, collector.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Collector] TaskPatch failed: {e}");
                 }

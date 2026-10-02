@@ -848,9 +848,7 @@ namespace UnknownsCollection {
             public static void Postfix(GameData __instance) {
                 try {
                     if (bug == null || bug.Data == null) return;
-                    var (completed, total) = TasksHandler.taskInfo(bug.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= completed;
+                    UCTaskCount.Subtract(__instance, bug.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] TaskCountPatch failed: {e}");
                 }

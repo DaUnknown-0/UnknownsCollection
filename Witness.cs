@@ -327,6 +327,9 @@ namespace UnknownsCollection {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || HasNote() || !IsAlive(witness) || target == null) return;
+                    // A self-inflicted death (Lover suicide inside TOR's postfix, Sheriff misfire) is not
+                    // a kill to witness - noting it spent the one note and hid the real killer (Opus audit round 2).
+                    if (__instance == null || __instance.PlayerId == target.PlayerId) return;
 
                     Vector2 at = target.GetTruePosition();
                     var seers = new List<byte>();
@@ -415,8 +418,10 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     bool nowMeeting = InMeeting();
+                    // Only a meeting AFTER the sighting ends the red name; latching it on every meeting end
+                    // left a sighting after the first meeting white from the start (Opus audit round 2).
                     if (wasInMeeting && !nowMeeting && (RedNamePermanent == null || !RedNamePermanent.getBool())
-                        && !redNameExpired) {
+                        && !redNameExpired && HasNote()) {
                         redNameExpired = true;
                         // Fade back to white over NameFadeSeconds instead of an instant snap (see below) -
                         // just arm the timer here, the actual per-frame Lerp happens further down.

@@ -847,9 +847,7 @@ namespace UnknownsCollection {
                 try {
                     if (!active || necromancer == null || necromancer.Data == null) return;
                     if (HasTasks?.getBool() ?? false) return;
-                    var (done, total) = TasksHandler.taskInfo(necromancer.Data);
-                    __instance.TotalTasks -= total;
-                    __instance.CompletedTasks -= done;
+                    UCTaskCount.Subtract(__instance, necromancer.Data);   // once per recount, TOR's skips respected
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Necromancer] TaskPatch failed: {e}");
                 }

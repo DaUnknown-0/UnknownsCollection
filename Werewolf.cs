@@ -183,6 +183,7 @@ namespace UnknownsCollection {
         private const byte SubSetWerewolf = 0;  // playerId, musicVariant
         private const byte SubSetForm = 1;      // wolf(byte 0/1), seconds(float)
         private const byte SubWound = 2;        // (no payload - the wolf is the only possible victim)
+        private const byte SubSilverVerdict = 4; // sourceId, kill(0/1), showAnimation  host -> everyone (3 = Hunter)
 
         // ---- Role identity ----
         private static RoleInfo werewolfInfo;
@@ -454,6 +455,13 @@ namespace UnknownsCollection {
                         float secs = reader.ReadSingle();
                         // Owner-authored: the werewolf's own client decides its transformation (AUDIT-2026-08-15).
                         if (UCRpc.RequireOwnerOrHost(werewolf, "Werewolf.SetForm")) ApplySetForm(wolf, secs);
+                        break;
+                    }
+                    case SubSilverVerdict: {
+                        byte src = reader.ReadByte();
+                        bool kill = reader.ReadByte() != 0;
+                        byte anim = reader.ReadByte();
+                        if (UCRpc.RequireHost("Werewolf.SilverVerdict")) ApplySilverVerdict(src, kill, anim);
                         break;
                     }
                     case SubWound:
@@ -1368,12 +1376,42 @@ namespace UnknownsCollection {
 
         // Every TOR field kill funnels through RPCProcedure.uncheckedMurderPlayer (RPC.cs:480) and the
         // sheriff's shot is sent to every client (Buttons.cs:413-418) before being executed locally.
-        // The verdict below only reads state that is identical on all clients, so suppressing the kill
-        // here is consistent everywhere - and it MUST be decided here, synchronously: waiting for a
-        // round trip would let the murder run on the clients that already processed the RPC.
+        //
+        // HOST VERDICT (Opus audit round 2, 2026-10-02): the sheriff's wound-or-kill depends on wolfForm,
+        // which flips through the werewolf's own RPC and therefore at different moments on each client.
+        // A shot within one latency of a form change killed him on some clients and wounded him on
+        // others. In Wounds mode every client now holds the sheriff's shot back; the host decides from
+        // its own state and broadcasts the verdict (SubSilverVerdict), and every client applies exactly
+        // that. The Hunter's bolt and the other silver modes stay synchronous: their outcome does not
+        // depend on the form.
+        private static bool silverPass;   // set while a host verdict replays TOR's murder
+
+        private static void ApplySilverVerdict(byte sourceId, bool kill, byte showAnimation) {
+            if (!active || werewolf == null) return;
+            if (kill) {
+                if (werewolf.Data == null || werewolf.Data.IsDead) return;
+                silverPass = true;
+                try { RPCProcedure.uncheckedMurderPlayer(sourceId, werewolf.PlayerId, showAnimation); }
+                finally { silverPass = false; }
+            } else {
+                silverHitsTaken++;
+                ApplyWound();
+            }
+        }
+
+        private static void SendSilverVerdict(byte sourceId, bool kill, byte showAnimation) {
+            try {
+                var w = BeginRpc(SubSilverVerdict);
+                w.Write(sourceId);
+                w.Write((byte)(kill ? 1 : 0));
+                w.Write(showAnimation);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] SendSilverVerdict failed: {e}"); }
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.uncheckedMurderPlayer))]
         static class SilverBulletPatch {
-            public static bool Prefix(byte sourceId, byte targetId) {
+            public static bool Prefix(byte sourceId, byte targetId, byte showAnimation) {
                 try {
                     if (!active || werewolf == null) return true;
                     if (targetId != werewolf.PlayerId || sourceId == targetId) return true;
@@ -1402,9 +1440,14 @@ namespace UnknownsCollection {
                     }
 
                     if (SilverMode() != SilverWounds) return true; // Kills / Off -> TOR's behaviour, untouched
-                    if (!wasWolf) return true;             // human form: silver is lethal as always
-                    if (silverHitsTaken >= 1) return true;  // second sheriff hit: the toughness is spent
+                    if (silverPass) return true;           // the host's kill verdict, replayed
+                    var ac = AmongUsClient.Instance;
+                    if (ac == null || !ac.AmHost) return false;   // wait for the host's verdict
 
+                    // human form: silver is lethal as always; second sheriff hit: the toughness is spent
+                    bool kill = !wasWolf || silverHitsTaken >= 1;
+                    SendSilverVerdict(sourceId, kill, showAnimation);
+                    if (kill) return true;
                     silverHitsTaken++;
                     ApplyWound();
                     return false;                          // the bullet does not kill - this time

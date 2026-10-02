@@ -120,6 +120,7 @@ namespace UnknownsCollection {
                 if (LastWords.active && LastWords.carrier != null && LastWords.carrier.PlayerId == id) return true;
                 if (SixthSense.active && SixthSense.carrier != null && SixthSense.carrier.PlayerId == id) return true;
                 if (Colorblind.active && Colorblind.carrier != null && Colorblind.carrier.PlayerId == id) return true;
+                if (Giant.active && Giant.giant != null && Giant.giant.PlayerId == id) return true;
 
                 foreach (var ri in RoleInfo.getRoleInfoForPlayer(p, true))
                     if (ri != null && ri.isModifier && ri.roleId >= RoleId.Lover && ri.roleId <= RoleId.Shifter) return true;

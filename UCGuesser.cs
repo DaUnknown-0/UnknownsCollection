@@ -120,6 +120,8 @@ namespace UnknownsCollection {
         private static bool KingGuessable() =>
             King.SpawnRate != null && King.SpawnRate.getSelection() > 0
             && TeslaVersionHandshake.EveryoneHasMod();
+        private static bool Guessable(CustomOption rate) =>
+            rate != null && rate.getSelection() > 0 && TeslaVersionHandshake.EveryoneHasMod();
         // The Void is a modifier: TOR does not offer modifiers in the guess grid, neither do we.
 
         // The Auditor watches every completed crew task go by, so he can read off who is racing
@@ -142,6 +144,8 @@ namespace UnknownsCollection {
             SetEntry(Manipulator.ManipulatorInfo(), add && ManipulatorGuessable(), RoleInfo.impostor);
             SetEntry(Auditor.AuditorInfo(),   add && AuditorGuessable(),    RoleInfo.impostor);
             SetEntry(Werewolf.WerewolfInfo(), add && WerewolfGuessable(),   RoleInfo.impostor);
+            SetEntry(Hypnotist.HypnotistInfo(),   add && Guessable(Hypnotist.SpawnRate),  RoleInfo.impostor);
+            SetEntry(Skinwalker.SkinwalkerInfo(), add && Guessable(Skinwalker.SpawnRate), RoleInfo.impostor);
             // Crew / Neutral roles — insert after the base Crewmate entry
             SetEntry(Siphoner.SiphonerInfo(), add && SiphonerGuessable(),   RoleInfo.crewmate);
             SetEntry(Witness.WitnessInfo(),   add && WitnessGuessable(),    RoleInfo.crewmate);
@@ -156,6 +160,8 @@ namespace UnknownsCollection {
             SetEntry(Necromancer.NecromancerInfo(), add && NecromancerGuessable(), RoleInfo.crewmate);
             SetEntry(Stalker.StalkerInfo(),   add && StalkerGuessable(),    RoleInfo.crewmate);
             SetEntry(King.KingInfo(),         add && KingGuessable(),       RoleInfo.crewmate);
+            SetEntry(Paramedic.ParamedicInfo(), add && Guessable(Paramedic.SpawnRate), RoleInfo.crewmate);
+            SetEntry(Surveyor.SurveyorInfo(),   add && Guessable(Surveyor.SpawnRate),  RoleInfo.crewmate);
             SyncSnitchHide(add);
         }
 

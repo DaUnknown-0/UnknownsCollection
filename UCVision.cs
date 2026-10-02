@@ -61,6 +61,8 @@ namespace UnknownsCollection {
                     // --- 1. multiplicative dampers -------------------------------------------------
                     float damp = Poltergeist.VisionDamp(p);
                     if (damp != 1f) __result *= damp;
+                    float giant = Giant.VisionMult(p);   // the Giant sees further (a bonus, same stage)
+                    if (giant != 1f) __result *= giant;
 
                     // --- 2. full-vision grants (Max, so order among them is irrelevant) ------------
                     if (Scout.WantsFullVision(p)

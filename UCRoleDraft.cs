@@ -61,6 +61,10 @@ namespace UnknownsCollection {
         public const byte NecromancerDraftId = 219;
         public const byte StalkerDraftId = 220;
         public const byte KingDraftId = 221;
+        public const byte ParamedicDraftId = 222;
+        public const byte SurveyorDraftId = 223;
+        public const byte HypnotistDraftId = 224;
+        public const byte SkinwalkerDraftId = 225;
         // NO Void entry: the Void is a MODIFIER (rides on top of a drafted role), like the Gambler.
         // NO Hunter entry, deliberately: the Hunter is not a rolled role at all. He is an EVENT inside
         // a Werewolf round - the living original Sheriff is promoted the moment the beast is the last
@@ -132,6 +136,14 @@ namespace UnknownsCollection {
                      false, () => Stalker.SpawnRate,    () => Stalker.SpawnMinPlayers,    Stalker.MarkFromDraft),
                 Make(KingDraftId,        "King",        King.Color,          "No tasks, no powers - but you know your advisor's role",
                      false, () => King.SpawnRate,       () => King.SpawnMinPlayers,       King.MarkFromDraft),
+                Make(ParamedicDraftId,   "Paramedic",   Paramedic.Color,     "Reach a fresh body in time and bring the victim back",
+                     false, () => Paramedic.SpawnRate,  () => Paramedic.SpawnMinPlayers,  Paramedic.MarkFromDraft),
+                Make(SurveyorDraftId,    "Surveyor",    Surveyor.Color,      "Mark rooms and always see how many players are inside",
+                     false, () => Surveyor.SpawnRate,   () => Surveyor.SpawnMinPlayers,   Surveyor.MarkFromDraft),
+                Make(HypnotistDraftId,   "Hypnotist",   Palette.ImpostorRed, "Hypnotize a player and steer their next vote",
+                     true,  () => Hypnotist.SpawnRate,  () => Hypnotist.SpawnMinPlayers,  Hypnotist.MarkFromDraft),
+                Make(SkinwalkerDraftId,  "Skinwalker",  Palette.ImpostorRed, "Wear your victim's skin and walk among them",
+                     true,  () => Skinwalker.SpawnRate, () => Skinwalker.SpawnMinPlayers, Skinwalker.MarkFromDraft),
             };
             return entries;
         }

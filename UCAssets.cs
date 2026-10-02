@@ -52,6 +52,12 @@ namespace UnknownsCollection {
         public static Sprite SaboteurTrapIcon => GetSprite("UnknownsCollection.Resources.saboteur_trap.png", 115f);
         public static Sprite SaboteurSelfLimpIcon => GetSprite("UnknownsCollection.Resources.saboteur_selflimp.png", 115f);
         public static Sprite SilencerIcon => GetSprite("UnknownsCollection.Resources.silencer_silence.png", 115f);
+        // ideas pack 2026-10-02 (null until the AssetGen icons are embedded; the roles fall back to TOR sprites)
+        public static Sprite ParamedicIcon => GetSprite("UnknownsCollection.Resources.paramedic_revive.png", 115f);
+        public static Sprite SurveyorIcon => GetSprite("UnknownsCollection.Resources.surveyor_mark.png", 115f);
+        public static Sprite HypnotistIcon => GetSprite("UnknownsCollection.Resources.hypnotist_hypnotize.png", 115f);
+        public static Sprite HypnotistVoteIcon => GetSprite("UnknownsCollection.Resources.hypnotist_vote.png", 150f);
+        public static Sprite SkinwalkerIcon => GetSprite("UnknownsCollection.Resources.skinwalker_skin.png", 115f);
         // Crew (blue/teal/cyan)
         public static Sprite SaboteurSearchIcon => GetSprite("UnknownsCollection.Resources.saboteur_search.png", 100f);
         public static Sprite ScoutIcon => GetSprite("UnknownsCollection.Resources.scout_transparent.png", 115f);

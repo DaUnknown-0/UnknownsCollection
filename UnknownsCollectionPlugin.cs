@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.8";
+    public const string PluginVersion = "1.2.8.1";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -90,6 +90,11 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte LastWordsRpcId = 222;    // MODIFIER; a sentence posted after the carrier's death (Sub 0 set, Sub 1 words)
     public const byte SixthSenseRpcId = 223;   // crew MODIFIER; pulses near a ready killer (Sub 0 set, Sub 1 ready)
     public const byte ColorblindRpcId = 224;   // MODIFIER; sees everyone in grey (Sub 0 set)
+    public const byte ParamedicRpcId = 225;    // crew; revives a fresh body (Sub 0 set, 1 request, 2 revive)
+    public const byte SurveyorRpcId = 226;     // crew; marks rooms, sees the head count (Sub 0 set)
+    public const byte HypnotistRpcId = 227;    // impostor; steers a victim's vote (Sub 0 set, 1 hypnotize, 2 pick)
+    public const byte SkinwalkerRpcId = 228;   // impostor; wears the victim's skin (Sub 0 set, 1 skin)
+    public const byte GiantRpcId = 229;        // MODIFIER; bigger, slower, sees further (Sub 0 set)
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -168,6 +173,8 @@ public class UnknownsCollectionPlugin : BasePlugin
         Illusionist.TryPatch(harmony);
 
         // Per-player settings (config file + in-game toggle via UC Options menu).
+        IdeasPackDiag.Enabled = Config.Bind("Diagnostics", "Ideas Pack Test", false,
+            "Autotest only: in freeplay makes the local player Giant + Surveyor after 10 s and saves BepInEx/UC_ideas_diag.png.");
         Sleepwalker.DiagProbe = Config.Bind("Diagnostics", "Sleepwalker Probe", 0,
             "Autotest only: starts a Freeplay on map (value - 1, e.g. 3 = Polus), probes wake-up spots once and photographs them into UCShots. 0 = off (default).");
         BugGlitchEnabled = Config.Bind("Bug", "Bug Win Glitch Effects", true,
@@ -317,6 +324,19 @@ public class UnknownsCollectionPlugin : BasePlugin
         // on the map, in the meeting and in the chat. Names and hats stay (option).
         Colorblind.CreateOptions();
         Colorblind.TryPatch(harmony);
+
+        // Ideas pack 2026-10-02: Paramedic and Surveyor (crew), Hypnotist and Skinwalker (impostor),
+        // Giant (modifier). Options 1740-1768, RPC modules 225-229, draft sentinels 222-225.
+        Paramedic.CreateOptions();
+        Paramedic.TryPatch(harmony);
+        Surveyor.CreateOptions();
+        Surveyor.TryPatch(harmony);
+        Hypnotist.CreateOptions();
+        Hypnotist.TryPatch(harmony);
+        Skinwalker.CreateOptions();
+        Skinwalker.TryPatch(harmony);
+        Giant.CreateOptions();
+        Giant.TryPatch(harmony);
 
         // Reactor music (Paket R) - not a role: a score for the reactor/seismic sabotage that is
         // written against the REAL ICriticalSabotage countdown, so the blast in its finale lands on

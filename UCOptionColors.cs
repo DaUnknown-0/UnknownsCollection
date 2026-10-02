@@ -81,6 +81,11 @@ namespace UnknownsCollection {
                 Add(table, "Last Words",  LastWords.Color,   LastWords.SpawnRate);
                 Add(table, "Sixth Sense", SixthSense.Color,  SixthSense.SpawnRate);
                 Add(table, "Colorblind",  Colorblind.Color,  Colorblind.SpawnRate);
+                Add(table, "Paramedic",   Paramedic.Color,   Paramedic.SpawnRate);
+                Add(table, "Surveyor",    Surveyor.Color,    Surveyor.SpawnRate);
+                Add(table, "Hypnotist",   Hypnotist.Color,   Hypnotist.SpawnRate);
+                Add(table, "Skinwalker",  Skinwalker.Color,  Skinwalker.SpawnRate);
+                Add(table, "Giant",       Giant.Color,       Giant.SpawnRate);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[UCOptionColors] published {table.Count} option colour entries.");

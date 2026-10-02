@@ -58,6 +58,8 @@ namespace UnknownsCollection {
                 E("Manipulator", Faction.Impostor, () => Palette.ImpostorRed, () => Manipulator.SpawnRate, "uc.help.manipulator"),
                 E("Auditor", Faction.Impostor, () => Palette.ImpostorRed, () => Auditor.SpawnRate, "uc.help.auditor"),
                 E("Werewolf", Faction.Impostor, () => Werewolf.Color, () => Werewolf.SpawnRate, "uc.help.werewolf"),
+                E("Hypnotist", Faction.Impostor, () => Hypnotist.Color, () => Hypnotist.SpawnRate, "uc.help.hypnotist"),
+                E("Skinwalker", Faction.Impostor, () => Skinwalker.Color, () => Skinwalker.SpawnRate, "uc.help.skinwalker"),
 
                 E("Gambler", Faction.Modifier, () => Gambler.Color, () => Gambler.SpawnRate, "uc.help.gambler"),
                 E("Void", Faction.Modifier, () => VoidModifier.Color, () => VoidModifier.SpawnRate, "uc.help.void"),
@@ -65,12 +67,15 @@ namespace UnknownsCollection {
                 E("Last Words", Faction.Modifier, () => LastWords.Color, () => LastWords.SpawnRate, "uc.help.lastwords"),
                 E("Sixth Sense", Faction.Modifier, () => SixthSense.Color, () => SixthSense.SpawnRate, "uc.help.sixthsense"),
                 E("Colorblind", Faction.Modifier, () => Colorblind.Color, () => Colorblind.SpawnRate, "uc.help.colorblind"),
+                E("Giant", Faction.Modifier, () => Giant.Color, () => Giant.SpawnRate, "uc.help.giant"),
 
                 E("Siphoner", Faction.Crew, () => Siphoner.Color, () => Siphoner.SpawnRate, "uc.help.siphoner"),
                 E("Witness", Faction.Crew, () => Witness.Color, () => Witness.SpawnRate, "uc.help.witness"),
                 E("Scout", Faction.Crew, () => Scout.Color, () => Scout.SpawnRate, "uc.help.scout"),
                 E("Beacon", Faction.Crew, () => Beacon.Color, () => Beacon.SpawnRate, "uc.help.beacon"),
                 E("King", Faction.Crew, () => King.Color, () => King.SpawnRate, "uc.help.king"),
+                E("Paramedic", Faction.Crew, () => Paramedic.Color, () => Paramedic.SpawnRate, "uc.help.paramedic"),
+                E("Surveyor", Faction.Crew, () => Surveyor.Color, () => Surveyor.SpawnRate, "uc.help.surveyor"),
                 // The Hunter has no spawn rate of his own (he is the Sheriff's endgame inside a
                 // Werewolf round), so his visibility gate is borrowed: the WEREWOLF rate decides
                 // whether he can exist at all, and returning null while option 1502 is off makes the

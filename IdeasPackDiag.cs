@@ -2,20 +2,30 @@
 // Licensed under GPL-3.0-or-later. See LICENSE for details.
 
 /*
- * IdeasPackDiag - autotest for the ideas pack (Giant, Surveyor). Freeplay has no intro and therefore
- * no role assignment, so this makes the local player the Giant and the Surveyor 10 s after the ship
- * is up, marks the current room and saves a screenshot to BepInEx/UC_ideas_diag.png. Off by default;
- * config [Diagnostics] Ideas Pack Test.
+ * IdeasPackDiag - autotest for the ideas pack. Freeplay has no intro and therefore no role
+ * assignment, so 10 s after the ship is up this makes the local player the Giant, the Surveyor and
+ * the Hypnotist and marks the current room.
+ *
+ * Freeplay never runs TOR's CustomButton.HudUpdate (TOR's HudManager.Update postfix wants
+ * GameState Started); TOR Role Control 1.6.10+ ticks the buttons there itself, which this test
+ * relies on. 3 s later it switches the faction to Impostor exactly like Role Control does (PlayerTuning.ApplySetFaction -> RoleManager.SetRole),
+ * the step after which every ability button froze in a solo round on 2026-10-02. Button states
+ * (timer, label) are logged before and 4 s after, then a screenshot goes to
+ * BepInEx/UC_ideas_diag.png. Off by default; config [Diagnostics] Ideas Pack Test.
  */
 
 using System;
+using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
 namespace UnknownsCollection {
     public static class IdeasPackDiag {
-        // Button state dump: label text vs. what TOR should have written, and dead list entries.
-        private static void LogButtons() {
+        internal static BepInEx.Configuration.ConfigEntry<bool> Enabled;
+        private static float at = -1f;
+        private static int stage;
+
+        private static void LogButtons(string when) {
             int dead = 0, total = 0;
             foreach (var b in TheOtherRoles.Objects.CustomButton.buttons) {
                 total++;
@@ -24,14 +34,10 @@ namespace UnknownsCollection {
                 string lbl = "?";
                 try { lbl = b.actionButtonLabelText != null ? b.actionButtonLabelText.text + (b.actionButtonLabelText.enabled ? "" : " (hidden)") : "null"; } catch { }
                 UnknownsCollectionPlugin.Logger?.LogInfo(
-                    $"[IdeasPackDiag] button '{b.Sprite?.name}': buttonText='{b.buttonText}', show={b.showButtonText}, label='{lbl}', offset {b.PositionOffset}, pos {b.actionButtonGameObject.transform.localPosition}");
+                    $"[IdeasPackDiag] {when}: button '{b.Sprite?.name}': buttonText='{b.buttonText}', label='{lbl}', timer {b.Timer:F2}/{b.MaxTimer:F0}");
             }
-            UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] {total} button(s) in TOR's list, {dead} dead.");
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] {when}: {total} button(s) in TOR's list, {dead} dead.");
         }
-
-        internal static BepInEx.Configuration.ConfigEntry<bool> Enabled;
-        private static float at = -1f;
-        private static int stage;
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class TickPatch {
@@ -46,31 +52,44 @@ namespace UnknownsCollection {
                         stage = 1;
                         Giant.SendSet(lp.PlayerId);
                         Surveyor.SendSet(lp.PlayerId);
-                        Hypnotist.SendSet(lp.PlayerId);
-                        foreach (var other in PlayerControl.AllPlayerControls) {
-                            if (other == null || other.PlayerId == lp.PlayerId || other.Data == null || other.Data.IsDead) continue;
-                            Hypnotist.DiagHypnotize(other.PlayerId);
-                            HypnotistView.DiagForce = true;
-                            UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] hypnotised {other.Data.PlayerName} at {other.GetTruePosition()} for the view test.");
-                            break;
-                        }
-                        string tracked = "?";
-                        try { tracked = HudManager.Instance?.roomTracker?.LastRoom?.RoomId.ToString() ?? "none"; } catch { }
-                        UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] before mark: room tracker {tracked}, position {lp.GetTruePosition()}.");
                         Surveyor.DiagMarkHere();
-                        at = Time.realtimeSinceStartup + 2f;
-                        UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] Giant + Surveyor set on {lp.Data?.PlayerName}, scale {lp.transform.localScale.x:F2}.");
+                        UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] Giant + Surveyor set on {lp.Data?.PlayerName}; label guard {(Environment.GetEnvironmentVariable("UC_LABELGUARD_OFF") == "1" ? "OFF" : "on")}.");
+                        at = Time.realtimeSinceStartup + 3f;
                     } else if (stage == 1) {
                         stage = 2;
-                        LogButtons();
+                        LogButtons("before faction");
+                        // Role Control's own path (what its F7 overlay does), else the bare faction switch
+                        Type rc = null, ucRole = null;
+                        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies()) {
+                            rc ??= asm.GetType("ForceImpostorMod.RoleControl");
+                            ucRole ??= asm.GetType("ForceImpostorMod.UcRole");
+                        }
+                        if (rc != null && ucRole != null) {
+                            var set = rc.GetMethod("SetUcRole", BindingFlags.Public | BindingFlags.Static);
+                            var apply = rc.GetMethod("ApplyNow", BindingFlags.Public | BindingFlags.Static);
+                            var r1 = set?.Invoke(null, new object[] { lp.PlayerId, Enum.Parse(ucRole, "Hypnotist") });
+                            var r2 = apply?.Invoke(null, new object[] { lp.PlayerId });
+                            UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] Role Control: {r1} / {r2}");
+                        } else {
+                            var m = typeof(PlayerTuning).GetMethod("ApplySetFaction", BindingFlags.NonPublic | BindingFlags.Static);
+                            m?.Invoke(null, new object[] { lp.PlayerId, true });
+                            UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] faction -> Impostor ({(m != null ? "done" : "method missing")}).");
+                        }
+                        at = Time.realtimeSinceStartup + 4f;
+                    } else if (stage == 2) {
+                        stage = 3;
+                        LogButtons("4 s after faction");
                         string shot = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "UC_ideas_diag.png");
                         ScreenCapture.CaptureScreenshot(shot);
+                        at = Time.realtimeSinceStartup + 1f;
+                    } else if (stage == 3) {
+                        stage = 4;
                         UnknownsCollectionPlugin.Logger?.LogInfo(
-                            $"[IdeasPackDiag] diag: done, scale {lp.transform.localScale.x:F2}, screenshot -> {shot}");
+                            $"[IdeasPackDiag] diag: done, scale {lp.transform.localScale.x:F2}, screenshot -> {System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "UC_ideas_diag.png")}");
                     }
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[IdeasPackDiag] failed: {e.Message}");
-                    stage = 2;
+                    stage = 4;
                 }
             }
         }

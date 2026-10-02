@@ -331,15 +331,20 @@ namespace UnknownsCollection {
         }
 
         // ---- Tally (host): rewrite the victim's vote before TOR counts and builds the results ----
+        // The priority sits on the METHOD: this HarmonyX ignores [HarmonyPriority] on the patch class
+        // (measured 2026-10-02, every class-level priority came out as 400). On the class, TOR's
+        // tally prefix ran first, so a vote arriving with the tally itself (the victim voting last,
+        // or the voting time running out) was rewritten only after the result.
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CheckForEndVoting))]
-        [HarmonyPriority(Priority.First)]
         static class RedirectPatch {
+            [HarmonyPriority(Priority.First)]
             public static void Prefix(MeetingHud __instance) {
                 try {
                     if (!AmHost() || !HypnosisHolds()) return;
                     PlayerVoteArea area = null;
                     foreach (var ps in __instance.playerStates)
                         if (ps != null && ps.TargetPlayerId == victimId) { area = ps; break; }
+                    if (DiagVote && area != null) UnknownsCollectionPlugin.Logger?.LogInfo($"[Hypnotist] redirect check: victim {victimId} didVote {area.DidVote} votedFor {area.VotedFor}, pick {pick}.");
                     if (area == null || area.AmDead || !area.DidVote) return;
                     if (originalVote == NoPick) originalVote = area.VotedFor;
                     byte orig = originalVote;
@@ -356,6 +361,7 @@ namespace UnknownsCollection {
             }
         }
 
+        private static readonly bool DiagVote = Environment.GetEnvironmentVariable("UC_DIAG_VOTE") is "1" or "timeout";
         private static bool Escapeless() => CannotEscape?.getBool() ?? true;
 
         // A victim who simply does not vote (User 2026-10-02): when the voting time runs out, the host
@@ -363,8 +369,8 @@ namespace UnknownsCollection {
         // skipped. SetVote is the canonical path (VotedFor + DidVote + overlay); the tally prefix above
         // then sees an ordinary vote.
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.ForceSkipAll))]
-        [HarmonyPriority(Priority.First)]
         static class ForcedVotePatch {
+            [HarmonyPriority(Priority.First)]
             public static void Prefix(MeetingHud __instance) {
                 try {
                     if (!AmHost() || !HypnosisHolds() || !Escapeless() || pick == NoPick) return;

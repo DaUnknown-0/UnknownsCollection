@@ -103,9 +103,9 @@ namespace UnknownsCollection {
         // Jackal team (11). Neutral solo wins (Jester, Arsonist, Vulture, Lovers, Prosecutor, Mini) are
         // left untouched, so the Bug never steals those.
         [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
-        [HarmonyPriority(Priority.Low)] // behind Collector's Priority.High; the real rule is the
                                         // explicit stand-down below, this is only reinforcement.
         static class RpcEndGameHijackPatch {
+            [HarmonyPriority(Priority.Low)]  // behind Collector's Priority.High; the real rule is the
             public static void Prefix(ref GameOverReason endReason) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -229,8 +229,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -266,13 +266,13 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
             // Runs before TOR's OnGameEnd postfix calls resetVariables(): snapshot the Bug's id so the
             // postfix below can still award the win after bugPlayerId has been reset. Fires on every
             // client (OnGameEnd runs everywhere), so all clients agree on the winner.
             // Priority.Last also puts this prefix AFTER TOR's (gameOverReason is already stamped) and
             // after Copycat's (WinnerCopycatId is already decided).
+            [HarmonyPriority(Priority.Last)]
             public static void Prefix() {
                 // Always reassign, never only on success: without the else branch a stale winnerBugId
                 // from an earlier round survives into a round the Bug is not in, and the postfix below
@@ -349,6 +349,7 @@ namespace UnknownsCollection {
 
             // Runs AFTER TOR's postfix (Priority.Last), so our winner list has the final say. Keys on
             // the host-broadcast BugWinReason, which every client sees via TOR's OnGameEndPatch.Prefix.
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
                     if (!IsBugReason((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason)) return;
@@ -385,8 +386,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
-        [HarmonyPriority(Priority.Last)]
         static class EndGameFxPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(EndGameManager __instance) {
                 try {
                     if (!IsBugReason((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason)) return;

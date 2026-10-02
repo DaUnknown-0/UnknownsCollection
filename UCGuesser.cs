@@ -208,8 +208,8 @@ namespace UnknownsCollection {
 
         // Present the entries while a meeting (and thus the guess grid) is open; remove on close.
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
-        [HarmonyPriority(Priority.First)] // before the guess UI reads allRoleInfos
         static class MeetingStartPatch {
+            [HarmonyPriority(Priority.First)]  // before the guess UI reads allRoleInfos
             public static void Postfix() { Sync(true); }
         }
 

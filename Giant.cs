@@ -133,8 +133,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host; modifiers have no draft entry) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost() || active) return;
@@ -181,8 +181,8 @@ namespace UnknownsCollection {
         // After TOR's own FixedUpdate postfix (which calls playerSizeUpdate - but only while the game state
         // is Started, so a size hook inside playerSizeUpdate never ran in freeplay).
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.FixedUpdate))]
-        [HarmonyPriority(Priority.Low)]
         static class SizePatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(PlayerControl __instance) {
                 try {
                     var p = __instance;

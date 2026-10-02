@@ -480,8 +480,8 @@ namespace UnknownsCollection {
         // Game start: host-authoritative pick
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
@@ -508,8 +508,8 @@ namespace UnknownsCollection {
         // Swallow button
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     var sprite = UCAssets.PelicanSwallowIcon
@@ -866,8 +866,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
-        [HarmonyPriority(Priority.Low)] // after TOR's own murder bookkeeping
         static class MurderPatch {
+            [HarmonyPriority(Priority.Low)]  // after TOR's own murder bookkeeping
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
                     if (!active || pelican == null || target == null || __instance == null) return;
@@ -1189,8 +1189,8 @@ namespace UnknownsCollection {
         // See the file header. Priority.First so this prefix inspects the RAW reason, before Bug's or
         // Collector's own RpcEndGame prefixes can rewrite it.
         [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
-        [HarmonyPriority(Priority.First)]
         static class EndGameGuardPatch {
+            [HarmonyPriority(Priority.First)]
             public static bool Prefix(ref GameOverReason endReason) {
                 try {
                     if (!AmHost()) return true;
@@ -1240,15 +1240,16 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
             // Snapshot BEFORE TOR's own reset can wipe the role statics (Bug/Collector precedent).
+            [HarmonyPriority(Priority.Last)]
             public static void Prefix() {
                 // Always reassign (Bug.cs precedent): without the else branch a stale id from an
                 // earlier round would survive into a round that has no Pelican.
                 winnerPelicanId = (active && pelicanPlayerId != byte.MaxValue) ? pelicanPlayerId : byte.MaxValue;
             }
 
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix() {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != PelicanWinReason) return;
@@ -1266,8 +1267,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
-        [HarmonyPriority(Priority.Last)]
         static class EndGameFxPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(EndGameManager __instance) {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != PelicanWinReason) return;

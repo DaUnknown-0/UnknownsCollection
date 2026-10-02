@@ -296,8 +296,8 @@ namespace UnknownsCollection {
         // Game start: host picks the Witness among plain Crewmates and broadcasts it.
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -410,8 +410,8 @@ namespace UnknownsCollection {
         // registration order decides who writes last - i.e. whether the red name shows at all.
         // Same reasoning as WerewolfFx's name-tag postfix.
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(Priority.Low)]
         static class HudUpdatePatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     bool nowMeeting = InMeeting();

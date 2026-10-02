@@ -230,8 +230,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host; the modifier has no draft entry) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
@@ -276,6 +276,7 @@ namespace UnknownsCollection {
                     if (ps.TargetPlayerId != voidPlayerId) continue;
                     byte votedFor = ps.VotedFor;
                     if (votedFor == 252 || votedFor == 254 || votedFor == 255) continue;
+                    votedFor = Necromancer.SwappedKey(hud, votedFor);   // TOR already swapped the totals
                     int weight = (Mayor.mayor != null && Mayor.mayor.PlayerId == ps.TargetPlayerId
                                   && Mayor.voteTwice) ? 2 : 1;
                     if (!__result.TryGetValue(votedFor, out int cur)) continue;
@@ -293,8 +294,8 @@ namespace UnknownsCollection {
         // Only the host ever calls RpcVotingComplete (TOR's CheckForEndVoting prefix runs there), so
         // this prefix is host-side by construction. The exile RPC that follows carries "nobody".
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.RpcVotingComplete))]
-        [HarmonyPriority(Priority.High)]
         static class VotingCompletePatch {
+            [HarmonyPriority(Priority.High)]
             public static void Prefix([HarmonyArgument(1)] ref NetworkedPlayerInfo exiled,
                                       [HarmonyArgument(2)] ref bool tie) {
                 try {
@@ -327,8 +328,8 @@ namespace UnknownsCollection {
         private const string Noise = "#%&/|_-=+<>*";   // plain ASCII only - the HUD font has nothing else
 
         [HarmonyPatch(typeof(ExileController), nameof(ExileController.BeginForGameplay))]
-        [HarmonyPriority(Priority.Last)]   // after vanilla Begin AND after TOR's prefix bookkeeping
         static class ExileBeginPatch {
+            [HarmonyPriority(Priority.Last)]  // after vanilla Begin AND after TOR's prefix bookkeeping
             public static void Postfix(ExileController __instance) {
                 try {
                     if (!pending) return;
@@ -386,8 +387,8 @@ namespace UnknownsCollection {
         // vanilla "No one was ejected" line is replaced here. Priority.Last so it has the final word.
         [HarmonyPatch(typeof(TranslationController), nameof(TranslationController.GetString),
             new Type[] { typeof(StringNames), typeof(Il2CppReferenceArray<Il2CppSystem.Object>) })]
-        [HarmonyPriority(Priority.Last)]
         static class ExileTextPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(ref string __result, [HarmonyArgument(0)] StringNames id) {
                 try {
                     if (!styling) return;

@@ -390,6 +390,35 @@ namespace UnknownsCollection {
             copycat.setDefaultLook();
         }
 
+        // ---- Name tags: TOR rewrites every tag each frame ----
+        // setLook writes a name once; TOR's HudManager.Update postfix puts every real name back the next
+        // frame, because its hidePlayerName only knows the real Camouflager and its Morphling exemption
+        // only TOR's Morphling (Opus audit 2026-10-02). So the Copycat's camouflage showed every real name
+        // over the grey bodies, and its morph showed the target's outfit under the Copycat's own name.
+        // A later postfix on the same method writes the intended tags.
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        static class NamePatch {
+            [HarmonyPriority(Priority.Low)]
+            public static void Postfix() {
+                try {
+                    if (MeetingHud.Instance != null || (!camouflaged && !isMorphed)) return;
+                    if (Helpers.MushroomSabotageActive() || Camouflager.camouflageTimer > 0f) return;   // TOR already blanks
+                    if (camouflaged) {
+                        foreach (PlayerControl p in PlayerControl.AllPlayerControls) {
+                            var t = p != null && p.cosmetics != null ? p.cosmetics.nameText : null;
+                            if (t != null && t.text != "") t.text = "";
+                        }
+                        return;
+                    }
+                    var target = Helpers.playerById(morphTargetId);
+                    var tag = copycat != null && copycat.cosmetics != null ? copycat.cosmetics.nameText : null;
+                    if (target == null || target.Data == null || tag == null) return;
+                    string want = Helpers.hidePlayerName(PlayerControl.LocalPlayer, copycat) ? "" : target.Data.PlayerName;
+                    if (tag.text != want) tag.text = want;
+                } catch { }
+            }
+        }
+
         private static void StartShield() {
             shielded = true;
             shieldEndTime = Time.time + ShieldDuration;
@@ -719,8 +748,8 @@ namespace UnknownsCollection {
         // Game start: host picks the Copycat among plain Crewmates and broadcasts it.
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -824,8 +853,8 @@ namespace UnknownsCollection {
         // Buttons (one per ability)
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     cachedButtonSprite = __instance.KillButton != null && __instance.KillButton.graphic != null
@@ -931,10 +960,10 @@ namespace UnknownsCollection {
         // so the Copycat's append must not come after it. On a normal team win, Bug's postfix no-ops and
         // this append stands.
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.VeryLow)]
         static class OnGameEndPatch {
             // Runs before TOR's OnGameEnd postfix calls resetVariables(): snapshot whether the Copycat
             // has earned a shared win (alive + used enough abilities), since the postfix runs after reset.
+            [HarmonyPriority(Priority.VeryLow)]
             public static void Prefix() {
                 winnerCopycatId = byte.MaxValue;
                 if (active && CopycatIsAlive() && usedAbilities.Count >= NeededToWin())
@@ -942,6 +971,7 @@ namespace UnknownsCollection {
             }
 
             // Runs AFTER TOR's postfix: append the Copycat to the winners (does not replace them).
+            [HarmonyPriority(Priority.VeryLow)]
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
                     if (winnerCopycatId == byte.MaxValue) return;

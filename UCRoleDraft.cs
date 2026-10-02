@@ -296,8 +296,8 @@ namespace UnknownsCollection {
         // Remove them once the intro ends (after CoSelectRoles has finished enumerating and returned), so
         // they never leak into in-game systems.
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.First)] // before the role random-pick postfixes
         static class OnDestroyPatch {
+            [HarmonyPriority(Priority.First)]  // before the role random-pick postfixes
             public static void Postfix() { introActive = false; RemoveAll(); }
         }
 
@@ -337,8 +337,8 @@ namespace UnknownsCollection {
         // HudManager.FullScreen at flash end - the renderer the Role Draft uses as its black backdrop -
         // and permanently cut the draft's blackscreen (see UCPromotion.SuppressRevealForDraftPick).
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.setRole))]
-        [HarmonyPriority(Priority.High)]
         static class SetRolePatch {
+            [HarmonyPriority(Priority.High)]
             public static bool Prefix(byte roleId, byte playerId) {
                 foreach (var e in Entries())
                     if (roleId == e.id) {

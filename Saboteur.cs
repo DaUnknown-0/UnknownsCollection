@@ -415,8 +415,8 @@ namespace UnknownsCollection {
         // Runs at LOW priority so the Tesla pick (normal priority) resolves first; we exclude it.
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -1054,8 +1054,8 @@ namespace UnknownsCollection {
         private static int MaxTraps() => MaxActiveTraps != null ? Mathf.RoundToInt(MaxActiveTraps.getFloat()) : 1;
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     var sabotageSprite = UCAssets.SaboteurSabotageIcon

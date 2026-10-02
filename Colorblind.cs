@@ -239,8 +239,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host; the modifier has no draft entry) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;

@@ -433,8 +433,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host, random path - the draft path goes through MarkFromDraft) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
@@ -499,8 +499,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     raiseButton = new TheOtherRoles.Objects.CustomButton(
@@ -679,6 +679,25 @@ namespace UnknownsCollection {
             GameManager.Instance.RpcEndGame((GameOverReason)NecromancerWinReason, false);
         }
 
+        // TOR's CalculateVotes swaps the Swapper's two totals BEFORE returning (MeetingPatch.cs:47-61),
+        // so in a postfix a vote for A sits under key B. Map the key the same way before subtracting a
+        // weightless vote, or B keeps it and A loses a real one (Opus audit 2026-10-02). Shared with the Void.
+        internal static byte SwappedKey(MeetingHud hud, byte votedFor) {
+            try {
+                if (Swapper.swapper == null || Swapper.swapper.Data == null || Swapper.swapper.Data.IsDead) return votedFor;
+                byte a = Swapper.playerId1, b = Swapper.playerId2;
+                if (a == byte.MaxValue || b == byte.MaxValue) return votedFor;
+                bool hasA = false, hasB = false;
+                foreach (var ps in hud.playerStates) {
+                    if (ps == null) continue;
+                    if (ps.TargetPlayerId == a) hasA = true;
+                    if (ps.TargetPlayerId == b) hasB = true;
+                }
+                if (!hasA || !hasB) return votedFor;   // TOR only swaps when it finds both areas
+                return votedFor == a ? b : votedFor == b ? a : votedFor;
+            } catch { return votedFor; }
+        }
+
         // ---- Vote weight 0 (postfix on TOR's CalculateVotes, manual patch in TryPatch) ----
         public static void CalculateVotesPostfix([HarmonyArgument(0)] MeetingHud hud,
                                                  ref Dictionary<byte, int> __result) {
@@ -689,6 +708,7 @@ namespace UnknownsCollection {
                     if (!thralls.Contains(ps.TargetPlayerId)) continue;
                     byte votedFor = ps.VotedFor;
                     if (votedFor == 252 || votedFor == 254 || votedFor == 255) continue; // dead/missed/none
+                    votedFor = SwappedKey(hud, votedFor);
                     // Same weight TOR just added for this voter (a thrall Mayor contributed 2).
                     int weight = (Mayor.mayor != null && Mayor.mayor.PlayerId == ps.TargetPlayerId
                                   && Mayor.voteTwice) ? 2 : 1;
@@ -708,8 +728,8 @@ namespace UnknownsCollection {
         // Priority.First so it runs before TOR's own CheckForEndVoting prefix (which replaces the
         // original and does the All(voted) check). Votes are processed host-side, so host-only.
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CheckForEndVoting))]
-        [HarmonyPriority(Priority.First)]
         static class EndVotingNoDelayPatch {
+            [HarmonyPriority(Priority.First)]
             public static void Prefix(MeetingHud __instance) {
                 try {
                     if (!active || thralls.Count == 0 || !AmHost()) return;
@@ -745,8 +765,8 @@ namespace UnknownsCollection {
 
         // ---- Winner list + end screen (Collector pattern; reason 33, banner 14) ----
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Prefix() {
                 // Cleared unconditionally, even if this round's Necromancer never actually rose: a stale
                 // winnerIds list from a previous round must not survive into this game-end check, or the
@@ -758,6 +778,7 @@ namespace UnknownsCollection {
                 foreach (byte id in thralls) winnerIds.Add(id);
             }
 
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != NecromancerWinReason) return;
@@ -796,8 +817,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
-        [HarmonyPriority(Priority.Last)]
         static class EndGameFxPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(EndGameManager __instance) {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != NecromancerWinReason) return;

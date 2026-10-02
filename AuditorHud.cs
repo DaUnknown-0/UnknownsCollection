@@ -205,10 +205,10 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(Priority.Low)]
         static class HudUpdatePatch {
             private static readonly StringBuilder sb = new StringBuilder(256);
 
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     // victim notice timeout
@@ -261,8 +261,8 @@ namespace UnknownsCollection {
         // resetVariables-Button-Timing rule), so it doubles as this file's round-reset path for the
         // panel rebuild cache above.
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.First)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.First)]
             public static void Prefix() {
                 panel = null; notice = null; noticeUntil = 0f;
                 ResetHudCache();

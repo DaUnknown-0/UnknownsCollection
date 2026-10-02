@@ -370,8 +370,15 @@ namespace UnknownsCollection {
         }
 
         // The target died too early: either TOR's Pursuer promotion (Lawyer path) or a fresh target.
+        // Mode 1: the Pursuer slot is taken and nobody is left to stalk - the role just ends.
         private static void ApplyFallback(byte mode) {
             if (!active) return;
+            if (mode == 1) {
+                active = false;
+                ForceConeOff();
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Stalker] target died early, Pursuer slot taken and no new target - the role ends.");
+                return;
+            }
             if (mode == 0) {
                 var p = stalker;
                 bool wasLocal = IsLocalStalker();
@@ -399,8 +406,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host, random path - the draft path goes through MarkFromDraft) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
@@ -445,8 +452,8 @@ namespace UnknownsCollection {
 
         // ---- Strike button ----
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     var sprite = UCAssets.StalkerIcon
@@ -790,26 +797,37 @@ namespace UnknownsCollection {
                 return;
             }
 
-            // Too early.
+            // Too early. A dead Stalker has nothing left to fall back to (and must not take the Pursuer
+            // slot from a living player).
+            if (!IsAlive(stalker)) return;
+            // TOR has ONE Pursuer slot (Pursuer.pursuer, also filled by a promoted Lawyer); taking it would
+            // cost that player his button and his win (Opus audit 2026-10-02). Then a new target instead,
+            // and with nobody left the role simply ends (mode 1).
+            bool slotTaken = false;
+            try {
+                slotTaken = Pursuer.pursuer != null && Pursuer.pursuer.Data != null && !Pursuer.pursuer.Data.IsDead
+                            && Pursuer.pursuer.PlayerId != stalker.PlayerId;
+            } catch { }
             int mode = TargetDeath?.getSelection() ?? 0;
-            if (mode == 0) SendFallback(0);
+            if (mode == 0 && !slotTaken) SendFallback(0);
             else {
                 byte next = PickTarget(stalkerPlayerId);
                 if (next != byte.MaxValue) SendSetTarget(next);
-                else SendFallback(0);   // nobody left to stalk
+                else SendFallback(slotTaken ? (byte)1 : (byte)0);   // nobody left to stalk
             }
         }
 
         // ---- Winner list + end screen (Necromancer pattern; reason 34, banner 15) ----
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Prefix() {
                 winnerIds.Clear();
                 if (!active || stalkerPlayerId == byte.MaxValue) return;
                 winnerIds.Add(stalkerPlayerId);
             }
 
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != StalkerWinReason) return;
@@ -847,8 +865,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
-        [HarmonyPriority(Priority.Last)]
         static class EndGameFxPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(EndGameManager __instance) {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != StalkerWinReason) return;

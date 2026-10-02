@@ -20,7 +20,11 @@ using UnityEngine;
 
 namespace UnknownsCollection {
     public static class HypnotistVoteDiag {
-        private static readonly bool On = Environment.GetEnvironmentVariable("UC_DIAG_VOTE") is "1" or "timeout";
+        private static readonly bool On = Environment.GetEnvironmentVariable("UC_DIAG_VOTE") is "1" or "timeout" or "exileme";
+        // "exileme": every dummy votes the local player, the local player votes himself (the case where
+        // the meeting stayed in NotVoted after the count and was counted a second time).
+        private static readonly bool ExileMe = Environment.GetEnvironmentVariable("UC_DIAG_VOTE") == "exileme";
+        private static bool diagCasting, shotTaken;
         // "timeout": the victim dummy never votes and the local player does not vote either, so the
         // voting time has to run out (ForceSkipAll path of "Hypnotised Player Cannot Escape").
         private static readonly bool Timeout = Environment.GetEnvironmentVariable("UC_DIAG_VOTE") == "timeout";
@@ -72,6 +76,21 @@ namespace UnknownsCollection {
                                 }
                             }
                             Log($"all patches: {total}, with non-default priority: {nonDefault}; e.g. {string.Join(", ", samples)}");
+                            // order report: every method where at least two owners patch the same slot
+                            var sb = new System.Text.StringBuilder();
+                            foreach (var m in Harmony.GetAllPatchedMethods()) {
+                                var pi = Harmony.GetPatchInfo(m);
+                                if (pi == null) continue;
+                                void Slot(string kind, System.Collections.ObjectModel.ReadOnlyCollection<Patch> list) {
+                                    if (list.Select(x => x.owner).Distinct().Count() < 2) return;
+                                    var ordered = list.OrderByDescending(x => x.priority).ThenBy(x => x.index);
+                                    sb.AppendLine($"{m.DeclaringType?.Name}.{m.Name} [{kind}]: " +
+                                        string.Join(" > ", ordered.Select(x => $"{x.owner.Split('.').Last()}/{x.PatchMethod.DeclaringType?.Name} p{x.priority}")));
+                                }
+                                Slot("prefix", pi.Prefixes); Slot("postfix", pi.Postfixes); Slot("finalizer", pi.Finalizers);
+                            }
+                            System.IO.File.WriteAllText(System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "patch_order.txt"), sb.ToString());
+                            Log("patch order report -> BepInEx/patch_order.txt");
                         } catch (Exception e) { Log("priority census failed: " + e.Message); }
                         at = Time.realtimeSinceStartup + 1f;
                     } else if (stage == 1) {
@@ -85,13 +104,23 @@ namespace UnknownsCollection {
                         var send = typeof(Hypnotist).GetMethod("SendPick", BindingFlags.NonPublic | BindingFlags.Static);
                         send?.Invoke(null, new object[] { target });
                         Log($"picked {target}; votes now {Votes(MeetingHud.Instance)}");
-                        if (!Timeout) { MeetingHud.Instance.CmdCastVote(lp.PlayerId, 253); Log("local vote: skip."); }
+                        if (ExileMe) {
+                            diagCasting = true;
+                            foreach (var d in dummies) MeetingHud.Instance.CastVote(d.PlayerId, lp.PlayerId);
+                            MeetingHud.Instance.CastVote(lp.PlayerId, lp.PlayerId);
+                            diagCasting = false;
+                            Log("exileme: everybody voted the local player.");
+                        }
+                        else if (!Timeout) { MeetingHud.Instance.CmdCastVote(lp.PlayerId, 253); Log("local vote: skip."); }
                         else Log("timeout mode: no local vote, victim blocked.");
                         at = Time.realtimeSinceStartup + 2f;
                     } else if (stage == 3) {
-                        if (MeetingHud.Instance != null) { Log($"waiting, votes {Votes(MeetingHud.Instance)}, state {MeetingHud.Instance.state}"); at = Time.realtimeSinceStartup + 5f; return; }
+                        if (!shotTaken) { shotTaken = true; ScreenCapture.CaptureScreenshot(System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "UC_vote_meeting.png")); }
+                        // freeplay results wait for the Proceed button, so a finished count is enough
+                        if (MeetingHud.Instance != null && MeetingHud.Instance.state != MeetingHud.VoteStates.Results
+                            && MeetingHud.Instance.state != MeetingHud.VoteStates.Proceeding) { Log($"waiting, votes {Votes(MeetingHud.Instance)}, state {MeetingHud.Instance.state}"); at = Time.realtimeSinceStartup + 5f; return; }
                         stage = 4;
-                        Log("meeting over.");
+                        Log("count done.");
                         string shot = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "UC_vote_diag.png");
                         ScreenCapture.CaptureScreenshot(shot);
                         at = Time.realtimeSinceStartup + 3f;
@@ -107,9 +136,9 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CheckForEndVoting))]
-        [HarmonyPriority(Priority.Last)]
         static class CheckPatch {
             private static string last;
+            [HarmonyPriority(Priority.Last)]
             public static void Prefix(MeetingHud __instance) {
                 if (!On) return;
                 string v = Votes(__instance);
@@ -120,6 +149,7 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CastVote))]
         static class BlockVictimPatch {
             public static bool Prefix(byte srcPlayerId) {
+                if (On && ExileMe && !diagCasting && srcPlayerId != PlayerControl.LocalPlayer?.PlayerId) return false;  // dummies wait for the diag
                 if (!On || !Timeout || srcPlayerId != victim) return true;
                 Log($"blocked the victim's own vote ({srcPlayerId}).");
                 return false;

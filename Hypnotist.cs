@@ -196,8 +196,14 @@ namespace UnknownsCollection {
         /// <summary>IdeasPackDiag only: hypnotise without the button (freeplay updates no CustomButton).</summary>
         internal static void DiagHypnotize(byte target) => ApplyHypnotize(target);
 
+        // Once the result is out the pick is frozen: CheckForEndVoting keeps being called during the
+        // results, and a changed pick there made the host rewrite the vote and count a second time.
+        private static bool VotingOver(MeetingHud hud) =>
+            hud != null && (hud.state == MeetingHud.VoteStates.Results || hud.state == MeetingHud.VoteStates.Proceeding);
+
         private static void ApplyPick(byte target) {
             if (!active || victimId == byte.MaxValue) return;
+            if (VotingOver(MeetingHud.Instance)) return;
             pick = target;
             if (AmHost()) UnknownsCollectionPlugin.Logger?.LogInfo($"[Hypnotist] redirect pick: {(target == SkipPick ? "skip" : target == NoPick ? "none" : target.ToString())}.");
         }
@@ -210,8 +216,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host, random path) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost() || active) return;
@@ -245,8 +251,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     var sprite = UCAssets.HypnotistIcon ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.SpellButton.png", 115f);
@@ -275,8 +281,8 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, SpriteRenderer> pickButtons = new Dictionary<byte, SpriteRenderer>();
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class MeetingStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(MeetingHud __instance) {
                 try {
                     pickButtons.Clear();
@@ -309,7 +315,14 @@ namespace UnknownsCollection {
             go.name = "HypnotistPick";
             go.transform.localPosition = new Vector3(x, 0.03f, -1.3f);
             var r = go.GetComponent<SpriteRenderer>();
+            // Same on-screen size as the cancel button it is cloned from: the vote icon is a bigger
+            // image (150 px per unit) and covered the whole portrait otherwise (User 2026-10-02).
+            float templateWidth = r.sprite != null ? r.sprite.bounds.size.x : 0f;
             if (sprite != null) r.sprite = sprite;
+            if (sprite != null && templateWidth > 0.01f && sprite.bounds.size.x > 0.01f) {
+                float k = templateWidth * 0.85f / sprite.bounds.size.x;
+                go.transform.localScale = new Vector3(go.transform.localScale.x * k, go.transform.localScale.y * k, 1f);
+            }
             r.color = Color.white;
             var button = go.GetComponent<PassiveButton>();
             button.OnClick.RemoveAllListeners();
@@ -320,13 +333,23 @@ namespace UnknownsCollection {
         private static void OnPickClick(byte target) {
             try {
                 var hud = MeetingHud.Instance;
-                if (hud == null || hud.state == MeetingHud.VoteStates.Results) return;
+                if (hud == null || VotingOver(hud)) return;
                 byte next = pick == target ? NoPick : target;
                 SendPick(next);
                 foreach (var kv in pickButtons)
                     if (kv.Value != null) kv.Value.color = kv.Key == next ? Spiral : Color.white;
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Hypnotist] pick click failed: {e}");
+            }
+        }
+
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.VotingComplete))]
+        static class HidePicksPatch {
+            public static void Postfix() {
+                try {
+                    foreach (var kv in pickButtons)
+                        if (kv.Value != null) kv.Value.gameObject.SetActive(false);
+                } catch { }
             }
         }
 
@@ -340,18 +363,24 @@ namespace UnknownsCollection {
             [HarmonyPriority(Priority.First)]
             public static void Prefix(MeetingHud __instance) {
                 try {
-                    if (!AmHost() || !HypnosisHolds()) return;
+                    if (!AmHost() || !HypnosisHolds() || VotingOver(__instance)) return;
                     PlayerVoteArea area = null;
                     foreach (var ps in __instance.playerStates)
                         if (ps != null && ps.TargetPlayerId == victimId) { area = ps; break; }
                     if (DiagVote && area != null) UnknownsCollectionPlugin.Logger?.LogInfo($"[Hypnotist] redirect check: victim {victimId} didVote {area.DidVote} votedFor {area.VotedFor}, pick {pick}.");
-                    if (area == null || area.AmDead || !area.DidVote) return;
+                    if (area == null || area.AmDead) return;
+                    // TOR's guesserShoot un-votes everyone who voted for the shot player; the victim then votes
+                    // again. Forget the remembered vote while there is none, or it would be written back onto
+                    // the dead player (Opus audit 2026-10-02).
+                    if (!area.DidVote) { originalVote = NoPick; return; }
                     if (originalVote == NoPick) originalVote = area.VotedFor;
                     byte orig = originalVote;
                     // 252-255 are the vote sentinels (dead, skip, missed, none); everything below is a player
                     // with "Cannot Escape" a skip (253), a missed vote (254) and no vote (255) are redirected too
                     bool redirectable = orig < 252 || orig >= SkipPick && Escapeless();
-                    byte want = pick == NoPick || !redirectable ? orig : pick;
+                    // a pick on a player who died during the meeting (guessed) is void: TOR counts votes for
+                    // the dead, which could force a tie or an empty exile
+                    byte want = pick == NoPick || !redirectable || !Votable(pick) ? orig : pick;
                     if (area.VotedFor == want) return;
                     area.VotedFor = want;
                     UnknownsCollectionPlugin.Logger?.LogInfo($"[Hypnotist] vote of player {victimId} redirected: {orig} -> {want}.");
@@ -362,6 +391,13 @@ namespace UnknownsCollection {
         }
 
         private static readonly bool DiagVote = Environment.GetEnvironmentVariable("UC_DIAG_VOTE") is "1" or "timeout";
+        // Skip and the other sentinels are always fine; a player only while alive and connected.
+        private static bool Votable(byte target) {
+            if (target >= 252) return true;
+            var p = Helpers.playerById(target);
+            return p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
+        }
+
         private static bool Escapeless() => CannotEscape?.getBool() ?? true;
 
         // A victim who simply does not vote (User 2026-10-02): when the voting time runs out, the host
@@ -373,7 +409,7 @@ namespace UnknownsCollection {
             [HarmonyPriority(Priority.First)]
             public static void Prefix(MeetingHud __instance) {
                 try {
-                    if (!AmHost() || !HypnosisHolds() || !Escapeless() || pick == NoPick) return;
+                    if (!AmHost() || !HypnosisHolds() || !Escapeless() || pick == NoPick || !Votable(pick)) return;
                     foreach (var ps in __instance.playerStates) {
                         if (ps == null || ps.TargetPlayerId != victimId || ps.AmDead || ps.DidVote) continue;
                         try { ps.SetVote(pick); } catch { ps.VotedFor = pick; }   // DidVote derives from VotedFor

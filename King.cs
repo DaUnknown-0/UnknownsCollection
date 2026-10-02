@@ -186,8 +186,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host, random path - the draft path goes through MarkFromDraft) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
@@ -345,8 +345,8 @@ namespace UnknownsCollection {
 
         // ---- The royal death flash (our own VIP notice, everyone's client) ----
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
-        [HarmonyPriority(Priority.Low)]
         static class MurderPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
                     if (!active || !crownVip || king == null || target == null) return;

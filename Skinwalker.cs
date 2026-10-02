@@ -210,6 +210,28 @@ namespace UnknownsCollection {
             }
         }
 
+        // ---- The name tag: TOR rewrites every tag each frame ----
+        // setLook writes the victim's name once, but TOR's HudManager.Update postfix sets every tag back
+        // to the real name every frame (UpdatePatch.cs resetNameTagsAndColors; only its own Morphling is
+        // exempt). Without this the crew saw the victim's outfit with the Skinwalker's own name on it
+        // (Opus audit 2026-10-02). Same fix as the Werewolf's nameless beast: a later postfix on the
+        // same method writes the worn name, or nothing where TOR hides names.
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        static class NamePatch {
+            [HarmonyPriority(Priority.Low)]
+            public static void Postfix() {
+                try {
+                    if (!active || wornId == byte.MaxValue || skinwalker == null || LookBlocked()) return;
+                    if (MeetingHud.Instance != null) return;
+                    var v = Helpers.playerById(wornId);
+                    var tag = skinwalker.cosmetics != null ? skinwalker.cosmetics.nameText : null;
+                    if (v == null || v.Data == null || tag == null) return;
+                    string want = Helpers.hidePlayerName(PlayerControl.LocalPlayer, skinwalker) ? "" : v.Data.PlayerName;
+                    if (tag.text != want) tag.text = want;
+                } catch { }
+            }
+        }
+
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
         static class MeetingStartPatch {
             public static void Postfix() {
@@ -219,8 +241,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host, random path) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost() || active) return;
@@ -262,8 +284,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     var sprite = UCAssets.SkinwalkerIcon ?? Helpers.loadSpriteFromResources("TheOtherRoles.Resources.MorphButton.png", 115f);

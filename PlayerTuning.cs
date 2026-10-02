@@ -639,11 +639,12 @@ namespace UnknownsCollection {
         // treiben. Die Obergrenze ist der Wert VOR dem Tick, damit rollenabhaengig laengere
         // Cooldowns (Mini x2, BountyHunter-Zuschlag) nicht auf den Basiswert gekappt werden.
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.FixedUpdate))]
-        [HarmonyPriority(Priority.Low)]
         static class KillTimerRatePatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Prefix(PlayerControl __instance, out float __state)
                 => __state = __instance.killTimer;
 
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(PlayerControl __instance, float __state) {
                 try {
                     if (tunes.Count == 0) return;
@@ -749,8 +750,8 @@ namespace UnknownsCollection {
 
         // Der native Impostor-Vent-Button kommt vom RoleBehaviour, nicht von roleCanUseVents.
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(Priority.Low)]
         static class VentBanButtonPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     if (tunes.Count == 0) return;

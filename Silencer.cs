@@ -264,8 +264,8 @@ namespace UnknownsCollection {
         // Low priority so Tesla (normal) / Saboteur claim first; UCPromotion prevents collisions.
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -295,8 +295,8 @@ namespace UnknownsCollection {
         // SAME method TOR rebuilds them, so they can't be silently overwritten by an unpredictable
         // cross-MonoBehaviour Update() order (which is what happened with the old MeetingHud.Update marker).
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(Priority.Low)]
         static class HudUpdatePatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     bool nowMeeting = InMeeting();
@@ -406,8 +406,8 @@ namespace UnknownsCollection {
 
         // Block a muted local player from casting a vote (clicking a vote area).
         [HarmonyPatch(typeof(PlayerVoteArea), nameof(PlayerVoteArea.Select))]
-        [HarmonyPriority(Priority.High)]
         static class VoteSelectPatch {
+            [HarmonyPriority(Priority.High)]
             static bool Prefix() => !LocalIsSilenced();
         }
 
@@ -425,9 +425,9 @@ namespace UnknownsCollection {
         // player's skip attempt (including the host's own) since the check now runs where CastVote
         // actually executes with authority.
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CastVote))]
-        [HarmonyPriority(Priority.High)]
         static class SkipVotePatch {
             private const byte SkipVoteCandidateId = 253;
+            [HarmonyPriority(Priority.High)]
             static bool Prefix([HarmonyArgument(0)] byte srcPlayerId, [HarmonyArgument(1)] byte suspectIdx) {
                 if (suspectIdx != SkipVoteCandidateId) return true; // not a Skip vote — don't touch normal votes
                 if (CanStillSkip == null || CanStillSkip.getBool()) return true;
@@ -437,8 +437,8 @@ namespace UnknownsCollection {
 
         // Block a muted local player from chatting (during the meeting where they are muted).
         [HarmonyPatch(typeof(ChatController), nameof(ChatController.SendChat))]
-        [HarmonyPriority(Priority.High)]
         static class SendChatPatch {
+            [HarmonyPriority(Priority.High)]
             static bool Prefix(ChatController __instance) {
                 if (!LocalIsSilenced() || !InMeeting()) return true;
                 try { __instance.freeChatField?.Clear(); __instance.quickChatMenu?.Clear(); } catch { }
@@ -452,8 +452,8 @@ namespace UnknownsCollection {
         private static TheOtherRoles.Objects.CustomButton silenceButton;
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     var sprite = UCAssets.SilencerIcon

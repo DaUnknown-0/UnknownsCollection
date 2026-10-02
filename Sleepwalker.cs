@@ -207,8 +207,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host; the modifier has no draft entry) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
@@ -251,8 +251,8 @@ namespace UnknownsCollection {
         // The exiled player of THIS meeting is not dead yet at Begin (TOR marks him in WrapUp), so he is
         // excluded by id: a Sleepwalker who just got voted out does not get a wake-up position.
         [HarmonyPatch(typeof(ExileController), nameof(ExileController.BeginForGameplay))]
-        [HarmonyPriority(Priority.Low)]
         static class ExileBeginPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(ExileController __instance) {
                 try {
                     if (!AmHost() || !active) return;
@@ -587,8 +587,8 @@ namespace UnknownsCollection {
         // ---- The snap (carrier's own client) ----
         // Priority.Last: after vanilla's own spawn AND after TOR's WrapUpPostfix (Anti-Teleport etc.).
         [HarmonyPatch(typeof(ExileController), nameof(ExileController.WrapUp))]
-        [HarmonyPriority(Priority.Last)]
         static class ExileWrapUpPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix() {
                 try {
                     if (!wakeArmed || !IsLocalSleepwalker()) return;
@@ -601,8 +601,8 @@ namespace UnknownsCollection {
 
         // The Airship overrides WrapUp with its own WrapUpAndSpawn (TOR patches both as well).
         [HarmonyPatch(typeof(AirshipExileController), nameof(AirshipExileController.WrapUpAndSpawn))]
-        [HarmonyPriority(Priority.Last)]
         static class AirshipWrapUpPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix() {
                 try {
                     if (!wakeArmed || !IsLocalSleepwalker()) return;

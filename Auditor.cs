@@ -656,8 +656,8 @@ namespace UnknownsCollection {
         // the hook that sends the revert request. Playtest symptom 2026-08-15: "der Auditor kann
         // die Task machen, aber der Crewmate verliert sie nicht".
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.RpcCompleteTask))]
-        [HarmonyPriority(Priority.First)]
         static class SuppressSyntheticCompletePatch {
+            [HarmonyPriority(Priority.First)]
             public static bool Prefix(PlayerControl __instance, [HarmonyArgument(0)] uint idx) {
                 try {
                     if (idx < SyntheticIdBase) return true;
@@ -811,11 +811,12 @@ namespace UnknownsCollection {
         // multiplier) - a SetKillTimer prefix would fight TOR's own clamp and re-trigger every tick.
         // ====================================================================
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.FixedUpdate))]
-        [HarmonyPriority(Priority.Low)]
         static class KillTimerRatePatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Prefix(PlayerControl __instance, out float __state)
                 => __state = __instance.killTimer;
 
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(PlayerControl __instance, float __state) {
                 try {
                     if (!active || auditor == null) return;
@@ -833,8 +834,8 @@ namespace UnknownsCollection {
         // Spawn pick (host) + resets
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;

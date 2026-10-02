@@ -205,8 +205,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -230,8 +230,8 @@ namespace UnknownsCollection {
         // ---- Button ----
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     float duration = Duration?.getFloat() ?? 12f;
@@ -257,7 +257,6 @@ namespace UnknownsCollection {
         // ---- ADMIN fake: our prefix runs BEFORE TOR's full reimplementation (Priority.First) ----
 
         [HarmonyPatch(typeof(MapCountOverlay), nameof(MapCountOverlay.Update))]
-        [HarmonyPriority(Priority.First)]
         static class FakeAdminPatch {
             // Own draw cadence. We must NOT share __instance.timer with TOR: under HarmonyX ALL
             // prefixes run even after one returned false (false only skips the ORIGINAL method),
@@ -267,6 +266,7 @@ namespace UnknownsCollection {
             // __instance.timer to 0 while faking, which starves TOR's throttle so it never
             // draws, and run our fake on this private timer.
             private static float drawTimer = 1f; // starts above 0.1s -> first fake frame draws
+            [HarmonyPriority(Priority.First)]
             public static bool Prefix(MapCountOverlay __instance) {
                 try {
                     if (!IsFaking() || !(FakeAdmin?.getBool() ?? true)) return true;

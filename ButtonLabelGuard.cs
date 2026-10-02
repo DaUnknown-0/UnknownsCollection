@@ -41,8 +41,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(CustomButton), nameof(CustomButton.Update))]
-        [HarmonyPriority(Priority.First)]
         static class PreparePatch {
+            [HarmonyPriority(Priority.First)]
             public static void Prefix(CustomButton __instance) {
                 try {
                     if (DiagOff) return;
@@ -60,8 +60,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(CustomButton), nameof(CustomButton.Update))]
-        [HarmonyPriority(Priority.Last)]
         static class UpdatePatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(CustomButton __instance) {
                 try {
                     var b = __instance;
@@ -76,6 +76,7 @@ namespace UnknownsCollection {
                 } catch { }
             }
 
+            [HarmonyPriority(Priority.Last)]
             public static Exception Finalizer(CustomButton __instance, Exception __exception) {
                 if (__exception == null) return null;
                 try {

@@ -223,8 +223,8 @@ namespace UnknownsCollection {
 
         // ---- Pick (host; the modifier has no draft entry) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;
@@ -519,8 +519,8 @@ namespace UnknownsCollection {
         // SetName of that bubble. Priority.Last so TOR's own SetName postfix (impostor-red names for
         // the Spy etc.) cannot recolour ours afterwards.
         [HarmonyPatch(typeof(ChatBubble), nameof(ChatBubble.SetName))]
-        [HarmonyPriority(Priority.Last)]
         static class BubbleNamePatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(ChatBubble __instance) {
                 try {
                     if (__instance == null) return;

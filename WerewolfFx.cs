@@ -219,8 +219,8 @@ namespace UnknownsCollection {
         // The name comes back on its own: the moment lookPhase returns to None (revert, meeting, death,
         // reset) this postfix stops touching the tag and TOR's own line writes the real name again.
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(Priority.Low)]
         private static class WolfNameHidePatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (lookPhase == LookPhase.None || lookOwner == null || lookOwner.cosmetics == null) return;
@@ -270,8 +270,8 @@ namespace UnknownsCollection {
         // back down by the same factor (the Mini precedent, just inverted), so the beast LOOKS half a
         // player taller but collides and gets targeted exactly like the human underneath.
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.FixedUpdate))]
-        [HarmonyPriority(Priority.Low)]
         static class WolfSizePatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(PlayerControl __instance) {
                 try {
                     if (lookPhase != LookPhase.Wolf || lookOwner == null || __instance == null) return;
@@ -501,8 +501,8 @@ namespace UnknownsCollection {
             || reason == (int)GameOverReason.ImpostorDisconnect;
 
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
-        [HarmonyPriority(Priority.Last)]   // after TOR rebuilt the podium and its bonus line
         static class VictoryScenePatch {
+            [HarmonyPriority(Priority.Last)]  // after TOR rebuilt the podium and its bonus line
             public static void Postfix(EndGameManager __instance) {
                 try {
                     if (__instance == null) return;

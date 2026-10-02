@@ -883,7 +883,8 @@ namespace UnknownsCollection {
                     if (state == null) continue;
                     if (gambler != null && state.TargetPlayerId == gambler.PlayerId) continue; // his own vote never counts
                     byte votedFor = state.VotedFor;
-                    if (votedFor == byte.MaxValue || votedFor == 254) continue;                // no vote cast
+                    // 252 = could not vote (dead, or muted by the Silencer): not a voter (Opus audit 2026-10-02)
+                    if (votedFor == byte.MaxValue || votedFor == 254 || votedFor == 252) continue;   // no vote cast
                     anyVoteCast = true;
                     voters++;
                     if (votedFor == SkipVote) continue;                                        // skip is not a target
@@ -1130,8 +1131,8 @@ namespace UnknownsCollection {
         // Open bets die with him - settling them afterwards would pay a dead man and, worse, tell the
         // living nothing they could act on.
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
-        [HarmonyPriority(Priority.Low)]
         static class GamblerDeathPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix([HarmonyArgument(0)] PlayerControl target) {
                 try {
                     if (!active || gambler == null || target == null) return;
@@ -1145,8 +1146,8 @@ namespace UnknownsCollection {
         // Spawn pick (host) + resets
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (!AmHost()) return;

@@ -130,8 +130,8 @@ namespace UnknownsCollection {
         // Single dispatcher. Runs BEFORE TOR's own HandleRpc handler (Priority.High) and always
         // consumes callId 230 - the channel belongs to us, nobody else may parse it.
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
-        [HarmonyPriority(Priority.High)]
         static class HandleRpcPatch {
+            [HarmonyPriority(Priority.High)]
             public static bool Prefix(PlayerControl __instance, byte callId, MessageReader reader) {
                 if (callId != CallId) return true;
                 try {

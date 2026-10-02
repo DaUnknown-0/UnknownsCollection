@@ -510,8 +510,8 @@ namespace UnknownsCollection {
         // ---- Kill interception: a kill on the manifest poofs it (no body), refund per option ----
 
         [HarmonyPatch(typeof(KillButton), nameof(KillButton.DoClick))]
-        [HarmonyPriority(Priority.High)]
         static class KillButtonDoClickPatch {
+            [HarmonyPriority(Priority.High)]
             public static bool Prefix(KillButton __instance) {
                 try {
                     if (!IsManifested || Poltergeist.poltergeist == null) return true;

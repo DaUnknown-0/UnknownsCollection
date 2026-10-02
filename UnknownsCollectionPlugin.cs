@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.8.4";
+    public const string PluginVersion = "1.2.8.5";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -472,7 +472,6 @@ public class UnknownsCollectionPlugin : BasePlugin
     // PingTracker version line (top corner). Uses the shared vX.Y.Z(.W) formatter so a CI test build
     // (vX.Y.Z.W tag) shows its test number when the shared toggle is on, and a stable build shows vX.Y.Z.
     [HarmonyPatch(typeof(PingTracker), nameof(PingTracker.Update))]
-    [HarmonyPriority(Priority.Low)] // after TOR's own PingTracker postfix
     public static class VersionDisplayPatch
     {
         // The mod name, localized - the click-driven letter-decode animation this line used to play
@@ -489,6 +488,7 @@ public class UnknownsCollectionPlugin : BasePlugin
         private static string cachedLine;
         private static string cachedForName;
 
+        [HarmonyPriority(Priority.Low)]  // after TOR's own PingTracker postfix
         public static void Postfix(PingTracker __instance)
         {
             if (__instance == null || __instance.text == null) return;

@@ -434,8 +434,8 @@ namespace UnknownsCollection {
         // Both death paths, exactly as the spec asks. Postfixes: at this point the victim's
         // Data.IsDead is already set, so IsLastImpostor() sees the new board.
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
-        [HarmonyPriority(Priority.Low)]
         static class MurderTriggerPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix([HarmonyArgument(0)] PlayerControl target) {
                 try {
                     if (active && hunter != null && target != null && target.PlayerId == hunter.PlayerId)
@@ -448,8 +448,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.Exiled))]
-        [HarmonyPriority(Priority.Low)]
         static class ExileTriggerPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(PlayerControl __instance) {
                 try {
                     if (active && hunter != null && __instance != null && __instance.PlayerId == hunter.PlayerId)
@@ -465,8 +465,8 @@ namespace UnknownsCollection {
         // Button
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)] // after TOR's own HudManagerStartPatch created its buttons
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]  // after TOR's own HudManagerStartPatch created its buttons
             public static void Postfix(HudManager __instance) {
                 try {
                     WrapSheriffButton();
@@ -649,8 +649,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
-        [HarmonyPriority(Priority.First)] // before UCGuesser touches allRoleInfos again
         static class MeetingClosePatch {
+            [HarmonyPriority(Priority.First)]  // before UCGuesser touches allRoleInfos again
             public static void Postfix() {
                 RestoreRoleInfos();
                 nextSkinTry = 0f;            // let the driver re-dress the hunter immediately

@@ -230,8 +230,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -351,8 +351,8 @@ namespace UnknownsCollection {
         // Arms the end-screen restore. Priority.First so this runs before every other prefix on
         // OnGameEnd, including TrackerExport's snapshot in another assembly.
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.First)]
         static class EndScreenArmPatch {
+            [HarmonyPriority(Priority.First)]
             public static void Prefix() => endScreenActive = true;
         }
 

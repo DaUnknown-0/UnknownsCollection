@@ -407,8 +407,8 @@ namespace UnknownsCollection {
         // "?" button (created once per HUD)
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     panel = null; // stale references from the previous HUD (its objects died with it)
@@ -1830,8 +1830,8 @@ namespace UnknownsCollection {
         // Per-frame: visibility gate + manual hover/click resolution.
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(Priority.Low)]
         static class HudUpdatePatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     if (button == null) return;

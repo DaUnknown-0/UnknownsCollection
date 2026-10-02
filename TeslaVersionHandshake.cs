@@ -85,8 +85,17 @@ namespace UnknownsCollection {
                    (Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0) ||
                    // No Hunter entry on purpose: he has no spawn rate of his own, he is an event
                    // inside a Werewolf round and therefore already covered by the Werewolf check.
-                   (Pelican.SpawnRate != null && Pelican.SpawnRate.getSelection() > 0);
+                   (Pelican.SpawnRate != null && Pelican.SpawnRate.getSelection() > 0) ||
+                   // Everything added after the Pelican gates its pick on EveryoneHasMod() as well, so it
+                   // must drive the warning and the start block too; otherwise a lobby with only these
+                   // enabled started without a word and they never spawned (Opus audit 2026-10-02).
+                   On(Auditor.SpawnRate) || On(Necromancer.SpawnRate) || On(Stalker.SpawnRate) || On(King.SpawnRate) ||
+                   On(Paramedic.SpawnRate) || On(Surveyor.SpawnRate) || On(Hypnotist.SpawnRate) || On(Skinwalker.SpawnRate) ||
+                   On(Gambler.SpawnRate) || On(VoidModifier.SpawnRate) || On(Sleepwalker.SpawnRate) || On(LastWords.SpawnRate) ||
+                   On(SixthSense.SpawnRate) || On(Colorblind.SpawnRate) || On(Giant.SpawnRate);
         }
+
+        private static bool On(TheOtherRoles.CustomOption o) => o != null && o.getSelection() > 0;
 
         // Receiver registration for the shared UC channel. Called once from
         // UnknownsCollectionPlugin.Load() - this module has no TryPatch (all its patches are
@@ -248,11 +257,11 @@ namespace UnknownsCollection {
         // Share once per lobby; (host-only) warn on TOR's GameStartText when any UC role is ON
         // but someone is missing the mod - these roles then will NOT spawn/start (gated on EveryoneHasMod()).
         [HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.Update))]
-        [HarmonyPriority(Priority.Low)]
         static class GameStartManagerUpdatePatch {
             private static float nextWarnCheck;
             private static bool warnNeeded;
 
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(GameStartManager __instance) {
                 if (PlayerControl.LocalPlayer != null && !versionSent) { versionSent = true; ShareVersion(); }
                 if (AmongUsClient.Instance == null) return;

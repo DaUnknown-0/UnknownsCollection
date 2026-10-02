@@ -282,8 +282,8 @@ namespace UnknownsCollection {
         // Game start: host picks the Illusionist among plain Impostors and broadcasts it.
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -338,8 +338,8 @@ namespace UnknownsCollection {
         // Kill interaction: a kill aimed at the clone (closer than any real target) is blocked + flashed.
         // ====================================================================
         [HarmonyPatch(typeof(KillButton), nameof(KillButton.DoClick))]
-        [HarmonyPriority(Priority.High)]
         static class KillButtonDoClickPatch {
+            [HarmonyPriority(Priority.High)]
             public static bool Prefix(KillButton __instance) {
                 try {
                     if (!active || !IllusionistClone.IsActive()) return true;
@@ -415,8 +415,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     // Own icons (UCAssets); TOR sprites only as fallback if a resource is missing.

@@ -342,8 +342,8 @@ namespace UnknownsCollection {
         // ---- Pick + relic spawn (host) ----
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPickPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -386,8 +386,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.VeryLow)]
         static class IntroEndRelicsPatch {
+            [HarmonyPriority(Priority.VeryLow)]
             public static void Postfix() => EnsureRelicsSpawned();
         }
 
@@ -502,8 +502,8 @@ namespace UnknownsCollection {
         private const float CollectRange = 2.0f;
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     collectButton = new TheOtherRoles.Objects.CustomButton(
@@ -641,10 +641,10 @@ namespace UnknownsCollection {
             (WinMode?.getSelection() ?? 0) == 1 && active && HasAllRelics() && IsAlive(collector);
 
         [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
-        [HarmonyPriority(Priority.High)] // ahead of Bug's Priority.Low - belt and braces on top of
                                          // the explicit stand-down in Bug.RpcEndGameHijackPatch.
         static class RpcEndGameHijackPatch {
             private const int TeamJackalWinReason = 11; // see Bug.cs
+            [HarmonyPriority(Priority.High)]  // ahead of Bug's Priority.Low - belt and braces on top of
             public static void Prefix(ref GameOverReason endReason) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -680,14 +680,15 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.Last)]
         static class OnGameEndPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Prefix() {
                 // Always reassign (Bug.cs precedent): without the else branch a stale id from an
                 // earlier round would survive into a round that has no Collector.
                 winnerCollectorId = (active && collectorPlayerId != byte.MaxValue) ? collectorPlayerId : byte.MaxValue;
             }
 
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(AmongUsClient __instance, [HarmonyArgument(0)] ref EndGameResult endGameResult) {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != CollectorWinReason) return;
@@ -707,8 +708,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
-        [HarmonyPriority(Priority.Last)]
         static class EndGameFxPatch {
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix(EndGameManager __instance) {
                 try {
                     if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != CollectorWinReason) return;

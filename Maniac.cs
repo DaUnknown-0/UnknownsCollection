@@ -516,8 +516,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -653,8 +653,8 @@ namespace UnknownsCollection {
 
         // Per-frame: show the PASS button to the bomb carrier, and outline for the Maniac's target
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(Priority.Low)]
         static class HudVisualPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     UpdateTargeting();
@@ -769,8 +769,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     // Own icons (UCAssets); TOR sprites only as fallback if a resource is missing.

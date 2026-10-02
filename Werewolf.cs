@@ -714,8 +714,8 @@ namespace UnknownsCollection {
         public static bool HadWerewolfThisRound { get; private set; }
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
-        [HarmonyPriority(Priority.First)]
         static class GameEndSnapshotPatch {
+            [HarmonyPriority(Priority.First)]
             public static void Prefix() {
                 try { HadWerewolfThisRound = active && werewolf != null; } catch { }
             }
@@ -725,8 +725,8 @@ namespace UnknownsCollection {
         // Game start: host-authoritative pick
         // ====================================================================
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
@@ -754,8 +754,8 @@ namespace UnknownsCollection {
         // Button
         // ====================================================================
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     var sprite = UCAssets.WerewolfTransformIcon
@@ -1240,7 +1240,6 @@ namespace UnknownsCollection {
         // Kills: cooldown reduction + blood ring + death of the beast
         // ====================================================================
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
-        [HarmonyPriority(Priority.Low)] // last postfix: TOR sets its own kill timers before us
         static class MurderPatch {
             // "Wolf Form Ignores Bait": the transformation is a loud, timed window, and losing it to
             // the one Bait the wolf happened to run into ends the whole ability before it starts.
@@ -1267,6 +1266,7 @@ namespace UnknownsCollection {
                 }
             }
 
+            [HarmonyPriority(Priority.Low)]  // last postfix: TOR sets its own kill timers before us
             public static void Prefix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 flashSuppressed = false;
                 try {
@@ -1278,12 +1278,14 @@ namespace UnknownsCollection {
 
             // Runs even when the original or another patch throws - Bait.showKillFlash is a global
             // TOR setting and must never stay off for everyone else.
+            [HarmonyPriority(Priority.Low)]  // last postfix: TOR sets its own kill timers before us
             public static void Finalizer() {
                 if (!flashSuppressed) return;
                 flashSuppressed = false;
                 try { Bait.showKillFlash = true; } catch { }
             }
 
+            [HarmonyPriority(Priority.Low)]  // last postfix: TOR sets its own kill timers before us
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
                     if (SuppressBaitFor(__instance, target)) DropQueuedBaitReport(target);

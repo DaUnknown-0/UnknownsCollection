@@ -210,8 +210,8 @@ namespace UnknownsCollection {
         }
 
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
-        [HarmonyPriority(HarmonyLib.Priority.Low)]
         static class IntroEndPatch {
+            [HarmonyPriority(HarmonyLib.Priority.Low)]
             public static void Postfix() {
                 try {
                     // Same anchor the Pelican uses for its host-authoritative pick: by the time the
@@ -232,8 +232,8 @@ namespace UnknownsCollection {
         // same frame - a Request that arrives after the arbitration tick would take effect one frame
         // late, which is audible exactly where it must not be (the +2.0 s downbeat, the finale cut).
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
-        [HarmonyPriority(HarmonyLib.Priority.High)]
         static class HudUpdatePatch {
+            [HarmonyPriority(HarmonyLib.Priority.High)]
             public static void Postfix() {
                 try { Tick(); } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[ReactorMusic] tick failed: {e}");

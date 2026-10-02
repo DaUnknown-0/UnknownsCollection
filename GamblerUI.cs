@@ -406,8 +406,8 @@ namespace UnknownsCollection {
 
         // ---- button ----
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
-        [HarmonyPriority(Priority.Low)]
         static class HudStartPatch {
+            [HarmonyPriority(Priority.Low)]
             public static void Postfix(HudManager __instance) {
                 try {
                     // Never gate core logic on button references, and never null statics here:

@@ -75,15 +75,26 @@ namespace UnknownsCollection {
                             m?.Invoke(null, new object[] { lp.PlayerId, true });
                             UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] faction -> Impostor ({(m != null ? "done" : "method missing")}).");
                         }
+                        // the victim view, with its darkness mask: the first dummy is hypnotised
+                        foreach (var p in PlayerControl.AllPlayerControls.ToArray())
+                            if (p != null && p.PlayerId != lp.PlayerId && p.Data != null && !p.Data.IsDead) { Hypnotist.DiagHypnotize(p.PlayerId); break; }
+                        HypnotistView.DiagForce = true;
                         at = Time.realtimeSinceStartup + 4f;
                     } else if (stage == 2) {
                         stage = 3;
                         LogButtons("4 s after faction");
                         string shot = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "UC_ideas_diag.png");
                         ScreenCapture.CaptureScreenshot(shot);
-                        at = Time.realtimeSinceStartup + 1f;
+                        // then the lights go out: the victim's view has to shrink like a crewmate's
+                        try { ShipStatus.Instance.RpcUpdateSystem(SystemTypes.Sabotage, (byte)SystemTypes.Electrical); } catch { }
+                        at = Time.realtimeSinceStartup + 6f;
                     } else if (stage == 3) {
+                        stage = 5;
+                        ScreenCapture.CaptureScreenshot(System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "UC_ideas_diag_dark.png"));
+                        at = Time.realtimeSinceStartup + 1f;
+                    } else if (stage == 5) {
                         stage = 4;
+                        HypnotistView.DiagForce = false;
                         UnknownsCollectionPlugin.Logger?.LogInfo(
                             $"[IdeasPackDiag] diag: done, scale {lp.transform.localScale.x:F2}, screenshot -> {System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "UC_ideas_diag.png")}");
                     }

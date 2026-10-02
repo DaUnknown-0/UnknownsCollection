@@ -162,6 +162,7 @@ namespace UnknownsCollection {
             SetEntry(King.KingInfo(),         add && KingGuessable(),       RoleInfo.crewmate);
             SetEntry(Paramedic.ParamedicInfo(), add && Guessable(Paramedic.SpawnRate), RoleInfo.crewmate);
             SetEntry(Surveyor.SurveyorInfo(),   add && Guessable(Surveyor.SpawnRate),  RoleInfo.crewmate);
+            SetEntry(Mixer.MixerInfo(),         add && Guessable(Mixer.SpawnRate),     RoleInfo.crewmate);
             SyncSnitchHide(add);
         }
 

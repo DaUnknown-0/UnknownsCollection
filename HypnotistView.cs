@@ -11,9 +11,12 @@
  *  - Until The Meeting: the view stays open as long as the hypnosis holds.
  *
  * The view is a small round picture in the lower left, like a security camera that follows the
- * victim: a second camera renders the area around the victim into a texture. Its radius is the
- * victim's own light radius (lights sabotage and vision options included), so the Hypnotist never
- * sees further than the victim would. Walls do not block it, exactly like vanilla security cameras.
+ * victim: a second camera renders the area around the victim into a texture. The frame is the
+ * crew's normal (lights on) vision, so it does not zoom in when the lights go out. On top lies a
+ * darkness mask cut exactly like the victim's own light (User 2026-10-02: he should see only what
+ * the victim could see): the victim's light radius (lights sabotage, Trickster, vision options
+ * included, through ShipStatus.CalculateLightRadius) and rays against Constants.ShadowMask, the
+ * mask the game's light uses, so walls and closed doors hide what lies behind them.
  * Roles are not shown: the picture is the plain world, names and colours as everybody sees them.
  *
  * The camera comes from the map's surveillance minigame prefab where there is one (a camera built
@@ -23,6 +26,7 @@
  */
 
 using System;
+using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.UI;
@@ -40,6 +44,19 @@ namespace UnknownsCollection {
         private static TMPro.TextMeshProUGUI caption;
         private static Sprite circle;
         private static bool cameraLogged;
+
+        // darkness mask: one ray per Rays-th of a turn, painted into a small texture over the picture
+        // The game's light, measured 2026-10-02 against freeplay screenshots on the Skeld (radius 5 and 1):
+        // it ends exactly at CalculateLightRadius (world units), its brightness falls LINEARLY from the
+        // source to that edge, and unlit floor keeps about 23 % of its lit brightness. The source sits
+        // 0.1 below the player's position.
+        private const int Rays = 180, MaskPx = 128;
+        private const float Dark = 0.77f, Edge = 0.15f, WallBias = 0.2f;
+        private static readonly Vector2 LightOffset = new Vector2(0f, -0.1f);
+        private static readonly float[] rayLen = new float[Rays];
+        private static Texture2D maskTex;
+        private static Color32[] maskPx;
+        private static float nextMask;
 
         /// <summary>IdeasPackDiag: behave as "Until The Meeting" without touching the saved option.</summary>
         internal static bool DiagForce;
@@ -82,14 +99,23 @@ namespace UnknownsCollection {
                     bool show = victim != null && (mode == 2 || (mode == 1 && peekButton != null && peekButton.isEffectActive));
                     if (!show) { Hide(); return; }
                     if (!Ensure()) return;
-                    float radius = 3f;
-                    try { radius = ShipStatus.Instance.CalculateLightRadius(victim.Data); } catch { }
-                    radius = Mathf.Clamp(radius, 0.5f, 8f);
+                    float radius = 3f, frame = 3f;
+                    try {
+                        var ship = ShipStatus.Instance;
+                        radius = ship.CalculateLightRadius(victim.Data);
+                        frame = ship.MaxLightRadius * GameOptionsManager.Instance.currentNormalGameOptions.CrewLightMod;
+                    } catch { }
+                    radius = Mathf.Clamp(radius, 0.05f, 8f);
+                    frame = Mathf.Clamp(Mathf.Max(frame, radius) * 1.1f, 0.5f, 8.8f);
                     var main = Camera.main;
                     Vector2 at = victim.transform.position;
                     cam.transform.position = new Vector3(at.x, at.y, main != null ? main.transform.position.z : -10f);
-                    cam.orthographicSize = radius;
-                    if (!cam.enabled) cam.enabled = true;
+                    cam.orthographicSize = frame;
+                    if (Time.unscaledTime >= nextMask) {
+                        nextMask = Time.unscaledTime + 0.05f;
+                        PaintMask(at, radius, frame);
+                        RenderAsVictim(victim, at + LightOffset, radius);
+                    }
                     if (!overlay.activeSelf) overlay.SetActive(true);
                     string name = victim.Data?.PlayerName ?? "";
                     if (caption != null && caption.text != name) caption.text = name;
@@ -98,6 +124,39 @@ namespace UnknownsCollection {
                     Hide();
                 }
             }
+        }
+
+        // The game hides every player and body outside one's light completely; the dimmed map stays.
+        // The camera therefore renders by hand (20 per second, with the mask) and switches the
+        // renderers of whatever the victim cannot see off for exactly that one render.
+        private static readonly List<Renderer> hiddenForShot = new List<Renderer>();
+
+        private static void RenderAsVictim(PlayerControl victim, Vector2 eye, float radius) {
+            hiddenForShot.Clear();
+            try {
+                foreach (var p in PlayerControl.AllPlayerControls.ToArray()) {
+                    if (p == null || p == victim || p.Data == null || p.Data.IsDead) continue;
+                    if (CanSee(eye, radius, p.transform.position)) continue;
+                    HideRenderers(p.gameObject);
+                }
+                foreach (var b in UnityEngine.Object.FindObjectsOfType<DeadBody>())
+                    if (b != null && !CanSee(eye, radius, b.TruePosition)) HideRenderers(b.gameObject);
+                cam.Render();
+            } finally {
+                foreach (var r in hiddenForShot) if (r != null) r.enabled = true;
+                hiddenForShot.Clear();
+            }
+        }
+
+        private static void HideRenderers(GameObject go) {
+            foreach (var r in go.GetComponentsInChildren<Renderer>())
+                if (r != null && r.enabled) { r.enabled = false; hiddenForShot.Add(r); }
+        }
+
+        private static bool CanSee(Vector2 eye, float r, Vector2 target) {
+            float reach = r + 0.25f;    // half a body: an edge already shows
+            if ((target - eye).sqrMagnitude > reach * reach) return false;
+            return !PhysicsHelpers.AnythingBetween(eye, target, Constants.ShadowMask, false);
         }
 
         private static void Hide() {
@@ -164,6 +223,14 @@ namespace UnknownsCollection {
             raw.texture = rt;
             raw.raycastTarget = false;
 
+            var dark = new GameObject("Darkness");
+            dark.transform.SetParent(mask.transform, false);
+            var drt = dark.AddComponent<RectTransform>();
+            drt.anchorMin = Vector2.zero; drt.anchorMax = Vector2.one; drt.sizeDelta = Vector2.zero;
+            var draw = dark.AddComponent<RawImage>();
+            draw.texture = MaskTexture();
+            draw.raycastTarget = false;
+
             var lgo = new GameObject("Caption");
             lgo.transform.SetParent(ring.transform, false);
             var lrt = lgo.AddComponent<RectTransform>();
@@ -178,6 +245,44 @@ namespace UnknownsCollection {
             caption.alignment = TMPro.TextAlignmentOptions.Center;
             caption.raycastTarget = false;
             overlay.SetActive(false);
+        }
+
+        private static Texture2D MaskTexture() {
+            if (maskTex != null) return maskTex;
+            maskTex = new Texture2D(MaskPx, MaskPx, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp, filterMode = FilterMode.Bilinear };
+            maskTex.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            maskPx = new Color32[MaskPx * MaskPx];
+            return maskTex;
+        }
+
+        // The victim's light: Rays rays against the light's own shadow mask, then every texel of the
+        // frame is dark unless it lies within the radius AND in front of the wall in its direction.
+        // A wall's own face stays lit (WallBias), as with the game's light.
+        private static void PaintMask(Vector2 centre, float radius, float frame) {
+            if (MaskTexture() == null) return;
+            Vector2 eye = centre + LightOffset;
+            int mask = Constants.ShadowMask;
+            for (int k = 0; k < Rays; k++) {
+                float a = k * Mathf.PI * 2f / Rays;
+                var dir = new Vector2(Mathf.Cos(a), Mathf.Sin(a));
+                var hit = Physics2D.Raycast(eye, dir, radius, mask);
+                rayLen[k] = hit.collider != null ? Mathf.Min(radius, hit.distance + WallBias) : radius;
+            }
+            float half = MaskPx / 2f, unit = frame / half, rr = Mathf.Max(0.05f, radius);
+            for (int y = 0; y < MaskPx; y++) {
+                for (int x = 0; x < MaskPx; x++) {
+                    float dx = (x + 0.5f - half) * unit - LightOffset.x, dy = (y + 0.5f - half) * unit - LightOffset.y;
+                    float d = Mathf.Sqrt(dx * dx + dy * dy);
+                    float f = (Mathf.Atan2(dy, dx) / (Mathf.PI * 2f) + 1f) % 1f * Rays;
+                    int k0 = (int)f % Rays, k1 = (k0 + 1) % Rays;
+                    float limit = Mathf.Lerp(rayLen[k0], rayLen[k1], f - Mathf.Floor(f));
+                    float lit = Mathf.Clamp01((limit - d) / Edge);
+                    float a = Dark * Mathf.Lerp(1f, Mathf.Clamp01(d / rr), lit);    // linear falloff inside
+                    maskPx[y * MaskPx + x] = new Color32(0, 0, 0, (byte)(a * 255f));
+                }
+            }
+            maskTex.SetPixels32(maskPx);
+            maskTex.Apply(false, false);
         }
 
         private static GameObject Disc(GameObject parent, Vector2 pos, float size, Color color, bool centred = false) {

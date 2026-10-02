@@ -92,7 +92,7 @@ namespace UnknownsCollection {
                    On(Auditor.SpawnRate) || On(Necromancer.SpawnRate) || On(Stalker.SpawnRate) || On(King.SpawnRate) ||
                    On(Paramedic.SpawnRate) || On(Surveyor.SpawnRate) || On(Hypnotist.SpawnRate) || On(Skinwalker.SpawnRate) ||
                    On(Gambler.SpawnRate) || On(VoidModifier.SpawnRate) || On(Sleepwalker.SpawnRate) || On(LastWords.SpawnRate) ||
-                   On(SixthSense.SpawnRate) || On(Colorblind.SpawnRate) || On(Giant.SpawnRate);
+                   On(SixthSense.SpawnRate) || On(Colorblind.SpawnRate) || On(Giant.SpawnRate) || On(Mixer.SpawnRate);
         }
 
         private static bool On(TheOtherRoles.CustomOption o) => o != null && o.getSelection() > 0;

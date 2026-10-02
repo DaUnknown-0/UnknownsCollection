@@ -244,7 +244,7 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] SendExplode failed: {e}"); }
         }
 
-        private static void SendClear() {
+        internal static void SendClear() {        // internal: the Mixer clears a mixed-away Maniac's bomb
             try {
                 var w = BeginRpc(SubClear);
                 AmongUsClient.Instance.FinishRpcImmediately(w);

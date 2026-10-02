@@ -86,6 +86,7 @@ namespace UnknownsCollection {
                 Add(table, "Hypnotist",   Hypnotist.Color,   Hypnotist.SpawnRate);
                 Add(table, "Skinwalker",  Skinwalker.Color,  Skinwalker.SpawnRate);
                 Add(table, "Giant",       Giant.Color,       Giant.SpawnRate);
+                Add(table, "Mixer",       Mixer.Color,       Mixer.SpawnRate);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[UCOptionColors] published {table.Count} option colour entries.");

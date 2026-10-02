@@ -76,6 +76,7 @@ namespace UnknownsCollection {
                 E("King", Faction.Crew, () => King.Color, () => King.SpawnRate, "uc.help.king"),
                 E("Paramedic", Faction.Crew, () => Paramedic.Color, () => Paramedic.SpawnRate, "uc.help.paramedic"),
                 E("Surveyor", Faction.Crew, () => Surveyor.Color, () => Surveyor.SpawnRate, "uc.help.surveyor"),
+                E("Mixer", Faction.Crew, () => Mixer.Color, () => Mixer.SpawnRate, "uc.help.mixer"),
                 // The Hunter has no spawn rate of his own (he is the Sheriff's endgame inside a
                 // Werewolf round), so his visibility gate is borrowed: the WEREWOLF rate decides
                 // whether he can exist at all, and returning null while option 1502 is off makes the

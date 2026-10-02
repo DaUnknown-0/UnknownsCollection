@@ -297,6 +297,9 @@ namespace UnknownsCollection {
 
         private static readonly HashSet<string> ModifierClasses = new HashSet<string> { "Mini", "Tiebreaker", "Armored", "Shifter" };
 
+        /// <summary>The scrub on this client only (the Mixer sends its own message to every client).</summary>
+        internal static void ScrubTorRolesLocal(byte pid) => ApplyScrubTorRoles(pid);
+
         private static void ApplyScrubTorRoles(byte pid) {
             try {
                 var target = Helpers.playerById(pid);

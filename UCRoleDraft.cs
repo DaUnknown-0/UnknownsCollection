@@ -65,6 +65,7 @@ namespace UnknownsCollection {
         public const byte SurveyorDraftId = 223;
         public const byte HypnotistDraftId = 224;
         public const byte SkinwalkerDraftId = 225;
+        public const byte MixerDraftId = 226;
         // NO Void entry: the Void is a MODIFIER (rides on top of a drafted role), like the Gambler.
         // NO Hunter entry, deliberately: the Hunter is not a rolled role at all. He is an EVENT inside
         // a Werewolf round - the living original Sheriff is promoted the moment the beast is the last
@@ -144,6 +145,8 @@ namespace UnknownsCollection {
                      true,  () => Hypnotist.SpawnRate,  () => Hypnotist.SpawnMinPlayers,  Hypnotist.MarkFromDraft),
                 Make(SkinwalkerDraftId,  "Skinwalker",  Palette.ImpostorRed, "Wear your victim's skin and walk among them",
                      true,  () => Skinwalker.SpawnRate, () => Skinwalker.SpawnMinPlayers, Skinwalker.MarkFromDraft),
+                Make(MixerDraftId,       "Mixer",       Mixer.Color,         "Mix a player: after the next meeting they get another role of their team",
+                     false, () => Mixer.SpawnRate,      () => Mixer.SpawnMinPlayers,      Mixer.MarkFromDraft),
             };
             return entries;
         }

@@ -14,6 +14,21 @@ using UnityEngine;
 
 namespace UnknownsCollection {
     public static class IdeasPackDiag {
+        // Button state dump: label text vs. what TOR should have written, and dead list entries.
+        private static void LogButtons() {
+            int dead = 0, total = 0;
+            foreach (var b in TheOtherRoles.Objects.CustomButton.buttons) {
+                total++;
+                if (b == null || b.actionButtonGameObject == null) { dead++; continue; }
+                if (!b.actionButtonGameObject.activeSelf) continue;
+                string lbl = "?";
+                try { lbl = b.actionButtonLabelText != null ? b.actionButtonLabelText.text + (b.actionButtonLabelText.enabled ? "" : " (hidden)") : "null"; } catch { }
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[IdeasPackDiag] button '{b.Sprite?.name}': buttonText='{b.buttonText}', show={b.showButtonText}, label='{lbl}', offset {b.PositionOffset}, pos {b.actionButtonGameObject.transform.localPosition}");
+            }
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] {total} button(s) in TOR's list, {dead} dead.");
+        }
+
         internal static BepInEx.Configuration.ConfigEntry<bool> Enabled;
         private static float at = -1f;
         private static int stage;
@@ -31,6 +46,14 @@ namespace UnknownsCollection {
                         stage = 1;
                         Giant.SendSet(lp.PlayerId);
                         Surveyor.SendSet(lp.PlayerId);
+                        Hypnotist.SendSet(lp.PlayerId);
+                        foreach (var other in PlayerControl.AllPlayerControls) {
+                            if (other == null || other.PlayerId == lp.PlayerId || other.Data == null || other.Data.IsDead) continue;
+                            Hypnotist.DiagHypnotize(other.PlayerId);
+                            HypnotistView.DiagForce = true;
+                            UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] hypnotised {other.Data.PlayerName} at {other.GetTruePosition()} for the view test.");
+                            break;
+                        }
                         string tracked = "?";
                         try { tracked = HudManager.Instance?.roomTracker?.LastRoom?.RoomId.ToString() ?? "none"; } catch { }
                         UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] before mark: room tracker {tracked}, position {lp.GetTruePosition()}.");
@@ -39,6 +62,7 @@ namespace UnknownsCollection {
                         UnknownsCollectionPlugin.Logger?.LogInfo($"[IdeasPackDiag] Giant + Surveyor set on {lp.Data?.PlayerName}, scale {lp.transform.localScale.x:F2}.");
                     } else if (stage == 1) {
                         stage = 2;
+                        LogButtons();
                         string shot = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "UC_ideas_diag.png");
                         ScreenCapture.CaptureScreenshot(shot);
                         UnknownsCollectionPlugin.Logger?.LogInfo(

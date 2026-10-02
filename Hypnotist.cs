@@ -54,6 +54,7 @@ namespace UnknownsCollection {
         public static CustomOption Uses;
         public static CustomOption CannotEscape;   // skip AND a vote never cast are redirected too
         public static CustomOption BreakOnDeath;
+        public static CustomOption ViewMode;       // 1756: Off / Peek / Until The Meeting (HypnotistView)
 
         // ---- Runtime state ----
         public static PlayerControl hypnotist;
@@ -87,6 +88,8 @@ namespace UnknownsCollection {
                 Uses = CustomOption.Create(1753, Types.Impostor, "Hypnoses Per Game", 2f, 1f, 5f, 1f, SpawnRate);
                 CannotEscape = CustomOption.Create(1754, Types.Impostor, "Hypnotised Player Cannot Escape", true, SpawnRate);
                 BreakOnDeath = CustomOption.Create(1755, Types.Impostor, "Hypnosis Breaks When The Hypnotist Dies", true, SpawnRate);
+                ViewMode = new CustomOption(1756, Types.Impostor, "Hypnotist Sees Through The Victim",
+                    new string[] { "Off", "Peek", "Until The Meeting" }, "Peek", SpawnRate, false);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Hypnotist] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Hypnotist] CreateOptions failed: {e}");
@@ -103,6 +106,15 @@ namespace UnknownsCollection {
         public static bool IsLocalHypnotist() =>
             active && hypnotist != null && PlayerControl.LocalPlayer != null && hypnotist.PlayerId == PlayerControl.LocalPlayer.PlayerId;
         private static bool HypnotistAlive() => hypnotist != null && hypnotist.Data != null && !hypnotist.Data.IsDead && !hypnotist.Data.Disconnected;
+        /// <summary>For HypnotistView: the living victim the local, living Hypnotist may look through.</summary>
+        internal static PlayerControl ViewVictim() {
+            if (!IsLocalHypnotist() || !HypnosisHolds() || InMeeting()) return null;
+            var me = PlayerControl.LocalPlayer;
+            if (me == null || me.Data == null || me.Data.IsDead) return null;
+            var v = Helpers.playerById(victimId);
+            return v != null && v.Data != null && !v.Data.IsDead && !v.Data.Disconnected ? v : null;
+        }
+
         private static bool HypnosisHolds() =>
             active && victimId != byte.MaxValue && (HypnotistAlive() || !(BreakOnDeath?.getBool() ?? true));
 
@@ -180,6 +192,9 @@ namespace UnknownsCollection {
             usesLeft = Mathf.Max(0, usesLeft - 1);
             if (IsLocalHypnotist()) UnknownsCollectionPlugin.Logger?.LogInfo($"[Hypnotist] hypnotised {p.Data.PlayerName} ({usesLeft} left).");
         }
+
+        /// <summary>IdeasPackDiag only: hypnotise without the button (freeplay updates no CustomButton).</summary>
+        internal static void DiagHypnotize(byte target) => ApplyHypnotize(target);
 
         private static void ApplyPick(byte target) {
             if (!active || victimId == byte.MaxValue) return;

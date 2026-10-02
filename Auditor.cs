@@ -400,9 +400,11 @@ namespace UnknownsCollection {
             if (me == null) return;
 
             if (me.PlayerId == victim) {
-                foreach (uint id in keepComplete) {
-                    try { me.RpcCompleteTask(id); } catch { }
-                }
+                // NOT right here: this message can overtake the host's RpcSetTasks (playtest
+                // 2026-10-02: "for crewmates all tasks show, open or not"). Re-completing first and
+                // receiving the reset second left EVERY task open. Wait until the reset has landed.
+                foreach (uint id in keepComplete) if (!recompleteIds.Contains(id)) recompleteIds.Add(id);
+                recompleteSince = Time.time;
                 NotifyVictim();
             }
             if (IsLocalAuditor()) {
@@ -410,6 +412,41 @@ namespace UnknownsCollection {
                 try { Helpers.showFlash(new Color(0.85f, 0.15f, 0.15f, 0.25f), 0.25f); } catch { }
             }
             try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
+        }
+
+        // ---- Victim side: re-complete once the reset has really arrived ----
+        // The reset (RpcSetTasks, NetworkedPlayerInfo) and our follow-up (UC channel) are separate
+        // messages, and the follow-up can arrive first. So the victim waits until his own data shows
+        // the reset (every task to keep is open again) and the task objects are rebuilt, then
+        // re-completes. A fallback after 8 s re-completes whatever is open, so nothing stays stuck.
+        private static readonly List<uint> recompleteIds = new List<uint>();
+        private static float recompleteSince = -1f;
+        private const float RecompleteFallback = 8f;
+
+        private static void RecompleteTick() {
+            if (recompleteIds.Count == 0) return;
+            var me = PlayerControl.LocalPlayer;
+            if (me == null || me.Data == null || me.Data.Tasks == null || me.myTasks == null) return;
+            bool resetLanded = true, objectsReady = true;
+            foreach (uint id in recompleteIds) {
+                var info = me.Data.FindTaskById(id);
+                if (info == null || info.Complete) resetLanded = false;
+                bool hasObject = false;
+                foreach (var t in me.myTasks) if (t != null && t.Id == id) { hasObject = true; break; }
+                if (!hasObject) objectsReady = false;
+            }
+            bool late = Time.time - recompleteSince >= RecompleteFallback;
+            if (!(resetLanded && objectsReady) && !late) return;
+            int done = 0;
+            foreach (uint id in recompleteIds) {
+                var info = me.Data.FindTaskById(id);
+                if (info == null || info.Complete) continue;     // still/already complete: nothing to redo
+                try { me.RpcCompleteTask(id); done++; } catch { }
+            }
+            UnknownsCollectionPlugin.Logger?.LogInfo(
+                $"[Auditor] re-completed {done}/{recompleteIds.Count} task(s) after the reset{(late && !(resetLanded && objectsReady) ? " (fallback)" : "")}.");
+            recompleteIds.Clear();
+            recompleteSince = -1f;
         }
 
         // ---- Victim feedback (never names the culprit) ----
@@ -714,6 +751,13 @@ namespace UnknownsCollection {
                 // Rebuild the victim's list unchanged (same order -> RpcSetTasks hands out the same
                 // ids again, so every other queue entry of this victim stays valid) and remember
                 // which entries have to be re-completed afterwards.
+                // Tasks of an earlier revert that the victim has not re-completed yet still count as
+                // complete: they read open here only because his re-completion is on its way. Leaving
+                // them out of this list would open them for good.
+                if (!pendingRecomplete.TryGetValue(e.victim, out var expected)) {
+                    expected = new HashSet<uint>();
+                    pendingRecomplete[e.victim] = expected;
+                }
                 int count = victim.Data.Tasks.Count;
                 var typeIds = new Il2CppStructArray<byte>(count);
                 var keepComplete = new List<uint>();
@@ -722,18 +766,14 @@ namespace UnknownsCollection {
                     var t = victim.Data.Tasks[i];
                     if (t == null) { SendDequeue(entryId, ReasonDropped); return; }
                     typeIds[i] = t.TypeId;
-                    if (t.Id == e.victimTaskId) { targetWasComplete = t.Complete; continue; }
-                    if (t.Complete) keepComplete.Add(t.Id);
+                    if (t.Id == e.victimTaskId) { targetWasComplete = t.Complete || expected.Contains(t.Id); continue; }
+                    if (t.Complete || expected.Contains(t.Id)) keepComplete.Add(t.Id);
                 }
                 if (!targetWasComplete) { // already undone by something else - nothing to take back
                     SendDequeue(entryId, ReasonDropped);
                     return;
                 }
-
-                if (!pendingRecomplete.TryGetValue(e.victim, out var expected)) {
-                    expected = new HashSet<uint>();
-                    pendingRecomplete[e.victim] = expected;
-                }
+                expected.Remove(e.victimTaskId);   // this one stays open now
                 foreach (uint id in keepComplete) expected.Add(id);
 
                 victim.Data.RpcSetTasks(typeIds);   // the reset the SERVER also sees
@@ -753,6 +793,7 @@ namespace UnknownsCollection {
         static class HudUpdatePatch {
             public static void Postfix() {
                 try {
+                    RecompleteTick();
                     if (!active) return;
                     bool meeting = InMeeting();
 
@@ -866,6 +907,8 @@ namespace UnknownsCollection {
                 lastOverflow = 0f;
                 victimNoticePending = false;
                 pendingRecomplete.Clear();
+                recompleteIds.Clear();
+                recompleteSince = -1f;
                 ClearQueue();
             });
         }
@@ -881,6 +924,8 @@ namespace UnknownsCollection {
                 nextEntryId = 0;
                 victimNoticePending = false;
                 pendingRecomplete.Clear();
+                recompleteIds.Clear();
+                recompleteSince = -1f;
                 queue.Clear(); // objects belong to the old scene; nothing to destroy here
             }
         }

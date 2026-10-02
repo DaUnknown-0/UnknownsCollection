@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.9";
+    public const string PluginVersion = "1.2.10";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -94,6 +94,8 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte SurveyorRpcId = 226;     // crew; marks rooms, sees the head count (Sub 0 set)
     public const byte HypnotistRpcId = 227;    // impostor; steers a victim's vote (Sub 0 set, 1 hypnotize, 2 pick)
     public const byte MixerRpcId = 232;        // crew; mixes a player's role (Sub 0 set, 1 mix, 2 notify, 3 revenge, 4 shoot, 5 tor-swap, 6 result)
+    public const byte CursedPirateRpcId = 234; // impostor; dead, marks prey for his teammates (Sub 0 set, 1 mark)
+    public const byte GuessPickRpcId = 233;    // the UC role a guesser picked in TOR's grid (guesserId, index; 255 = no UC role), see UCGuessNames
     public const byte SkinwalkerRpcId = 228;   // impostor; wears the victim's skin (Sub 0 set, 1 skin)
     public const byte GiantRpcId = 229;        // MODIFIER; bigger, slower, sees further (Sub 0 set)
 
@@ -342,6 +344,11 @@ public class UnknownsCollectionPlugin : BasePlugin
         // Mixer (crew, User 2026-10-02): options 1769-1773, RPC module 232, draft sentinel 226.
         Mixer.CreateOptions();
         Mixer.TryPatch(harmony);
+        UCGuessNames.TryPatch(harmony);
+
+        // Cursed Pirate (impostor, User 2026-10-02): options 1774-1779, RPC module 234, draft sentinel 227.
+        CursedPirate.CreateOptions();
+        CursedPirate.TryPatch(harmony);
 
         // Reactor music (Paket R) - not a role: a score for the reactor/seismic sabotage that is
         // written against the REAL ICriticalSabotage countdown, so the blast in its finale lands on

@@ -466,7 +466,7 @@ namespace UnknownsCollection {
                 bool show = host && UCColorGrant.InLobby() && UCColors.Installed;
                 if (show && lobbyButton == null) BuildLobbyButton();
                 if (!show && lobbyButton != null) { Destroy(lobbyButton); lobbyButton = null; lobbyButtonRect = null; ClosePanel(); }
-                if (lobbyButtonRect != null) lobbyButtonRect.anchoredPosition = new Vector2(28, LobbyRowY());
+                if (lobbyButtonRect != null) lobbyButtonRect.anchoredPosition = LobbyButtonPos();
 
                 // A question that outlives the lobby (the game started first) is dropped (Opus audit round 2).
                 if (UCColorGrant.HasPending && !UCColorGrant.InLobby()) UCColorGrant.DropPending();
@@ -507,21 +507,26 @@ namespace UnknownsCollection {
         }
 
         /*
-         * UTS stacks its own lobby buttons (mod sync, newcomer shield, early-death shield) in the same
-         * bottom-left column and publishes the next free row. A fixed row sat exactly on top of the
-         * early-death button. Without UTS, or with one too old to publish, the old row stays.
+         * UTS lines its own lobby buttons (mod sync, newcomer shield, early-death shield, ...) up in
+         * one row along the bottom edge and publishes the next free X. A column grew upwards into the
+         * lobby's settings button (2026-10-02). A UTS from before the row only publishes the next free
+         * Y of its column; without UTS the bottom-left corner is free.
          */
         [HideFromIl2Cpp]
-        private static float LobbyRowY() {
-            try { if (AppDomain.CurrentDomain.GetData("UTS.LobbyButtons.NextFreeY") is float y) return y; } catch { }
-            return 140f;
+        private static Vector2 LobbyButtonPos() {
+            try {
+                var d = AppDomain.CurrentDomain;
+                if (d.GetData("UTS.LobbyButtons.NextFreeX") is float x) return new Vector2(x, 28f);
+                if (d.GetData("UTS.LobbyButtons.NextFreeY") is float y) return new Vector2(28f, y);
+            } catch { }
+            return new Vector2(28f, 28f);
         }
 
         [HideFromIl2Cpp]
         private void BuildLobbyButton() {
             lobbyButton = Canvas("UCColorGrantButton", 9000);
             var b = Box(lobbyButton, Vector2.zero, Vector2.zero, Vector2.zero,
-                        new Vector2(28, LobbyRowY()), new Vector2(330, 46), new Color(0.35f, 0.1f, 0.5f, 0.95f));
+                        LobbyButtonPos(), new Vector2(330, 46), new Color(0.35f, 0.1f, 0.5f, 0.95f));
             lobbyButtonRect = b.GetComponent<RectTransform>();
             Label(b, UCLocalization.Tr("uc.colorgrant.lobby_button"), 18, Color.white,
                   TMPro.TextAlignmentOptions.Center).fontStyle = TMPro.FontStyles.Bold;

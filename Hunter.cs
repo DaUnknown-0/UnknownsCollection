@@ -745,7 +745,7 @@ namespace UnknownsCollection {
         // never stay trimmed.
         public static void AfterGuesserGrid() => RestoreRoleInfos();
 
-        private static void RestoreRoleInfos() {
+        internal static void RestoreRoleInfos() {
             try {
                 if (savedRoleInfos == null) return;
                 RoleInfo.allRoleInfos = savedRoleInfos;

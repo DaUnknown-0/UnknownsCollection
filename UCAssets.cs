@@ -58,6 +58,8 @@ namespace UnknownsCollection {
         public static Sprite HypnotistIcon => GetSprite("UnknownsCollection.Resources.hypnotist_hypnotize.png", 115f);
         public static Sprite HypnotistVoteIcon => GetSprite("UnknownsCollection.Resources.hypnotist_vote.png", 150f);
         public static Sprite SkinwalkerIcon => GetSprite("UnknownsCollection.Resources.skinwalker_skin.png", 115f);
+        // Cursed Pirate's ghost spyglass (null until embedded; falls back to TOR's tracker sprite)
+        public static Sprite CursedPirateIcon => GetSprite("UnknownsCollection.Resources.cursedpirate_spyglass.png", 115f);
         // Crew (blue/teal/cyan)
         public static Sprite SaboteurSearchIcon => GetSprite("UnknownsCollection.Resources.saboteur_search.png", 100f);
         public static Sprite ScoutIcon => GetSprite("UnknownsCollection.Resources.scout_transparent.png", 115f);

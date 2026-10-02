@@ -211,6 +211,7 @@ namespace UnknownsCollection {
                 Uc("Hypnotist", Team.Impostor, () => Hypnotist.SpawnRate, () => Hypnotist.hypnotist, Hypnotist.SendSet),
                 Uc("Skinwalker", Team.Impostor, () => Skinwalker.SpawnRate, () => Skinwalker.skinwalker, Skinwalker.SendSet),
                 Uc("Auditor", Team.Impostor, () => Auditor.SpawnRate, () => Auditor.auditor, Auditor.SendSetAuditor),
+                Uc("Cursed Pirate", Team.Impostor, () => CursedPirate.SpawnRate, () => CursedPirate.pirate, CursedPirate.SendSet),
                 Uc("Maniac", Team.Impostor, () => Maniac.SpawnRate, () => Maniac.maniac, Maniac.SendSetManiac, Maniac.SendClear, inPool: false),
                 Uc("Werewolf", Team.Impostor, () => Werewolf.SpawnRate, () => Werewolf.werewolf, null, inPool: false),
                 // UC neutrals
@@ -245,6 +246,24 @@ namespace UnknownsCollection {
                 return (main.name, team, entry);
             }
             return (imp ? "Impostor" : "Crewmate", imp ? Team.Impostor : Team.Crew, null);
+        }
+
+        /// <summary>
+        /// The UC role a player holds, with the host-side setter (SendSet, 255 takes it away) and its
+        /// residue clearer, for features that move a UC role to someone else (UCThiefSteal).
+        /// False for TOR roles, for UC roles without a setter (Werewolf, Pelican, ...) and for no role.
+        /// </summary>
+        internal static bool TryUcRole(byte playerId, out string name, out bool impostor, out Action<byte> set, out Action residue) {
+            name = null; impostor = false; set = null; residue = null;
+            foreach (var r in Table()) {
+                if (r.Holder == null) continue;
+                PlayerControl h = null;
+                try { h = r.Holder(); } catch { }
+                if (h == null || h.PlayerId != playerId) continue;
+                name = r.Name; impostor = r.Team == Team.Impostor; set = r.UcSet; residue = r.UcResidue;
+                return set != null;
+            }
+            return false;
         }
 
         private static bool IsKiller(PlayerControl p, string name, Team team) =>

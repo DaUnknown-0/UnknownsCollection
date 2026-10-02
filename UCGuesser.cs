@@ -20,6 +20,7 @@
  * filter, only during the intro).
  */
 
+using System.Collections.Generic;
 using HarmonyLib;
 using UnityEngine;
 using TheOtherRoles;
@@ -132,6 +133,21 @@ namespace UnknownsCollection {
         private static bool HideSnitchFromLocalAuditor() =>
             Auditor.IsLocalAuditor() && (Auditor.CannotGuessSnitch?.getBool() ?? true);
 
+        /// <summary>
+        /// Every RoleInfo this file can put into the grid, in a FIXED order: UCGuessNames sends the
+        /// index over the wire, so new roles go at the END only.
+        /// </summary>
+        internal static RoleInfo[] AllInfos() => new[] {
+            Tesla.TeslaInfo(), Saboteur.SaboteurInfo(), Poisoner.PoisonerInfo(), Silencer.SilencerInfo(),
+            Illusionist.IllusionistInfo(), Maniac.ManiacInfo(), Shade.ShadeInfo(), Manipulator.ManipulatorInfo(),
+            Auditor.AuditorInfo(), Werewolf.WerewolfInfo(), Hypnotist.HypnotistInfo(), Skinwalker.SkinwalkerInfo(),
+            Siphoner.SiphonerInfo(), Witness.WitnessInfo(), Bug.BugInfo(), Follower.FollowerInfo(), Copycat.CopycatInfo(),
+            Scout.ScoutInfo(), Beacon.BeaconInfo(), Collector.CollectorInfo(), Hunter.HunterInfo(), Pelican.PelicanInfo(),
+            Necromancer.NecromancerInfo(), Stalker.StalkerInfo(), King.KingInfo(), Paramedic.ParamedicInfo(),
+            Surveyor.SurveyorInfo(), Mixer.MixerInfo(),
+            CursedPirate.CursedPirateInfo(),
+        };
+
         private static void Sync(bool add) {
             // Impostor roles — insert after the base Impostor entry
             SetEntry(Tesla.TeslaInfo(),       add && TeslaGuessable(),       RoleInfo.impostor);
@@ -146,6 +162,7 @@ namespace UnknownsCollection {
             SetEntry(Werewolf.WerewolfInfo(), add && WerewolfGuessable(),   RoleInfo.impostor);
             SetEntry(Hypnotist.HypnotistInfo(),   add && Guessable(Hypnotist.SpawnRate),  RoleInfo.impostor);
             SetEntry(Skinwalker.SkinwalkerInfo(), add && Guessable(Skinwalker.SpawnRate), RoleInfo.impostor);
+            SetEntry(CursedPirate.CursedPirateInfo(), add && Guessable(CursedPirate.SpawnRate), RoleInfo.impostor);
             // Crew / Neutral roles — insert after the base Crewmate entry
             SetEntry(Siphoner.SiphonerInfo(), add && SiphonerGuessable(),   RoleInfo.crewmate);
             SetEntry(Witness.WitnessInfo(),   add && WitnessGuessable(),    RoleInfo.crewmate);

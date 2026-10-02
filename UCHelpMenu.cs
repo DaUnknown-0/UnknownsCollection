@@ -60,6 +60,7 @@ namespace UnknownsCollection {
                 E("Werewolf", Faction.Impostor, () => Werewolf.Color, () => Werewolf.SpawnRate, "uc.help.werewolf"),
                 E("Hypnotist", Faction.Impostor, () => Hypnotist.Color, () => Hypnotist.SpawnRate, "uc.help.hypnotist"),
                 E("Skinwalker", Faction.Impostor, () => Skinwalker.Color, () => Skinwalker.SpawnRate, "uc.help.skinwalker"),
+                E("Cursed Pirate", Faction.Impostor, () => CursedPirate.Color, () => CursedPirate.SpawnRate, "uc.help.cursedpirate"),
 
                 E("Gambler", Faction.Modifier, () => Gambler.Color, () => Gambler.SpawnRate, "uc.help.gambler"),
                 E("Void", Faction.Modifier, () => VoidModifier.Color, () => VoidModifier.SpawnRate, "uc.help.void"),

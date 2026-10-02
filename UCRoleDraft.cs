@@ -27,6 +27,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using TheOtherRoles;
@@ -66,6 +67,7 @@ namespace UnknownsCollection {
         public const byte HypnotistDraftId = 224;
         public const byte SkinwalkerDraftId = 225;
         public const byte MixerDraftId = 226;
+        public const byte CursedPirateDraftId = 227;
         // NO Void entry: the Void is a MODIFIER (rides on top of a drafted role), like the Gambler.
         // NO Hunter entry, deliberately: the Hunter is not a rolled role at all. He is an EVENT inside
         // a Werewolf round - the living original Sheriff is promoted the moment the beast is the last
@@ -82,6 +84,7 @@ namespace UnknownsCollection {
             public Func<CustomOption> rateOpt;
             public Func<CustomOption> minOpt;
             public Action<byte> mark;
+            public Func<bool> gate;            // extra spawn condition (null = none)
         }
 
         private static List<Entry> entries;
@@ -147,12 +150,16 @@ namespace UnknownsCollection {
                      true,  () => Skinwalker.SpawnRate, () => Skinwalker.SpawnMinPlayers, Skinwalker.MarkFromDraft),
                 Make(MixerDraftId,       "Mixer",       Mixer.Color,         "Mix a player: after the next meeting they get another role of their team",
                      false, () => Mixer.SpawnRate,      () => Mixer.SpawnMinPlayers,      Mixer.MarkFromDraft),
+                // Only with a second Impostor: his whole ability is helping a living teammate.
+                Make(CursedPirateDraftId, "Cursed Pirate", Palette.ImpostorRed, "Even dead, your spyglass shows your crew their prey",
+                     true,  () => CursedPirate.SpawnRate, () => CursedPirate.SpawnMinPlayers, CursedPirate.MarkFromDraft,
+                     CursedPirate.EnoughImpostors),
             };
             return entries;
         }
 
         private static Entry Make(byte id, string name, UnityEngine.Color color, string desc, bool impostor,
-                                  Func<CustomOption> rateOpt, Func<CustomOption> minOpt, Action<byte> mark) {
+                                  Func<CustomOption> rateOpt, Func<CustomOption> minOpt, Action<byte> mark, Func<bool> gate = null) {
             return new Entry {
                 id = id,
                 info = new RoleInfo(name, color, desc, desc, (RoleId)id),
@@ -160,6 +167,7 @@ namespace UnknownsCollection {
                 rateOpt = rateOpt,
                 minOpt = minOpt,
                 mark = mark,
+                gate = gate,
             };
         }
 
@@ -184,7 +192,12 @@ namespace UnknownsCollection {
             var min = e.minOpt();
             return DraftWillRun() && TeslaVersionHandshake.EveryoneHasMod()
                    && rate != null && rate.getSelection() > 0
-                   && PlayerCount() >= (min != null ? min.getFloat() : 6f);
+                   && PlayerCount() >= (min != null ? min.getFloat() : 6f)
+                   && (e.gate == null || SafeGate(e.gate));
+        }
+
+        private static bool SafeGate(Func<bool> gate) {
+            try { return gate(); } catch { return false; }
         }
 
         // Add/remove each entry from the draft list to match its current draftability.
@@ -219,6 +232,7 @@ namespace UnknownsCollection {
         // postfix injects their spawn rate into the matching faction dictionary (imp for impostor roles,
         // crew for crew roles), including a 100% force. Reflection-based: the patch class is internal.
         public static void PatchDraftData(Harmony harmony) {
+            CaptureTorEntries();   // plugin load: allRoleInfos is still TOR's own list
             try {
                 var t = typeof(CustomOption).Assembly.GetType("TheOtherRoles.Patches.RoleManagerSelectRolesPatch");
                 var m = t?.GetMethod("getRoleAssignmentData", BindingFlags.Public | BindingFlags.Static);
@@ -283,6 +297,40 @@ namespace UnknownsCollection {
         // and doubles as the first-wins guard against a duplicate pick actually re-assigning the role.
         private static readonly Dictionary<byte, byte> pickedBy = new();
 
+        /*
+         * TOR's draft offers EVERYTHING in allRoleInfos. Guess-grid entries live there too, for
+         * meetings: UC's in-round RoleInfos (UCGuesser), the Hunter, UTS' Revenger. Their removal
+         * hangs on MeetingHud.Close / resetVariables postfixes, and when one of those is skipped
+         * (HarmonyX drops the remaining postfixes after a throw) the entry is still there at the next
+         * draft: the Hunter and the Revenger were offered as picks (User 2026-10-02), with
+         * RoleId.Sheriff / RoleId.Lover behind them.
+         * So right before the draft the list is cut back to TOR's own entries (captured at plugin
+         * load, before any mod touched it) plus our draft entries. The guess entries come back on
+         * their own: UTS re-adds the Revenger at the intro end, UCGuesser at every meeting start.
+         */
+        private static List<RoleInfo> torEntries;
+
+        public static void CaptureTorEntries() {
+            try { torEntries ??= new List<RoleInfo>(RoleInfo.allRoleInfos); }
+            catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] capture failed: {e}"); }
+        }
+
+        private static void PurgeForeignEntries() {
+            try {
+                Hunter.RestoreRoleInfos();   // a Hunter guess-grid swap that never got undone
+                if (torEntries == null || torEntries.Count == 0) return;
+                var keep = new HashSet<RoleInfo>(torEntries);
+                foreach (var e in Entries()) keep.Add(e.info);
+                var foreign = RoleInfo.allRoleInfos.Where(ri => ri != null && !keep.Contains(ri)).ToList();
+                if (foreign.Count == 0) return;
+                foreach (var ri in foreign) RoleInfo.allRoleInfos.Remove(ri);
+                UnknownsCollectionPlugin.Logger?.LogWarning(
+                    $"[UCRoleDraft] removed {foreign.Count} non-draftable entr(y/ies) before the draft: {string.Join(", ", foreign.Select(r => r.name))}");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCRoleDraft] pre-draft cleanup failed: {e}");
+            }
+        }
+
         // Add the draft entries just before the team/role-draft intro builds its role list. This is the
         // ONLY place allRoleInfos membership is synced: it runs as a Prefix, i.e. before ShowTeam's body
         // (and thus before RoleDraft's postfix-chained CoSelectRoles coroutine even exists), so there is
@@ -292,7 +340,10 @@ namespace UnknownsCollection {
             public static void Prefix() {
                 introActive = true;
                 pickedBy.Clear(); // fresh draft, fresh no-repeat record
-                if (DraftWillRun()) SyncEntries();
+                if (DraftWillRun()) {
+                    PurgeForeignEntries();
+                    SyncEntries();
+                }
             }
         }
 

@@ -119,6 +119,9 @@ namespace UnknownsCollection {
         public static CustomOption SaboteurTrapWounds;     // 1519
         public static CustomOption IgnoreBaitInWolfForm;   // 1509
         public static CustomOption DeputyHandcuffsRevert;  // 1482
+        // ---- Options (howl, 1780-1781) ----
+        public static CustomOption HowlEnabled;            // 1780
+        public static CustomOption HowlDurationPercent;    // 1781 (% of the wolf form duration)
 
         // ---- Runtime state ----
         public static PlayerControl werewolf;
@@ -127,6 +130,14 @@ namespace UnknownsCollection {
         // blood rings, so all of those need no separate RPC of their own.
         public static bool wolfForm;
         private static float formEndTime;
+        // The HOWL (User 2026-10-02): the alternative to transforming. In human shape, with the
+        // lights out and a full charge, he howls: everyone hears it, and for a share of the wolf form
+        // duration (50 % by default) the lamp night of the wolf form falls - every crewmate on his
+        // torch, nobody can fix the lights - but the wolf stays human: no look, no speed, no faster
+        // kills, no blood rings, no silver weakness. Not gated on "last impostor": that is the point of
+        // having an alternative. His fellow Impostors keep their own sight. Synced like the form.
+        public static bool howlNight;
+        private static float howlEndTime;
         // Which of the 7 wolf-form music variants this round uses. Picked by the host in the very same
         // RPC that assigns the role, so the whole lobby shares one musical identity for the round.
         private static int musicVariant;
@@ -167,6 +178,7 @@ namespace UnknownsCollection {
         // SpeedMultNow and the two FixedUpdate patches at the bottom of this file.
 
         private static TheOtherRoles.Objects.CustomButton transformButton;
+        private static TheOtherRoles.Objects.CustomButton howlButton;
 
         // ---- Constants ----
         private const float WoundSlowFactor = 0.8f;
@@ -184,6 +196,7 @@ namespace UnknownsCollection {
         private const byte SubSetForm = 1;      // wolf(byte 0/1), seconds(float)
         private const byte SubWound = 2;        // (no payload - the wolf is the only possible victim)
         private const byte SubSilverVerdict = 4; // sourceId, kill(0/1), showAnimation  host -> everyone (3 = Hunter)
+        private const byte SubSetHowl = 5;      // on(byte 0/1), seconds(float)        the werewolf -> everyone
 
         // ---- Role identity ----
         private static RoleInfo werewolfInfo;
@@ -247,6 +260,10 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 IgnoreBaitInWolfForm = CustomOption.Create(1509, Types.Impostor, "Wolf Form Ignores Bait",
                     true, SpawnRate);
+                HowlEnabled = CustomOption.Create(1780, Types.Impostor, "Howl Instead Of Transforming",
+                    true, SpawnRate);
+                HowlDurationPercent = CustomOption.Create(1781, Types.Impostor, "Howl Night Duration (% Of Wolf Form)",
+                    50f, 25f, 100f, 5f, SpawnRate);
 
                 WerewolfFx.Init(); // force the FX static ctor (UCFx tick/reset registration)
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Werewolf] Options created.");
@@ -346,7 +363,14 @@ namespace UnknownsCollection {
 
         // The wolf darkness is exactly "the werewolf is currently transformed" - wolfForm is synced by
         // SubSetForm, so every client derives the vision override and the fix block from the same flag.
-        public static bool WolfDarkActive() => active && wolfForm && IsAlive(werewolf);
+        public static bool WolfDarkActive() => active && (wolfForm || howlNight) && IsAlive(werewolf);
+
+        // The howl's night without the beast: his fellow Impostors keep their own sight then (during
+        // the wolf form he is the last Impostor anyway, so this only ever matters for the howl).
+        private static bool HowlOnlyNight() => howlNight && !wolfForm;
+        private static bool HowlOn() => HowlEnabled == null || HowlEnabled.getBool();
+        private static float HowlSeconds() =>
+            FormDurationValue() * Mathf.Clamp((HowlDurationPercent != null ? HowlDurationPercent.getFloat() : 50f) / 100f, 0.1f, 1f);
 
         // Same probe TOR's own SabotageTuning/Siphoner and UC's BeaconFx use (BeaconFx.cs:171):
         // the Electrical system cast to SwitchSystem, whose IsActive flag is synced on every client.
@@ -391,9 +415,14 @@ namespace UnknownsCollection {
         // transform minutes later in broad daylight, which defeats the whole point of the alpha mode
         // (and of the crew fixing the lights at all).
         public static bool CanTransformNow() =>
-            active && IsLocalWerewolf() && IsAlive(werewolf) && !wolfForm && !InMeeting()
+            active && IsLocalWerewolf() && IsAlive(werewolf) && !wolfForm && !howlNight && !InMeeting()
             && ChargeReady() && LightsSabotageActive()
             && (OnlyAsLastImpostor == null || !OnlyAsLastImpostor.getBool() || IsLastImpostor());
+
+        // The howl: same charge and the same darkness requirement, but no "last impostor" gate.
+        public static bool CanHowlNow() =>
+            HowlOn() && active && IsLocalWerewolf() && IsAlive(werewolf) && !wolfForm && !howlNight && !InMeeting()
+            && ChargeReady() && LightsSabotageActive();
 
         private static string MusicClipName() =>
             musicVariant <= 0 ? "werewolf_form_music" : $"werewolf_form_music{musicVariant + 1}";
@@ -430,6 +459,17 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] SendSetForm failed: {e}"); }
         }
 
+        // Sent by the werewolf's OWN client only, like the form.
+        private static void SendSetHowl(bool on, float secs) {
+            try {
+                var w = BeginRpc(SubSetHowl);
+                w.Write((byte)(on ? 1 : 0));
+                w.Write(secs);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplySetHowl(on, secs);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] SendSetHowl failed: {e}"); }
+        }
+
         private static void SendWound() {
             try {
                 var w = BeginRpc(SubWound);
@@ -455,6 +495,12 @@ namespace UnknownsCollection {
                         float secs = reader.ReadSingle();
                         // Owner-authored: the werewolf's own client decides its transformation (AUDIT-2026-08-15).
                         if (UCRpc.RequireOwnerOrHost(werewolf, "Werewolf.SetForm")) ApplySetForm(wolf, secs);
+                        break;
+                    }
+                    case SubSetHowl: {
+                        bool on = reader.ReadByte() != 0;
+                        float secs = reader.ReadSingle();
+                        if (UCRpc.RequireOwnerOrHost(werewolf, "Werewolf.SetHowl")) ApplySetHowl(on, secs);
                         break;
                     }
                     case SubSilverVerdict: {
@@ -502,6 +548,8 @@ namespace UnknownsCollection {
             musicVariant = Mathf.Clamp(variant, 0, MusicVariants - 1);
             wolfForm = false;
             formEndTime = 0f;
+            howlNight = false;
+            howlEndTime = 0f;
             chargeLeft = ChargeTimeValue();
             lightsWereOut = false;
             chargeReadyAnnounced = false;
@@ -572,9 +620,34 @@ namespace UnknownsCollection {
             }
         }
 
+        private static void ApplySetHowl(bool on, float secs) {
+            if (!active || werewolf == null) return;
+            if (on) {
+                if (howlNight) { howlEndTime = Time.time + secs; return; }   // idempotent refresh
+                howlNight = true;
+                howlEndTime = Time.time + secs;
+                // Everyone hears it, from nowhere in particular: a warning, not a position.
+                UCAssets.PlayWerewolfHowl();
+                CloseOpenSwitchMinigame();
+                if (IsLocalWerewolf()) {
+                    StopHeartbeat();
+                    chargeLeft = ChargeTimeValue();   // the howl spends the charge, like the form
+                    chargeReadyAnnounced = false;
+                }
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Werewolf] Howl night ON for {secs:F1}s.");
+            } else {
+                if (!howlNight) return;
+                howlNight = false;
+                howlEndTime = 0f;
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Werewolf] Howl night OFF.");
+            }
+        }
+
         // Silent end used by the meeting/death paths: no revert sound, no exhaustion, no howl - the
         // form simply ceases to exist. Runs locally on every client (both triggers are global events).
         private static void EndFormSilent() {
+            howlNight = false;      // the howl's night ends on the same events (meeting, death)
+            howlEndTime = 0f;
             if (!wolfForm) return;
             wolfForm = false;
             formEndTime = 0f;
@@ -680,6 +753,8 @@ namespace UnknownsCollection {
                 active = false;
                 wolfForm = false;
                 formEndTime = 0f;
+                howlNight = false;
+                howlEndTime = 0f;
                 musicVariant = 0;
                 chargeLeft = 0f;
                 lightsWereOut = false;
@@ -707,6 +782,7 @@ namespace UnknownsCollection {
                 werewolf = null;
                 active = false;
                 wolfForm = false;
+                howlNight = false;
                 silverHitsTaken = 0;
             }
         }
@@ -788,6 +864,20 @@ namespace UnknownsCollection {
                         __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.werewolf.button_transform"));
                     transformButton.MaxTimer = 0f;
                     transformButton.Timer = 0f;
+
+                    // The howl, next to it. Same charge ring as the transform button (TickButton).
+                    howlButton = new TheOtherRoles.Objects.CustomButton(
+                        () => { if (CanHowlNow()) SendSetHowl(true, HowlSeconds()); },
+                        () => HowlOn() && active && IsLocalWerewolf()
+                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
+                              && !wolfForm,
+                        () => PlayerControl.LocalPlayer.CanMove && !InMeeting() && CanHowlNow(),
+                        () => { },
+                        UCAssets.WerewolfHowlIcon ?? sprite,
+                        TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft,
+                        __instance, KeyCode.G, false, UCLocalization.Tr("uc.ui.werewolf.button_howl"));
+                    howlButton.MaxTimer = 0f;
+                    howlButton.Timer = 0f;
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] Button creation failed: {e}");
                 }
@@ -818,7 +908,7 @@ namespace UnknownsCollection {
                     // repeats the full audibility condition cannot be bypassed by any exit path.
                     if (heartbeatSource != null) {
                         bool audible = active && werewolf != null && IsLocalWerewolf() && IsAlive(werewolf)
-                                       && !InMeeting() && !wolfForm && chargeLeft > 0f && LightsSabotageActive();
+                                       && !InMeeting() && !wolfForm && !howlNight && chargeLeft > 0f && LightsSabotageActive();
                         if (!audible) StopHeartbeat();
                     }
 
@@ -826,7 +916,14 @@ namespace UnknownsCollection {
 
                     // 1. Safety net: the beast dies/leaves -> the form dies with it (the murder/exile
                     //    postfixes below do this too; this catches every remaining path).
-                    if (wolfForm && !IsAlive(werewolf)) EndFormSilent();
+                    if ((wolfForm || howlNight) && !IsAlive(werewolf)) EndFormSilent();
+
+                    // 1b. The howl's night ends after its time, announced by the owner, with the same
+                    //     half-second local fallback as the form below.
+                    if (howlNight && Time.time >= howlEndTime) {
+                        if (IsLocalWerewolf()) SendSetHowl(false, 0f);
+                        else if (Time.time >= howlEndTime + 0.5f) ApplySetHowl(false, 0f);
+                    }
 
                     // 2. Auto end after Y. The OWNER announces it (single sender); every other client
                     //    ends it locally half a second later in case that announcement never arrives.
@@ -868,7 +965,7 @@ namespace UnknownsCollection {
             if (InMeeting() || !IsAlive(werewolf)) { StopHeartbeat(); return; }
             bool lightsOut = LightsSabotageActive();
 
-            if (!wolfForm) {
+            if (!wolfForm && !howlNight) {
                 if (lightsOut && chargeLeft > 0f) {
                     chargeLeft = Mathf.Max(0f, chargeLeft - Time.deltaTime);
                     if (heartbeatSource == null && chargeLeft > 0f && Time.time >= nextHeartbeatTry) {
@@ -982,6 +1079,22 @@ namespace UnknownsCollection {
                 transformButton.MaxTimer = ChargeTimeValue();
                 transformButton.Timer = chargeLeft > 0f ? chargeLeft : -1f;
             }
+
+            if (howlButton != null) {
+                if (howlNight) {
+                    // the night's remaining seconds on the label, like the wolf form's
+                    if (UCLabelThrottle.Due("werewolf.label.howl")) {
+                        int left = Mathf.CeilToInt(Mathf.Max(0f, howlEndTime - Time.time));
+                        howlButton.buttonText = $"{UCLocalization.Tr("uc.ui.werewolf.button_howl")} ({left}s)";
+                    }
+                    howlButton.MaxTimer = 0f;
+                    howlButton.Timer = 0f;
+                } else {
+                    howlButton.buttonText = UCLocalization.Tr("uc.ui.werewolf.button_howl");
+                    howlButton.MaxTimer = ChargeTimeValue();
+                    howlButton.Timer = chargeLeft > 0f ? chargeLeft : -1f;
+                }
+            }
         }
 
         // Cheap guard so TickButton does not fight UCButtonAnim frame-by-frame: while the correct
@@ -1055,6 +1168,8 @@ namespace UnknownsCollection {
                 }
                 // The Lighter keeps whatever TOR just computed for him (explicit carve-out).
                 if (Lighter.lighter != null && p.PlayerId == Lighter.lighter.PlayerId) return true;
+                // The howl's night is the crew's: his fellow Impostors keep their own sight.
+                if (HowlOnlyNight() && p.Role != null && p.Role.IsImpostor) return false;
                 // Paket W2: the Hunter is exempted from the blanket flashlight too - he gets the SAME
                 // crew radius as everyone else, scaled up by his own multiplier (option 1504, 1.0-2.5x)
                 // instead of a flat value. At "Infinite" there is nothing left to scale.
@@ -1114,6 +1229,7 @@ namespace UnknownsCollection {
                 if (me == null || me.Data == null || me.Data.IsDead || me.Data.Disconnected) return false;
                 if (werewolf != null && me.PlayerId == werewolf.PlayerId) return false;
                 if (IsLocalLighter()) return false;
+                if (HowlOnlyNight() && me.Data.Role != null && me.Data.Role.IsImpostor) return false;
                 return true;
             } catch {
                 return false;

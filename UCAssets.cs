@@ -69,6 +69,8 @@ namespace UnknownsCollection {
         // wolf victim's corpse (200 ppu -> ~1.28 units across) and overlay_wolfhead is the kill-overlay
         // prop reserved for W4.
         public static Sprite WerewolfTransformIcon => GetSprite("UnknownsCollection.Resources.werewolf_transform.png", 115f);
+        // The howl (human shape, no transformation). Null until embedded; falls back to the transform icon.
+        public static Sprite WerewolfHowlIcon => GetSprite("UnknownsCollection.Resources.werewolf_howl.png", 115f);
         public static Sprite WerewolfRevertIcon => GetSprite("UnknownsCollection.Resources.werewolf_revert.png", 115f);
         public static Sprite WerewolfFormSprite => GetSprite("UnknownsCollection.Resources.werewolf_form.png", 256f);
         public static Sprite WerewolfBloodRing => GetSprite("UnknownsCollection.Resources.werewolf_bloodring.png", 200f);

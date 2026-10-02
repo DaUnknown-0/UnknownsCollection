@@ -117,6 +117,15 @@ namespace UnknownsCollection {
         }
 
         private static void ApplySet(byte id) {
+            // Taken away (Role Control): give the old holder normal size back. In a running round TOR's
+            // playerSizeUpdate would do it next frame, in freeplay nothing would.
+            if (giant != null && giant.PlayerId != id) {
+                try {
+                    giant.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
+                    var collider = giant.Collider.CastFast<CircleCollider2D>();
+                    if (collider != null) collider.radius = Mini.defaultColliderRadius;
+                } catch { }
+            }
             giant = id == byte.MaxValue ? null : Helpers.playerById(id);
             active = giant != null;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Giant] The Giant is {giant.Data?.PlayerName}.");

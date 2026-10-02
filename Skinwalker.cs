@@ -130,6 +130,8 @@ namespace UnknownsCollection {
         }
 
         private static void ApplySet(byte id) {
+            // A reassignment (Role Control) while the old holder wears a skin: give the look back first.
+            EndSkin("role reassigned");
             skinwalker = id == byte.MaxValue ? null : Helpers.playerById(id);
             active = skinwalker != null;
             lastVictim = byte.MaxValue;

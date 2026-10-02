@@ -216,6 +216,16 @@ namespace UnknownsCollection {
                 // Apply the death LOCALLY only. SendPoisonDeath already broadcast SubPoisonDeath to every
                 // client, so each client runs this exactly once. We use Exiled() (not uncheckedMurderPlayer)
                 // so the poison death leaves NO body to report — exactly like a guesser shot or a vote-out.
+                // But Exiled() is what TOR treats as a vote-out: its ExilePlayerPatch takes the Lawyer of
+                // an exiled client down with him. Poison is a kill, and a killed client turns his Lawyer
+                // into a Pursuer, so promote him first (the Witch's exile and UTS' LoverRevenger do the
+                // same; Opus review 2026-10-02). Every client runs this locally, like the exile itself.
+                try {
+                    if (!target.Data.IsDead && Lawyer.lawyer != null && target == Lawyer.target)
+                        RPCProcedure.lawyerPromotesToPursuer();
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Poisoner] lawyer promotion failed: {e.Message}");
+                }
                 target.Exiled();
                 // Custom kill overlay: the Exiled() path never reaches KillOverlay.ShowKillAnimation,
                 // so trigger it directly - with the vanilla audience (victim + killer only). The

@@ -633,6 +633,12 @@ namespace UnknownsCollection {
             var victim = Helpers.playerById(victimId);
             if (!IsAlive(victim)) return;
             if (victim.Data.Role != null && victim.Data.Role.IsImpostor) return; // impostors don't trigger it
+            // The Forgotten Fixes kill shields (newcomer, spawn protection, early death) cover this kill
+            // too, as they do the Maniac's blast (review 2026-10-02). The trap stays armed.
+            if (UCShieldBridge.IsKillProtected(victimId)) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request rejected: {victim.Data?.PlayerName} holds a kill shield.");
+                return;
+            }
             // Sanity: the reported position must match the stored console. Same tolerance the victim's own
             // client used to decide whether to send the request (SabotageKillDistanceTolerance) - keeping
             // them equal is the whole point, see the constant's comment.

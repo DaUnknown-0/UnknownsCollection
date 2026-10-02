@@ -817,6 +817,47 @@ namespace UnknownsCollection {
             }
         }
 
+        // ---- A team win in the very frame the target dies ----
+        // HostFateTick looks every half second and only outside the exile, but TOR's CheckEndCriteria
+        // ends the game in the same frame when the target's death also decides a team (the target
+        // was the last Impostor, or his death makes parity). The Stalker then lost a win the header
+        // promises him ALONE (review 2026-10-02). Priority.First so Bug and Collector see reason 34
+        // and leave it alone (they only hijack team wins).
+        private const int TeamJackalWinReason = 11;   // TOR's CustomGameOverReason.TeamJackalWin
+
+        [HarmonyPatch(typeof(GameManager), nameof(GameManager.RpcEndGame))]
+        static class TeamWinTakeoverPatch {
+            [HarmonyPriority(Priority.First)]
+            public static void Prefix(ref GameOverReason endReason) {
+                try {
+                    if (!AmHost() || !active || !complete || !IsAlive(stalker)) return;
+                    if ((int)endReason == StalkerWinReason || !IsTeamWin(endReason)) return;
+                    var target = Target();
+                    if (target == null || target.Data == null || target.Data.Disconnected || !target.Data.IsDead) return;
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[Stalker] end reason {(int)endReason} arrived with the target dead - the Stalker wins instead.");
+                    endReason = (GameOverReason)StalkerWinReason;
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Stalker] team-win takeover failed: {e}");
+                }
+            }
+
+            private static bool IsTeamWin(GameOverReason r) {
+                switch (r) {
+                    case GameOverReason.HumansByVote:
+                    case GameOverReason.HumansByTask:
+                    case GameOverReason.HumansDisconnect:
+                    case GameOverReason.ImpostorByVote:
+                    case GameOverReason.ImpostorByKill:
+                    case GameOverReason.ImpostorBySabotage:
+                    case GameOverReason.ImpostorDisconnect:
+                        return true;
+                    default:
+                        return (int)r == TeamJackalWinReason;
+                }
+            }
+        }
+
         // ---- Winner list + end screen (Necromancer pattern; reason 34, banner 15) ----
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameEnd))]
         static class OnGameEndPatch {

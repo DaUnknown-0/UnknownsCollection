@@ -967,7 +967,7 @@ namespace UnknownsCollection {
         private static FieldInfo deadPlayersField;
         private static bool ledgerTried;
 
-        private static List<DeadPlayer> DeadPlayersLedger() {
+        internal static List<DeadPlayer> DeadPlayersLedger() {
             if (!ledgerTried) {
                 ledgerTried = true;
                 try {
@@ -1162,6 +1162,17 @@ namespace UnknownsCollection {
                 try {
                     if (!SabotageBlocked()) return;
                     if (opts.Mode == MapOptions.Modes.Sabotage) opts.Mode = MapOptions.Modes.Normal;
+                } catch { }
+            }
+
+            // A swallowed player is a ghost to TOR, and TOR shows every position on a dead
+            // non-impostor's map without looking at the ghost flags (MapBehaviourPatch.cs:101). He is
+            // released alive later and must not carry that knowledge out (review 2026-10-02).
+            // Closed right after opening instead of skipping Show: HarmonyX would still run TOR's
+            // postfixes on a map that never opened.
+            public static void Postfix(MapBehaviour __instance) {
+                try {
+                    if (LocalIsSwallowed() && __instance != null) __instance.Close();
                 } catch { }
             }
         }

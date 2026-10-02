@@ -254,13 +254,23 @@ namespace UnknownsCollection {
 
         // Shared "first death" handling for both detection paths below (kill and exile) so the same
         // player can never be counted twice as the first death.
-        private static void HandleFirstDeath(PlayerControl target) {
+        private static void HandleFirstDeath(PlayerControl target, bool byExile = false) {
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
             if (!active || follower == null || hasCopied || target == null) return;
 
             // Don't count if the follower is the target, or if the follower itself is already dead
             // (a dead Follower can't take over a role — otherwise we'd point a role static at a corpse).
             if (target.PlayerId == follower.PlayerId || !IsAlive(follower)) return;
+
+            // A Jester voted out has just won (TOR sets triggerJesterWin in its WrapUp postfix).
+            // Taking over his role would move Jester.jester onto the Follower, and TOR's end screen
+            // names Jester.jester as the winner (review 2026-10-02). The game ends anyway.
+            if (Jester.triggerJesterWin
+                || (byExile && Jester.jester != null && Jester.jester.PlayerId == target.PlayerId)) {
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Follower] First death is the exiled Jester {target.Data?.PlayerName}: no takeover, his win stands.");
+                return;
+            }
 
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Follower] First death: {target.Data?.PlayerName}, shifting role to Follower.");
@@ -313,7 +323,7 @@ namespace UnknownsCollection {
             public static void Postfix(ExileController __instance) {
                 try {
                     var networkedPlayer = __instance?.initData.networkedPlayer;
-                    HandleFirstDeath(networkedPlayer != null ? networkedPlayer.Object : null);
+                    HandleFirstDeath(networkedPlayer != null ? networkedPlayer.Object : null, byExile: true);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Follower] exile death detection failed: {e}");
                 }
@@ -325,7 +335,7 @@ namespace UnknownsCollection {
             public static void Postfix(AirshipExileController __instance) {
                 try {
                     var networkedPlayer = __instance?.initData.networkedPlayer;
-                    HandleFirstDeath(networkedPlayer != null ? networkedPlayer.Object : null);
+                    HandleFirstDeath(networkedPlayer != null ? networkedPlayer.Object : null, byExile: true);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Follower] exile death detection failed: {e}");
                 }

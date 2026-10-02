@@ -233,11 +233,59 @@ namespace UnknownsCollection {
             }
         }
 
+        /*
+         * RE-BROADCAST WHEN SOMEBODY IS STILL MISSING (review 2026-10-02). Same gap UTS closed on
+         * 2026-08-29 (UsefulVersionHandshake.ReshareIfSomeoneIsMissing): the handshake is
+         * fire-and-forget, and when players return from the end screen before the host, the
+         * host's OnGameJoined clears their entries and nothing ever makes them speak again. The
+         * host then shows "missing mod" for them and BeginGameGatePatch blocks the start while a
+         * UC role is on. While a connected client has no entry, re-send our own version every two
+         * seconds; capped and re-armed per arrival, so a player without the mod costs a handful
+         * of small messages and then silence. Receive is a plain dictionary write, duplicates are
+         * harmless.
+         */
+        private const int ResharesPerArrival = 5;
+        private const float ReshareIntervalSeconds = 2f;
+        private static int resharesLeft;
+        private static float nextReshareAt;
+
+        private static void ArmReshares() {
+            resharesLeft = ResharesPerArrival;
+            nextReshareAt = 0f;
+        }
+
+        private static void ReshareIfSomeoneIsMissing() {
+            try {
+                if (resharesLeft <= 0) return;
+                if (Time.realtimeSinceStartup < nextReshareAt) return;
+                var client = AmongUsClient.Instance;
+                if (client == null || PlayerControl.LocalPlayer == null) return;
+
+                bool missing = false;
+                foreach (InnerNet.ClientData c in client.allClients.ToArray()) {
+                    if (c == null || c.Character == null) continue;
+                    if (c.Id == client.ClientId) continue;
+                    if (playerVersions.ContainsKey(c.Id)) continue;
+                    missing = true;
+                    break;
+                }
+                if (!missing) { resharesLeft = 0; return; }
+
+                resharesLeft--;
+                nextReshareAt = Time.realtimeSinceStartup + ReshareIntervalSeconds;
+                ShareVersion();
+            } catch (Exception e) {
+                resharesLeft = 0;
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Handshake] re-broadcast failed: {e.Message}");
+            }
+        }
+
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         static class OnGameJoinedPatch {
             public static void Postfix() {
                 playerVersions.Clear();
                 versionSent = false;
+                ArmReshares();
                 // AUDIT-2026-08-16: force one republish in the new lobby so the AppDomain-published
                 // snapshot doesn't keep showing the previous lobby's roster/versions until someone
                 // happens to re-send their handshake.
@@ -247,12 +295,15 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnPlayerJoined))]
         static class OnPlayerJoinedPatch {
-            public static void Postfix() { if (PlayerControl.LocalPlayer != null) ShareVersion(); }
+            public static void Postfix() {
+                ArmReshares();
+                if (PlayerControl.LocalPlayer != null) ShareVersion();
+            }
         }
 
         [HarmonyPatch(typeof(GameStartManager), nameof(GameStartManager.Start))]
         static class GameStartManagerStartPatch {
-            public static void Postfix() { versionSent = false; }
+            public static void Postfix() { versionSent = false; ArmReshares(); }
         }
 
         // Share once per lobby; (host-only) warn on TOR's GameStartText when any UC role is ON
@@ -266,6 +317,7 @@ namespace UnknownsCollection {
             public static void Postfix(GameStartManager __instance) {
                 if (PlayerControl.LocalPlayer != null && !versionSent) { versionSent = true; ShareVersion(); }
                 if (AmongUsClient.Instance == null) return;
+                ReshareIfSomeoneIsMissing();
                 // F1: publish the snapshot every lobby frame (all clients, BEFORE the host-only
                 // return) so UsefulTORStuff's combined Mod-Check overview gets a UC column.
                 PublishSnapshot();

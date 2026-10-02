@@ -560,17 +560,49 @@ namespace UnknownsCollection {
         // Penalty: the host has already sent the vanilla RpcSetTasks that wipes the whole list; the
         // Gambler's own client now re-completes everything that must stay done. Net effect: exactly
         // the intended number of tasks is open again, and the SERVER agrees (Auditor.cs header).
+        // NOT right away (review 2026-10-02, the race the Auditor fixed after its 2026-10-02 playtest):
+        // this message can overtake the host's RpcSetTasks. Re-completing first and receiving the
+        // reset second left EVERY task open, and the host's pendingRecomplete never drained.
         private static void ApplyRevertTasks(List<uint> keepComplete) {
             try {
                 if (!IsLocalGambler()) return;
-                var me = PlayerControl.LocalPlayer;
-                if (me == null) return;
-                foreach (uint id in keepComplete) {
-                    try { me.RpcCompleteTask(id); } catch { }
-                }
+                foreach (uint id in keepComplete) if (!recompleteIds.Contains(id)) recompleteIds.Add(id);
+                recompleteSince = Time.time;
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Gambler] RevertTasks failed: {e}");
             }
+        }
+
+        // Same tick as Auditor.RecompleteTick: wait until the reset is visible in our own data (every
+        // task to keep is open again) and the task objects exist, then re-complete. Fallback after 8 s.
+        private static readonly List<uint> recompleteIds = new List<uint>();
+        private static float recompleteSince = -1f;
+        private const float RecompleteFallback = 8f;
+
+        private static void RecompleteTick() {
+            if (recompleteIds.Count == 0) return;
+            var me = PlayerControl.LocalPlayer;
+            if (me == null || me.Data == null || me.Data.Tasks == null || me.myTasks == null) return;
+            bool resetLanded = true, objectsReady = true;
+            foreach (uint id in recompleteIds) {
+                var info = me.Data.FindTaskById(id);
+                if (info == null || info.Complete) resetLanded = false;
+                bool hasObject = false;
+                foreach (var t in me.myTasks) if (t != null && t.Id == id) { hasObject = true; break; }
+                if (!hasObject) objectsReady = false;
+            }
+            bool late = Time.time - recompleteSince >= RecompleteFallback;
+            if (!(resetLanded && objectsReady) && !late) return;
+            int done = 0;
+            foreach (uint id in recompleteIds) {
+                var info = me.Data.FindTaskById(id);
+                if (info == null || info.Complete) continue;
+                try { me.RpcCompleteTask(id); done++; } catch { }
+            }
+            UnknownsCollectionPlugin.Logger?.LogInfo(
+                $"[Gambler] re-completed {done}/{recompleteIds.Count} task(s) after the reset{(late && !(resetLanded && objectsReady) ? " (fallback)" : "")}.");
+            recompleteIds.Clear();
+            recompleteSince = -1f;
         }
 
         // Announcement to the impostors. Deliberately anonymous: they learn that a Gambler exists and
@@ -752,6 +784,18 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (!active) return;
+
+                    // Sidekick withdrawal by STATE, every frame (review 2026-10-02): the postfix on the
+                    // managed jackalCreatesSidekick can lose its detour to .NET tiering on one client,
+                    // and that client kept a Gambler the rest had withdrawn. TOR's procedure body still
+                    // sets Sidekick.sidekick everywhere, so this check agrees on every client.
+                    if (gambler != null && Sidekick.sidekick != null && Sidekick.sidekick.PlayerId == gambler.PlayerId) {
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[Gambler] carrier is the Jackal's sidekick - modifier withdrawn (state check).");
+                        WithdrawLocal();
+                        return;
+                    }
+
+                    RecompleteTick();
 
                     if (IsLocalGambler() && betCooldownLeft > 0f && !InMeeting())
                         betCooldownLeft = Mathf.Max(0f, betCooldownLeft - Time.deltaTime);
@@ -1205,6 +1249,8 @@ namespace UnknownsCollection {
             tasksThisRound.Clear();
             deathOrderThisRound.Clear();
             pendingRecomplete.Clear();
+            recompleteIds.Clear();
+            recompleteSince = -1f;
             tuningUntil.Clear();
             cooldownEffectActiveThisRound = false;
             lastCooldownMult = 1f;

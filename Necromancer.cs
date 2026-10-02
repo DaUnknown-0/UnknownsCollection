@@ -382,6 +382,10 @@ namespace UnknownsCollection {
                     p.Revive();
                     RoleManager.Instance.SetRole(p, wasImp ? RoleTypes.Impostor : RoleTypes.Crewmate);
                 }
+                // TOR's death ledger: a thrall killed again would otherwise be reported (Detective,
+                // Medic, Medium, end screen) with his FIRST killer and time (review 2026-10-02).
+                try { Pelican.DeadPlayersLedger()?.RemoveAll(d => d != null && d.player != null && d.player.PlayerId == pid); }
+                catch { }
                 try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
 
                 thralls.Add(pid);
@@ -428,6 +432,19 @@ namespace UnknownsCollection {
         static class DeathClockPatch {
             public static void Postfix([HarmonyArgument(1)] byte targetId) {
                 try { deathAt[targetId] = Time.time; } catch { }
+            }
+        }
+
+        // Second stamp on the Il2Cpp game method every kill ends in (review 2026-10-02): the managed
+        // uncheckedMurderPlayer detour can be dropped by .NET tiering, and then the host rejected every
+        // raise as "corpse cold or unknown". Same moment, so whichever runs, the time is the same.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
+        static class DeathClockGamePatch {
+            public static void Postfix([HarmonyArgument(0)] PlayerControl target) {
+                try {
+                    if (target != null && target.Data != null && target.Data.IsDead)
+                        deathAt[target.PlayerId] = Time.time;
+                } catch { }
             }
         }
 

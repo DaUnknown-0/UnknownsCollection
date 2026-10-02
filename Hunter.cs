@@ -724,6 +724,60 @@ namespace UnknownsCollection {
             }
         }
 
+        // Shot budget guard on the receiving side (review 2026-10-02, UC-12). RemainingShotsPatch is a
+        // prefix on a managed TOR method; if .NET tiering drops its detour on one client, TOR's default
+        // branch there takes a hunter shot off remainingShotsEvilGuesser, and on the evil Guesser's own
+        // client that is a shot he really loses. PlayerControl.HandleRpc is an Il2Cpp game method (its
+        // detour survives tiering, and TOR already patches it, so no new detour): snapshot both
+        // counters before a hunter's GuesserShoot is handled, put them back after TOR's handler ran.
+        // With the prefix alive the counters never move and the restore writes the same values.
+        private static int guesserShootCallId = -1;
+
+        private static int GuesserShootCallId() {
+            if (guesserShootCallId >= 0) return guesserShootCallId;
+            try {
+                var t = typeof(RPCProcedure).Assembly.GetType("TheOtherRoles.CustomRPC");
+                guesserShootCallId = t != null ? Convert.ToByte(Enum.Parse(t, "GuesserShoot")) : 152;
+            } catch {
+                guesserShootCallId = 152;   // EngineerFixLights = 120, GuesserShoot is 32 entries later
+            }
+            return guesserShootCallId;
+        }
+
+        private struct ShotSnapshot { public bool Armed; public int Evil; public int Nice; }
+
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.HandleRpc))]
+        static class ShotBudgetGuardPatch {
+            [HarmonyPriority(Priority.First)]
+            public static void Prefix([HarmonyArgument(0)] byte callId, [HarmonyArgument(1)] MessageReader reader,
+                                      out ShotSnapshot __state) {
+                __state = default;
+                try {
+                    if (!active || hunter == null || reader == null || callId != GuesserShootCallId()) return;
+                    int pos = reader.Position;
+                    byte killerId = reader.ReadByte();
+                    reader.Position = pos;
+                    if (!GrantedGuesser(killerId)) return;
+                    __state = new ShotSnapshot {
+                        Armed = true,
+                        Evil = Guesser.remainingShotsEvilGuesser,
+                        Nice = Guesser.remainingShotsNiceGuesser,
+                    };
+                } catch { __state = default; }
+            }
+
+            [HarmonyPriority(Priority.Last)]
+            public static void Postfix(ShotSnapshot __state) {
+                if (!__state.Armed) return;
+                try {
+                    if (Guesser.remainingShotsEvilGuesser != __state.Evil || Guesser.remainingShotsNiceGuesser != __state.Nice)
+                        UnknownsCollectionPlugin.Logger?.LogWarning("[Hunter] a hunter shot reached TOR's guesser budget - restored.");
+                    Guesser.remainingShotsEvilGuesser = __state.Evil;
+                    Guesser.remainingShotsNiceGuesser = __state.Nice;
+                } catch { }
+            }
+        }
+
         // Werewolf-only grid: TOR builds the guess buttons by iterating RoleInfo.allRoleInfos
         // (MeetingPatch.cs:415), so a one-entry list for the duration of that call produces a menu with
         // exactly one choice. Public because Harmony patches them in from TryPatch by reflection.

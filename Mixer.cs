@@ -81,6 +81,9 @@ namespace UnknownsCollection {
         private const byte SubResult = 6;    // targetId, kind, mixesLeft, string        host -> everyone (Mixer + target read it)
 
         private const byte ResultRefund = 0, ResultKiller = 1, ResultNewRole = 2;
+        // A refused mix: only puts the Mixer's own counter back to the host's (he counted down before
+        // sending). No text; an older client just takes the count (reviews 2026-10-02).
+        private const byte ResultSync = 3;
 
         private static RoleInfo info;
         public static RoleInfo MixerInfo() => info ??= new RoleInfo(
@@ -404,6 +407,12 @@ namespace UnknownsCollection {
             else if (pending.Contains(targetId)) why = "already mixed";
             if (why != null) {
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Mixer] mix of {target?.Data?.PlayerName ?? targetId.ToString()} refused: {why}.");
+                // the real Mixer counted this mix down already: give him the host's number back
+                if (active && mixer != null && mixer.PlayerId == senderId) {
+                    byte left = (byte)Mathf.Clamp(hostMixesLeft, 0, 255);
+                    Broadcast(SubResult, w => { w.Write(targetId); w.Write(ResultSync); w.Write(left); w.Write(""); },
+                              () => ApplyResult(targetId, ResultSync, left, ""));
+                }
                 return;
             }
             hostMixesLeft--;
@@ -590,9 +599,12 @@ namespace UnknownsCollection {
             public static void Postfix() => HostAfterMeeting();
         }
 
+        // Airship: the postfix runs before the exile (coroutine), so a player voted out right now
+        // still looked alive and got swapped. Deferred until the cutscene is done, see UCAirshipWrapUp.
         [HarmonyPatch(typeof(AirshipExileController), nameof(AirshipExileController.WrapUpAndSpawn))]
         static class AirshipWrapUpPatch {
-            public static void Postfix() => HostAfterMeeting();
+            public static void Postfix(AirshipExileController __instance) =>
+                UCAirshipWrapUp.Arm(__instance, "Mixer", HostAfterMeeting);
         }
 
         private static void HostAfterMeeting() {

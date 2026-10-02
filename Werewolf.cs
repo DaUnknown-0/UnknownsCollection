@@ -760,6 +760,7 @@ namespace UnknownsCollection {
                 lightsWereOut = false;
                 chargeReadyAnnounced = false;
                 silverHitsTaken = 0;
+                silverWaitSince = -1f;
                 lastWoundTime = -99f;
                 woundSlowUntil = 0f;
                 exhaustSlowUntil = 0f;
@@ -784,6 +785,7 @@ namespace UnknownsCollection {
                 wolfForm = false;
                 howlNight = false;
                 silverHitsTaken = 0;
+                silverWaitSince = -1f;
             }
         }
 
@@ -895,6 +897,9 @@ namespace UnknownsCollection {
                     // BEFORE the "is there even a beast" bail-out: that is also the path which switches
                     // the torch back off once the form, the round or the wolf itself is gone.
                     TickCone();
+
+                    SilverWaitTick();
+                    HandcuffTick();
 
                     // The wolf's own corpse, restyled once it appears. Also before the bail-out: it
                     // has to keep looking for the body after the beast is dead, which is exactly when
@@ -1502,7 +1507,26 @@ namespace UnknownsCollection {
         // depend on the form.
         private static bool silverPass;   // set while a host verdict replays TOR's murder
 
+        // Client fallback (review 2026-10-02): the host judges in a prefix on the managed
+        // uncheckedMurderPlayer, and .NET tiering can drop that detour. The host then kills by TOR's
+        // default and never sends a verdict, while every client held the shot back: the wolf was dead
+        // on the host and alive everywhere else. A client that hears nothing within SilverVerdictWait
+        // applies the default kill itself, which is what the silent host did.
+        private const float SilverVerdictWait = 4f;
+        private static float silverWaitSince = -1f;
+        private static byte silverWaitSource, silverWaitAnim;
+
+        private static void SilverWaitTick() {
+            if (silverWaitSince < 0f || Time.time - silverWaitSince < SilverVerdictWait) return;
+            silverWaitSince = -1f;
+            if (!active || werewolf == null || werewolf.Data == null || werewolf.Data.IsDead) return;
+            UnknownsCollectionPlugin.Logger?.LogWarning(
+                $"[Werewolf] no silver verdict from the host within {SilverVerdictWait} s - applying TOR's default kill.");
+            ApplySilverVerdict(silverWaitSource, true, silverWaitAnim);
+        }
+
         private static void ApplySilverVerdict(byte sourceId, bool kill, byte showAnimation) {
+            silverWaitSince = -1f;
             if (!active || werewolf == null) return;
             if (kill) {
                 if (werewolf.Data == null || werewolf.Data.IsDead) return;
@@ -1558,7 +1582,12 @@ namespace UnknownsCollection {
                     if (SilverMode() != SilverWounds) return true; // Kills / Off -> TOR's behaviour, untouched
                     if (silverPass) return true;           // the host's kill verdict, replayed
                     var ac = AmongUsClient.Instance;
-                    if (ac == null || !ac.AmHost) return false;   // wait for the host's verdict
+                    if (ac == null || !ac.AmHost) {               // wait for the host's verdict
+                        silverWaitSince = Time.time;
+                        silverWaitSource = sourceId;
+                        silverWaitAnim = showAnimation;
+                        return false;
+                    }
 
                     // human form: silver is lethal as always; second sheriff hit: the toughness is spent
                     bool kill = !wasWolf || silverHitsTaken >= 1;
@@ -1606,6 +1635,25 @@ namespace UnknownsCollection {
         // Silver handcuffs (option 1482, USER variant): being cuffed does not block the transformation,
         // it CANCELS it - the wolf darkness ends early. deputyUsedHandcuffs (RPC.cs:676) runs on every
         // client, so the werewolf's own client is gated in as the single sender of the revert.
+        // Same rule by STATE (review 2026-10-02, UC-12): the postfix below sits on a managed TOR
+        // method whose detour .NET tiering can drop. TOR's body still adds the wolf to
+        // Deputy.handcuffedPlayers on every client and removes him when the cuffs run out, so the wolf's
+        // own client reverts once per cuffing here too. cuffSeen keeps it to one revert per cuffing,
+        // exactly like the postfix (a transformation started later in the same cuffing stands).
+        private static bool cuffSeen;
+
+        private static void HandcuffTick() {
+            if (!active || werewolf == null || !IsLocalWerewolf()) return;
+            bool cuffed = Deputy.handcuffedPlayers != null && Deputy.handcuffedPlayers.Contains(werewolf.PlayerId);
+            if (!cuffed) { cuffSeen = false; return; }
+            if (cuffSeen) return;
+            cuffSeen = true;
+            if (!wolfForm) return;
+            if (DeputyHandcuffsRevert != null && !DeputyHandcuffsRevert.getBool()) return;
+            UnknownsCollectionPlugin.Logger?.LogInfo("[Werewolf] cuffed in wolf form - reverting (state check).");
+            SendSetForm(false, 0f);
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.deputyUsedHandcuffs))]
         static class HandcuffPatch {
             public static void Postfix(byte targetId) {
@@ -1614,6 +1662,7 @@ namespace UnknownsCollection {
                     if (DeputyHandcuffsRevert != null && !DeputyHandcuffsRevert.getBool()) return;
                     if (targetId != werewolf.PlayerId) return;
                     if (!IsLocalWerewolf()) return;
+                    cuffSeen = true;
                     SendSetForm(false, 0f);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] HandcuffPatch failed: {e}");

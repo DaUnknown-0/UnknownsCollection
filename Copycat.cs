@@ -571,11 +571,25 @@ namespace UnknownsCollection {
         // matters here (active, CopycatIsAlive, dedup, capacity), so these postfixes need none of their
         // own beyond "did this effect actually apply" (Camouflager.camouflager != null etc., mirroring
         // the early-out each RPCProcedure method itself uses).
+        //
+        // HOST-AUTHORITATIVE since review 2026-10-02 (UC-9): these are managed TOR methods, and .NET
+        // tiering can drop a detour on one client. That client then never learned the ability, so
+        // ApplyUseAbility ignored its use there (the learnedAbilities gate): no shot on the host, no
+        // shield at the killer, a different usedAbilities count and so a different Copycat win. Now
+        // only the host's observation counts, broadcast as SubLearn (the path the sight-gated Vent
+        // learn already uses), so every client holds the same list in the same order.
+        private static void HostLearn(Ability ability) {
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+            if (!active || !CopycatIsAlive() || MaxAbilities() <= 0) return;
+            if (learnedAbilities.Contains(ability)) return;   // no broadcast for a known ability
+            SendLearn(ability);
+        }
+
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.camouflagerCamouflage))]
         static class LearnCamouflagePatch {
             public static void Postfix() {
                 try {
-                    if (Camouflager.camouflager != null) LearnAbility(Ability.Camouflage);
+                    if (Camouflager.camouflager != null) HostLearn(Ability.Camouflage);
                 } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Camouflage) failed: {e}"); }
             }
         }
@@ -584,7 +598,7 @@ namespace UnknownsCollection {
         static class LearnMorphlingPatch {
             public static void Postfix() {
                 try {
-                    if (Morphling.morphling != null) LearnAbility(Ability.Morphling);
+                    if (Morphling.morphling != null) HostLearn(Ability.Morphling);
                 } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Morphling) failed: {e}"); }
             }
         }
@@ -593,7 +607,7 @@ namespace UnknownsCollection {
         static class LearnShieldPatch {
             public static void Postfix() {
                 try {
-                    LearnAbility(Ability.Shield);
+                    HostLearn(Ability.Shield);
                 } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Shield) failed: {e}"); }
             }
         }
@@ -602,8 +616,19 @@ namespace UnknownsCollection {
         static class LearnShootPatch {
             public static void Postfix() {
                 try {
-                    LearnAbility(Ability.Shoot);
+                    HostLearn(Ability.Shoot);
                 } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Shoot) failed: {e}"); }
+            }
+        }
+
+        // Second line for the Shoot learn on the Il2Cpp method every kill ends in: if the host's own
+        // uncheckedMurderPlayer detour is the one that dropped, the host still sees the kill here.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
+        static class LearnShootGamePatch {
+            public static void Postfix([HarmonyArgument(0)] PlayerControl target) {
+                try {
+                    if (target != null && target.Data != null && target.Data.IsDead) HostLearn(Ability.Shoot);
+                } catch { }
             }
         }
 
@@ -623,6 +648,23 @@ namespace UnknownsCollection {
                     }
                 } catch { }
                 return true;
+            }
+        }
+
+        // Same shield on the Il2Cpp kill button (review 2026-10-02): checkMuderAttempt is a managed
+        // TOR method whose detour .NET tiering can drop on the killer's client. TOR's DoClick prefix
+        // kills only with currentTarget set, so clearing it first stops the impostor kill; every
+        // prefix runs under HarmonyX, which is why this does not just skip the original.
+        [HarmonyPatch(typeof(KillButton), nameof(KillButton.DoClick))]
+        static class ShieldKillButtonPatch {
+            [HarmonyPriority(Priority.First)]
+            public static void Prefix(KillButton __instance) {
+                try {
+                    if (!active || !shielded || copycat == null || __instance == null) return;
+                    var target = __instance.currentTarget;
+                    if (target != null && target.PlayerId == copycat.PlayerId && CopycatIsAlive())
+                        __instance.currentTarget = null;
+                } catch { }
             }
         }
 
@@ -962,8 +1004,17 @@ namespace UnknownsCollection {
             // Runs before TOR's OnGameEnd postfix calls resetVariables(): snapshot whether the Copycat
             // has earned a shared win (alive + used enough abilities), since the postfix runs after reset.
             [HarmonyPriority(Priority.VeryLow)]
-            public static void Prefix() {
+            public static void Prefix([HarmonyArgument(0)] EndGameResult endGameResult) {
                 winnerCopycatId = byte.MaxValue;
+                // Team wins only (vanilla < 10, Jackal 11), the same rule as the Bug hijack. A solo
+                // win (Jester, Arsonist, Vulture, Lovers, Prosecutor) has no team to join, and the
+                // Mini lose means nobody wins (review 2026-10-02). A Bug-hijacked team win counts as
+                // its original team win: the Bug's phase-A podium shows the Copycat there.
+                int reason = -1;
+                try { reason = (int)endGameResult.GameOverReason; } catch { }
+                int original = Bug.OriginalReason(reason);
+                if (original >= 0) reason = original;
+                if (reason < 0 || (reason >= 10 && reason != 11)) return;
                 if (active && CopycatIsAlive() && usedAbilities.Count >= NeededToWin())
                     winnerCopycatId = copycat.PlayerId;
             }

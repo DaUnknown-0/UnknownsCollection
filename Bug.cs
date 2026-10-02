@@ -67,6 +67,10 @@ namespace UnknownsCollection {
         private const int BugWinReason = 18;
         private const int BugHijackBase = 20; // occupied values: 20-26 (vanilla team wins 0-6) and 31 (TeamJackal 11)
 
+        // AppDomain contract (string, player name or null): the one real winner when the end screen's
+        // CachedWinners shows someone else first. Read by UTS SessionStats (review 2026-10-02).
+        private const string SoleWinnerKey = "UC.EndGame.SoleWinner";
+
         // "Stolen win" end-screen dramaturgy: the screen shows the ORIGINAL team win for TakeoverDelay
         // seconds, then the Bug hijacks it (glitch burst, win-text morph, podium swap). Fixed constants
         // by design, not config.
@@ -75,7 +79,7 @@ namespace UnknownsCollection {
 
         private static bool IsBugReason(int r) =>
             r == BugWinReason || (r >= BugHijackBase && r <= BugHijackBase + TeamJackalWinReason);
-        private static int OriginalReason(int r) =>
+        internal static int OriginalReason(int r) =>
             (r >= BugHijackBase && r <= BugHijackBase + TeamJackalWinReason) ? r - BugHijackBase : -1;
 
         // The Bug's PlayerId, snapshotted at game-end BEFORE TOR's resetVariables wipes bugPlayerId.
@@ -278,6 +282,7 @@ namespace UnknownsCollection {
                 // from an earlier round survives into a round the Bug is not in, and the postfix below
                 // would award a win to a player who no longer holds the role (Copycat.cs does it this way).
                 winnerBugId = (active && bugPlayerId != byte.MaxValue) ? bugPlayerId : byte.MaxValue;
+                try { AppDomain.CurrentDomain.SetData(SoleWinnerKey, null); } catch { }
                 try {
                     int reason = (int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason;
                     originalReason = OriginalReason(reason);
@@ -378,6 +383,9 @@ namespace UnknownsCollection {
                     // 12 is intentionally outside TOR's WinCondition enum (0-10): no vanilla end-screen
                     // branch matches it, and the Bug draws its own green "Bug Wins" banner in EndGameFxPatch.
                     SetWinCondition(12);
+                    // In the two-phase screen CachedWinners holds the ORIGINAL team until the podium
+                    // swap, so readers of the winner list (UTS session stats) get the real winner here.
+                    try { AppDomain.CurrentDomain.SetData(SoleWinnerKey, bugWinnerData?.PlayerName); } catch { }
                     UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Bug wins alone! (survived to the end)");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Bug] OnGameEnd failed: {e}");

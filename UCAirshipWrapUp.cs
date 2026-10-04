@@ -21,7 +21,8 @@ using UnityEngine;
 
 namespace UnknownsCollection {
     internal static class UCAirshipWrapUp {
-        private const float GiveUpSeconds = 30f;
+        // Emergency exit only, as in UTS' AirshipWrapUpDefer: the coroutine includes the spawn choice (04.10.).
+        private const float GiveUpSeconds = 120f;
 
         private sealed class Entry {
             public AirshipExileController Controller;

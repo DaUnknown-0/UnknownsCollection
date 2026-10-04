@@ -42,13 +42,6 @@ namespace UnknownsCollection {
                     return UnknownsCollectionPlugin.BugGlitchEnabled.Value;
                 },
                 () => UnknownsCollectionPlugin.BugGlitchEnabled.Value),
-            new(() => UCLocalization.Tr("uc.ui.options.button_pulse_toggle"),
-                () => {
-                    UnknownsCollectionPlugin.ButtonPulseEnabled.Value =
-                        !UnknownsCollectionPlugin.ButtonPulseEnabled.Value;
-                    return UnknownsCollectionPlugin.ButtonPulseEnabled.Value;
-                },
-                () => UnknownsCollectionPlugin.ButtonPulseEnabled.Value),
             new(() => UCLocalization.Tr("uc.ui.options.kill_anim_uc_toggle"),
                 () => {
                     UnknownsCollectionPlugin.KillAnimationsUC.Value =

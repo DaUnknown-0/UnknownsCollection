@@ -28,8 +28,9 @@
  * still runs). For the uncured carrier the scanner prints its own diagnosis instead of the
  * height/weight lines (MedScanMinigame.completeString, set in a Begin postfix); when the scan
  * finishes (NormalPlayerTask.NextStep on a SubmitScan task) colour returns for good, ghost
- * included, and everyone is told (Sub 1 cured) so the host log shows it. Maps without a MedBay
- * scanner (Airship, Fungle) have no cure: the log says so, the modifier stays for the game.
+ * included, and everyone is told (Sub 1 cured) so the host log shows it. On maps without a scan
+ * task (Airship, Fungle) the modifier is not handed out while the cure is on; Unknown's Atlas keeps
+ * the scan task under its own names, so the cure works there.
  *
  * ARCHITECTURE: modifier over any role (the Gambler pattern), host-authoritative pick, custom RPC
  * module 224 on UCRpc.CallId = 230, gated on "everyone has the mod". Options 1685-1689, display
@@ -147,7 +148,10 @@ namespace UnknownsCollection {
                 if (!IsLocalCarrier() || cured || ShipStatus.Instance == null) return false;
                 if (AmongUsClient.Instance == null
                     || AmongUsClient.Instance.GameState != InnerNet.InnerNetClient.GameStates.Started) return false;
-                if ((TasksInColour?.getBool() ?? true) && Minigame.Instance != null) {
+                // Only TASK minigames: cameras, vitals and the door log are minigames too, and in colour
+                // they would let the carrier say "red vented" (audit 04.10.).
+                if ((TasksInColour?.getBool() ?? true) && Minigame.Instance != null
+                    && (Minigame.Instance.MyNormTask != null || Minigame.Instance.MyTask != null)) {
                     // The cure scan itself stays grey: colour has to come back on "RESTORED", not the
                     // moment the scanner opens.
                     bool cureScan = Minigame.Instance.TryCast<MedScanMinigame>() != null && CureFor(PlayerControl.LocalPlayer);
@@ -253,6 +257,14 @@ namespace UnknownsCollection {
 
                     int chance = SpawnRate.getSelection() * 10;
                     if (rnd.Next(1, 101) > chance) return;
+                    // No scan task on this map (Airship, Fungle): with the cure on, a carrier would be
+                    // stuck grey for the whole game although the role text promises a cure, so the
+                    // modifier is not handed out at all (audit 04.10.). Unknown's Atlas keeps the scan
+                    // task under its own name (X-Ray, Height Check, Tick Check), so it cures there too.
+                    if (CureEnabled() && ScanTaskIndex() == byte.MaxValue) {
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[Colorblind] no scan task on this map - modifier not handed out.");
+                        return;
+                    }
 
                     var candidates = PlayerControl.AllPlayerControls.ToArray().Where(IsModifierCandidate).ToList();
                     if (candidates.Count == 0) return;

@@ -43,6 +43,22 @@ namespace UnknownsCollection {
             }
         }
 
+        /// <summary>
+        /// Do this player's tasks count toward the crew's task bar right now? Runs one recount (cheap,
+        /// idempotent: GameData's totals are rebuilt from the player data) so every exclusion of this
+        /// pass is known: TOR's own (killing Lover, Lawyer, dead Pursuer, Thief, fake-task roles,
+        /// impostors) and every UC role that subtracts itself (Bug, Collector, Copycat, Follower, King,
+        /// Necromancer, Pelican, Poltergeist, Stalker). The Auditor harvests only these (04.10.).
+        /// </summary>
+        internal static bool CountsTowardBar(NetworkedPlayerInfo data) {
+            try {
+                if (data == null || GameData.Instance == null) return false;
+                GameData.Instance.RecomputeTaskCounts();
+                if (excluded.Contains(data.PlayerId)) return false;
+                return TasksHandler.taskInfo(data).Item2 > 0;
+            } catch { return false; }
+        }
+
         /// <summary>Takes this player's tasks out of the totals, once per recount.</summary>
         internal static void Subtract(GameData gd, NetworkedPlayerInfo data) {
             if (gd == null || data == null || !excluded.Add(data.PlayerId)) return;

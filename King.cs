@@ -17,8 +17,8 @@
  *    is never told.
  *  - THE CROWN IS THE VIP (option 1662, on by default): the King is always a VIP - on top of
  *    whoever TOR rolled (those keep their tag; TOR's quantity/rate settings decide how many). His
- *    death notifies everyone, but with a royal flash of its own (gold, or the killer's team colour
- *    when TOR's "Show Team Color" is on) and a line of text instead of TOR's silent yellow blink.
+ *    death notifies everyone, but with a royal flash of its own (always gold, User 2026-10-04) and a
+ *    line of text instead of TOR's silent yellow blink.
  *    The King is NOT put into TOR's Vip list (that would fire TOR's flash on top of ours); the tag
  *    is appended to his role info and the flash is our own MurderPlayer postfix. While the option
  *    is on and the King can spawn, the host cannot park TOR's VIP rate at 0 (VipRateClampPatch
@@ -250,15 +250,16 @@ namespace UnknownsCollection {
                     if (!AmHost() || PlayerControl.LocalPlayer == null) return;
                     if (SpawnRate == null || SpawnRate.getSelection() <= 0) return;
                     if (!(AlwaysVip?.getBool() ?? false)) return;
+                    // Only where the King can actually spawn (audit 04.10.).
+                    if (LobbyPlayerCount() < (SpawnMinPlayers?.getFloat() ?? 6f)) return;
                     var vip = CustomOptionHolder.modifierVip;
                     if (vip == null || vip.getSelection() > 0) return;
 
                     bool menuRow = vip.optionBehaviour != null && vip.optionBehaviour is StringOption;
                     vip.updateSelection(1);
-                    if (!menuRow) {
-                        try { if (vip.entry != null) vip.entry.Value = vip.selection; } catch { }
-                        CustomOption.ShareOptionChange((uint)vip.id);
-                    }
+                    // Shared with the lobby, but not written into the saved preset: the raise is a runtime
+                    // consequence of the King, and stayed behind after the King was switched off (04.10.).
+                    if (!menuRow) CustomOption.ShareOptionChange((uint)vip.id);
                     UnknownsCollectionPlugin.Logger?.LogInfo("[King] VIP modifier rate raised to 10 % (King Is Always The VIP is on).");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[King] VIP rate clamp failed: {e.Message}");
@@ -352,15 +353,9 @@ namespace UnknownsCollection {
                     if (!active || !crownVip || king == null || target == null) return;
                     if (target.PlayerId != kingPlayerId) return;
                     if (target.Data == null || !target.Data.IsDead) return;   // a suppressed murder
+                    // Always gold (User 04.10.). With TOR's "Show Team Color" the flash used to show the
+                    // KILLER's team, which TOR's own VIP flash never does (it shows the victim's).
                     Color color = RoyalGold;
-                    if (Vip.showColor && __instance != null && __instance.Data != null) {
-                        color = Color.white;
-                        if (__instance.Data.Role != null && __instance.Data.Role.IsImpostor) color = Color.red;
-                        else {
-                            var info = RoleInfo.getRoleInfoForPlayer(__instance, false).FirstOrDefault();
-                            if (info != null && info.isNeutral) color = Color.blue;
-                        }
-                    }
                     Helpers.showFlash(color, 2f, UCLocalization.Tr("uc.ui.king.fallen"));
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[King] royal flash failed: {e}");

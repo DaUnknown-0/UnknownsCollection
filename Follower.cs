@@ -53,6 +53,14 @@ namespace UnknownsCollection {
         // would miss the very reader this fix exists for.
         private static bool endScreenActive;
 
+        // A first death that must not be acted on yet (audit 04.10.): one inside a meeting waits for
+        // the meeting to be over (a Swapper taken over mid-vote would swap with the dead man's picks),
+        // and a kill waits out the Paramedic's revive window (the revived player would come back
+        // without the role the Follower already took).
+        private static byte pendingTarget = byte.MaxValue;
+        private static float pendingUntil;
+        private static bool pendingAfterMeeting;
+
         private static RoleInfo followerInfo;
         public static RoleInfo FollowerInfo() => followerInfo ??= new RoleInfo(
             "Follower", Color, "Take the role of the first player to die",
@@ -162,6 +170,13 @@ namespace UnknownsCollection {
             }
 
             hasCopied = true;
+            // The Gambler is a CREW modifier: a Follower who just became an Impostor or a neutral role
+            // must not keep betting on the crew's round (same rule as the Sidekick, audit 04.10.).
+            try {
+                bool leftCrew = targetIsImpostor || (info != null && info.isNeutral);
+                if (leftCrew && Gambler.active && Gambler.gambler != null && Gambler.gambler.PlayerId == followerId)
+                    Gambler.WithdrawLocal();
+            } catch { }
             // Remember what the dead player was, for the end-of-game summary only (see the field's
             // comment). Plain Crewmate/Impostor is not worth recording: there is no role to lose.
             if (roleId != RoleId.Crewmate && roleId != RoleId.Impostor)
@@ -217,6 +232,9 @@ namespace UnknownsCollection {
             hasCopied = false;
             rolesTakenOver.Clear();
             endScreenActive = false;
+            pendingTarget = byte.MaxValue;
+            pendingUntil = 0f;
+            pendingAfterMeeting = false;
         }
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
@@ -272,9 +290,62 @@ namespace UnknownsCollection {
                 return;
             }
 
+            if (pendingTarget != byte.MaxValue) return;   // the first death is already known, waiting
+            bool inMeeting = MeetingHud.Instance != null;
+            float window = byExile || inMeeting ? 0f : Paramedic.PendingReviveWindow();
+            if (inMeeting || window > 0f) {
+                pendingTarget = target.PlayerId;
+                pendingAfterMeeting = inMeeting;
+                pendingUntil = Time.time + window + 0.5f;
+                UnknownsCollectionPlugin.Logger?.LogInfo(
+                    $"[Follower] First death: {target.Data?.PlayerName} - takeover deferred ({(inMeeting ? "after the meeting" : $"Paramedic window {window:0}s")}).");
+                return;
+            }
+            DoTakeover(target);
+        }
+
+        private static void DoTakeover(PlayerControl target) {
+            if (follower == null || hasCopied || target == null || !IsAlive(follower)) return;
             UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Follower] First death: {target.Data?.PlayerName}, shifting role to Follower.");
             SendShiftRole(follower.PlayerId, target.PlayerId);
+            // 1.7 (User 04.10.: "volle Uebernahme, aehnlich wie beim Shifter"): UC roles are tags over a
+            // plain Crewmate/Impostor, so SendShiftRole alone only copied the TEAM. Move the UC role
+            // itself with its own setter, like UCThiefSteal does: leftovers of the dead holder first,
+            // then the Follower as the new holder. UC roles without a setter (Werewolf, Pelican,
+            // Necromancer, Collector, Stalker) cannot be moved and stay a team-only copy.
+            try {
+                if (Mixer.TryUcRole(target.PlayerId, out var name, out _, out var set, out var residue)) {
+                    try { residue?.Invoke(); }
+                    catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Follower] {name} residue: {e.Message}"); }
+                    set(follower.PlayerId);
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Follower] UC role {name} moved to the Follower.");
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Follower] UC role takeover failed: {e}");
+            }
+        }
+
+        // Host: resolves a deferred first death. A target the Paramedic brought back is no first
+        // death any more; the next death is.
+        private static void PendingTick() {
+            if (pendingTarget == byte.MaxValue || AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+            if (!active || follower == null || hasCopied || !IsAlive(follower)) { pendingTarget = byte.MaxValue; return; }
+            var t = Helpers.playerById(pendingTarget);
+            if (t == null || t.Data == null) { pendingTarget = byte.MaxValue; return; }
+            if (!t.Data.IsDead) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Follower] {t.Data.PlayerName} was revived - no takeover, waiting for the next death.");
+                pendingTarget = byte.MaxValue;
+                return;
+            }
+            if (pendingAfterMeeting ? (MeetingHud.Instance != null || ExileController.Instance != null) : Time.time < pendingUntil) return;
+            pendingTarget = byte.MaxValue;
+            DoTakeover(t);
+        }
+
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        static class PendingTickPatch {
+            public static void Postfix() { try { PendingTick(); } catch { } }
         }
 
         // AUDIT-2026-08-11 M-1, fixed 2026-08-23: the three hooks below cover murders and the two

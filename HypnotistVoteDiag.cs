@@ -42,6 +42,8 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class TickPatch {
+            // Autotest only: without the env switch the patch is not installed at all (Harmony skips it).
+            static bool Prepare() => On;
             public static void Postfix() {
                 if (!On) return;
                 try {
@@ -137,6 +139,8 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CheckForEndVoting))]
         static class CheckPatch {
+            // Autotest only: without the env switch the patch is not installed at all (Harmony skips it).
+            static bool Prepare() => On;
             private static string last;
             [HarmonyPriority(Priority.Last)]
             public static void Prefix(MeetingHud __instance) {
@@ -148,6 +152,8 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.CastVote))]
         static class BlockVictimPatch {
+            // Autotest only: without the env switch the patch is not installed at all (Harmony skips it).
+            static bool Prepare() => On;
             public static bool Prefix(byte srcPlayerId) {
                 if (On && ExileMe && !diagCasting && srcPlayerId != PlayerControl.LocalPlayer?.PlayerId) return false;  // dummies wait for the diag
                 if (!On || !Timeout || srcPlayerId != victim) return true;
@@ -158,11 +164,15 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.ForceSkipAll))]
         static class SkipAllPatch {
+            // Autotest only: without the env switch the patch is not installed at all (Harmony skips it).
+            static bool Prepare() => On;
             public static void Prefix(MeetingHud __instance) { if (On) Log($"ForceSkipAll called; votes {Votes(__instance)}"); }
         }
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.RpcVotingComplete))]
         static class CompletePatch {
+            // Autotest only: without the env switch the patch is not installed at all (Harmony skips it).
+            static bool Prepare() => On;
             public static void Prefix(MeetingHud __instance, Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<MeetingHud.VoterState> states, NetworkedPlayerInfo exiled, bool tie) {
                 if (!On) return;
                 try {

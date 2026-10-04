@@ -49,6 +49,9 @@
  * still shoots - but why would he shoot his own win condition?). Impostor corpses can be raised
  * too: the other impostors then KNOW ("I killed him, he walks") - re-killing a thrall is the
  * impostors' counterplay, and a re-killed thrall is a fresh corpse he may raise again.
+ * A raised IMPOSTOR comes back on a vanilla CREWMATE role (User 04.10.): he no longer counts for
+ * the impostors' parity or wins with them, he serves only the Necromancer, as the help text says.
+ * The impostors still see his name in red (impostorThralls, NameColorTick), as they did before.
  *
  * THRALL TASKS LEAVE THE GAME - SERVER-VISIBLY. The crew task win is SERVER-authoritative (the
  * bypass experiments: the host cannot intercept it), so a client-side subtraction (the Collector
@@ -110,11 +113,16 @@ namespace UnknownsCollection {
         // The army. PlayerIds stay in here when a thrall is re-killed (their allegiance does not
         // die with them - only the win check filters for the living).
         private static readonly HashSet<byte> thralls = new HashSet<byte>();
+        // Thralls raised from an impostor corpse: their vanilla role is Crewmate now, the impostors
+        // still see them red.
+        private static readonly HashSet<byte> impostorThralls = new HashSet<byte>();
         // Death timestamps (every client, via the uncheckedMurderPlayer postfix below) - the
         // freshness window for raising.
         private static readonly Dictionary<byte, float> deathAt = new Dictionary<byte, float>();
 
         public static bool IsThrall(byte playerId) => active && thralls.Contains(playerId);
+        /// A thrall raised from an impostor: Crewmate role now, but the impostors still see him red.
+        public static bool ShownAsImpostor(byte playerId) => active && impostorThralls.Contains(playerId);
         public static bool IsLocalNecromancer() =>
             active && necromancer != null && PlayerControl.LocalPlayer != null
             && necromancer.PlayerId == PlayerControl.LocalPlayer.PlayerId;
@@ -354,8 +362,20 @@ namespace UnknownsCollection {
             necromancer = Helpers.playerById(id);
             active = necromancer != null;
             necromancerPlayerId = active ? id : byte.MaxValue;
-            if (!active) thralls.Clear();
+            if (!active) { thralls.Clear(); impostorThralls.Clear(); }
             if (active) UCPromotion.Claim(id);
+            // Without the "has tasks" option his own tasks leave the game SERVER-visibly, like the
+            // King's and every thrall's (audit 04.10.): the crew task win is server-authoritative, the
+            // client-side subtraction below alone left a Necromancer who never tasks able to hold
+            // that win hostage.
+            if (active && AmHost() && !(HasTasks?.getBool() ?? false)) {
+                try {
+                    necromancer.Data.RpcSetTasks(new Il2CppStructArray<byte>(0));
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Necromancer] stripped {necromancer.Data.PlayerName}'s tasks (server-visible).");
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Necromancer] own task strip failed: {e}");
+                }
+            }
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo(
                 $"[Necromancer] The Necromancer is {necromancer.Data?.PlayerName}.");
         }
@@ -378,14 +398,16 @@ namespace UnknownsCollection {
                 }
 
                 if (p.Data.IsDead) {
+                    // Always the living CREWMATE role: a raised impostor must not count for the
+                    // impostors' parity nor win with them (User 04.10.), his side is the Necromancer's.
                     bool wasImp = p.Data.Role != null && p.Data.Role.IsImpostor;
                     p.Revive();
-                    RoleManager.Instance.SetRole(p, wasImp ? RoleTypes.Impostor : RoleTypes.Crewmate);
+                    RoleManager.Instance.SetRole(p, RoleTypes.Crewmate);
+                    if (wasImp) impostorThralls.Add(pid);
                 }
                 // TOR's death ledger: a thrall killed again would otherwise be reported (Detective,
                 // Medic, Medium, end screen) with his FIRST killer and time (review 2026-10-02).
-                try { Pelican.DeadPlayersLedger()?.RemoveAll(d => d != null && d.player != null && d.player.PlayerId == pid); }
-                catch { }
+                Pelican.ForgetDeath(pid);
                 try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
 
                 thralls.Add(pid);
@@ -463,7 +485,9 @@ namespace UnknownsCollection {
                     int chance = SpawnRate.getSelection() * 10;
                     if (rnd.Next(1, 101) > chance) return;
 
-                    var candidates = PlayerControl.AllPlayerControls.ToArray().Where(UCPromotion.IsPlainCrewmate).ToList();
+                    // No Lover: a Thrall partner breaks both win conditions (Fable review 2026-10-04)
+                    var candidates = PlayerControl.AllPlayerControls.ToArray()
+                        .Where(p => UCPromotion.IsPlainCrewmate(p) && !UCPromotion.IsLover(p)).ToList();
                     if (candidates.Count == 0) return;
                     SendSetNecromancer(candidates[rnd.Next(candidates.Count)].PlayerId);
                 } catch (Exception e) {
@@ -552,6 +576,8 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class HudUpdatePatch {
+            // After TOR's own HudManager.Update postfix, which repaints every name each frame.
+            [HarmonyPriority(Priority.Last)]
             public static void Postfix() {
                 try {
                     if (!active) return;
@@ -628,6 +654,7 @@ namespace UnknownsCollection {
             try {
                 bool amNecro = IsLocalNecromancer();
                 bool amThrall = IsLocalThrall();
+                ImpostorThrallColorTick(amNecro || amThrall);
                 if (!amNecro && !amThrall) return;
 
                 if (amNecro) {
@@ -648,6 +675,24 @@ namespace UnknownsCollection {
                     if (mark) ps.NameText.color = Color;
                 }
             } catch { }
+        }
+
+        // The impostors keep seeing a raised partner in red (User 04.10.): TOR paints a name red only
+        // for a vanilla impostor role, which he no longer has.
+        private static void ImpostorThrallColorTick(bool skip) {
+            if (skip || impostorThralls.Count == 0) return;
+            var lp = PlayerControl.LocalPlayer;
+            if (lp == null || lp.Data == null || lp.Data.Role == null || !lp.Data.Role.IsImpostor) return;
+            foreach (byte id in impostorThralls) {
+                var p = Helpers.playerById(id);
+                if (p?.cosmetics?.nameText != null)
+                    p.cosmetics.nameText.color = Palette.ImpostorRed.SetAlpha(p.cosmetics.nameText.color.a);
+            }
+            var meeting = MeetingHud.Instance;
+            if (meeting?.playerStates == null) return;
+            foreach (var ps in meeting.playerStates)
+                if (ps != null && ps.NameText != null && impostorThralls.Contains(ps.TargetPlayerId))
+                    ps.NameText.color = Palette.ImpostorRed;
         }
 
         // ---- The cascade: the master falls, the magic fails ----
@@ -855,9 +900,10 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Task accounting: the Necromancer's own tasks never count toward the crew total
-        // (client-side Collector pattern). Thrall tasks need no clause here - the raise strips
-        // them SERVER-visibly via RpcSetTasks (see ApplyRaise), so every counter agrees. ----
+        // ---- Task accounting: the Necromancer's own tasks never count toward the crew total.
+        // The host strips them server-visibly when he is set (ApplySetNecromancer); this client-side
+        // subtraction stays as the backstop for the frames before that sync arrives. Thrall tasks
+        // need no clause here - the raise strips them the same way (see ApplyRaise). ----
         [HarmonyPatch(typeof(GameData), nameof(GameData.RecomputeTaskCounts))]
         static class TaskPatch {
             public static void Postfix(GameData __instance) {
@@ -910,6 +956,7 @@ namespace UnknownsCollection {
             active = false;
             necromancerPlayerId = byte.MaxValue;
             thralls.Clear();
+            impostorThralls.Clear();
             deathAt.Clear();
             channeling = false;
             channelTargetId = byte.MaxValue;

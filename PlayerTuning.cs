@@ -450,7 +450,7 @@ namespace UnknownsCollection {
         private static void ApplyRevive(byte pid) {
             try {
                 var p = Helpers.playerById(pid);
-                if (p == null || p.Data == null || !p.Data.IsDead) return;
+                if (p == null || p.Data == null || !p.Data.IsDead || p.Data.Disconnected) return;   // a left player stays gone (04.10.)
                 // Second meeting guard (AUDIT L-9). RoleControl.Revive already refuses this during a
                 // meeting - "the voting UI knows no resurrection" - but that guard sits with ONE
                 // caller, while this applier runs on every client and is reachable from anything that
@@ -471,6 +471,8 @@ namespace UnknownsCollection {
                     if (body != null && body.ParentId == pid)
                         UnityEngine.Object.Destroy(body.gameObject);
                 try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
+                // TOR's death ledger and a queued Bait report, like every other UC revive (04.10.).
+                Pelican.ForgetDeath(pid);
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[PlayerTuning] revived {p.Data.PlayerName}.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[PlayerTuning] ApplyRevive failed: {e}");

@@ -64,6 +64,7 @@ namespace UnknownsCollection {
         private static int relicIdCounter;           // host: next relic id for extra spawns
         private static int extraRelicsGranted;       // host: task-progress relics already spawned
         private static int extraSpawnedTotal;        // ALL clients (via RPC): extra relics in play
+        private static int initialSpawned;           // ALL clients: relics the opening spawn really placed (0 = not yet)
         private static float nextTaskCheck;          // host: throttle for the task-progress check
         private static float nextWinTry;             // host: throttle for the instant-win retry
 
@@ -115,7 +116,9 @@ namespace UnknownsCollection {
                     false, SpawnRate);
                 SenseRadius = CustomOption.Create(1587, Types.Neutral, "Relic Sense Radius",
                     5f, 2f, 10f, 1f, SpawnRate);
-                HasTasks = CustomOption.Create(1588, Types.Neutral, "Collector Has Tasks",
+                // Off: the tasks stay as a disguise but do not count. On: they count for the crew.
+                // Named after what it does; "Has Tasks" meant the opposite of the Copycat's (04.10.).
+                HasTasks = CustomOption.Create(1588, Types.Neutral, "Collector's Tasks Count For The Crew",
                     false, SpawnRate);
                 CollectCooldown = CustomOption.Create(1589, Types.Neutral, "Collect Cooldown",
                     15f, 0f, 60f, 2.5f, SpawnRate);
@@ -147,9 +150,12 @@ namespace UnknownsCollection {
             active && collector != null && PlayerControl.LocalPlayer != null
             && collector.PlayerId == PlayerControl.LocalPlayer.PlayerId;
         private static int NeededCount() {
+            // Capped by what the opening spawn REALLY placed, not by the option: a small map can offer
+            // fewer anchors than "Relics Spawned" asks for, and the goal must stay reachable (04.10.).
+            int spawned = initialSpawned > 0 ? initialSpawned
+                        : (RelicsSpawned != null ? Mathf.RoundToInt(RelicsSpawned.getFloat()) : 6);
             int baseNeeded = Mathf.Min(
-                RelicsNeeded != null ? Mathf.RoundToInt(RelicsNeeded.getFloat()) : 4,
-                RelicsSpawned != null ? Mathf.RoundToInt(RelicsSpawned.getFloat()) : 6);
+                RelicsNeeded != null ? Mathf.RoundToInt(RelicsNeeded.getFloat()) : 4, spawned);
             // Option: every task-progress extra relic also raises the goal - crew task progress
             // actively delays the Collector instead of feeding him.
             if (ExtraRaisesGoal?.getBool() ?? false) baseNeeded += extraSpawnedTotal;
@@ -181,6 +187,7 @@ namespace UnknownsCollection {
                 foreach (var p in positions) { w.Write(p.x); w.Write(p.y); }
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 CollectorRelics.SpawnAll(positions);
+                initialSpawned = positions.Count;
                 relicIdCounter = positions.Count; // extra spawns continue the id sequence
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Collector] SendSpawnRelics failed: {e}"); }
         }
@@ -281,7 +288,7 @@ namespace UnknownsCollection {
                         var positions = new List<Vector2>(count);
                         for (int i = 0; i < count; i++)
                             positions.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
-                        if (UCRpc.RequireHost("Collector.SpawnRelics")) CollectorRelics.SpawnAll(positions);
+                        if (UCRpc.RequireHost("Collector.SpawnRelics")) { CollectorRelics.SpawnAll(positions); initialSpawned = positions.Count; }
                         break;
                     }
                     // Owner-authored: only the Collector's own finished channel sends this. Unguarded,
@@ -317,6 +324,7 @@ namespace UnknownsCollection {
             relicIdCounter = 0;
             extraRelicsGranted = 0;
             extraSpawnedTotal = 0;
+            initialSpawned = 0;
             nextTaskCheck = 0f;
             nextWinTry = 0f;
             channeling = false;
@@ -501,6 +509,17 @@ namespace UnknownsCollection {
         // playtest - standing visually "at" the relic was often just outside it.
         private const float CollectRange = 2.0f;
 
+        // In range AND in sight: relics sit at consoles, often against a wall, and the range alone let
+        // the Collector pick one up from the next room unseen (audit 04.10.). Same test as the Beacon.
+        private static CollectorRelics.Relic ReachableRelic(Vector2 from) {
+            var r = CollectorRelics.NearestRelic(from, CollectRange);
+            if (r == null) return null;
+            Vector2 d = r.pos - from;
+            float mag = d.magnitude;
+            if (mag > 0.05f && PhysicsHelpers.AnyNonTriggersBetween(from, d / mag, mag, Constants.ShipAndObjectsMask)) return null;
+            return r;
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         static class HudStartPatch {
             [HarmonyPriority(Priority.Low)]
@@ -514,7 +533,7 @@ namespace UnknownsCollection {
                                 return;
                             }
                             Vector2 herePos = PlayerControl.LocalPlayer.GetTruePosition();
-                            var relic = CollectorRelics.NearestRelic(herePos, CollectRange);
+                            var relic = ReachableRelic(herePos);
                             if (relic == null) {
                                 var any = CollectorRelics.NearestRelic(herePos, float.MaxValue);
                                 if (any != null)
@@ -538,7 +557,7 @@ namespace UnknownsCollection {
                               && !HasAllRelics(),
                         () => channeling
                               || (PlayerControl.LocalPlayer.CanMove
-                                  && CollectorRelics.NearestRelic(PlayerControl.LocalPlayer.GetTruePosition(), CollectRange) != null),
+                                  && ReachableRelic(PlayerControl.LocalPlayer.GetTruePosition()) != null),
                         () => { channeling = false; },
                         UCAssets.CollectorIcon,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,

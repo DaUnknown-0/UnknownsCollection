@@ -58,10 +58,13 @@ namespace UnknownsCollection {
             _ => ""
         };
 
-        // Effect durations (seconds).
-        private const float CamoDuration = 10f;
-        private const float MorphDuration = 15f;
-        private const float ShieldDuration = 5f;
+        // Effect durations (seconds): the SOURCE role's own configured duration, like the cooldowns
+        // below (audit 04.10.: they were fixed at 10/15/5 s whatever the host set). TOR loads these
+        // from the options in clearAndReload for every role, spawned or not; the fallbacks only
+        // cover a value that is not loaded.
+        private static float CamoDuration => Camouflager.duration > 0f ? Camouflager.duration : 10f;
+        private static float MorphDuration => Morphling.duration > 0f ? Morphling.duration : 10f;
+        private static float ShieldDuration => TimeMaster.shieldDuration > 0f ? TimeMaster.shieldDuration : 3f;
 
         // Per-ability cooldowns (seconds). Our ability buttons use CustomButton's HasEffect=false overload,
         // which never auto-resets its Timer — so without an explicit MaxTimer + a Timer reset on click the
@@ -153,7 +156,7 @@ namespace UnknownsCollection {
                     6f, 4f, 15f, 1f, SpawnRate);
                 MaxAbilitiesStored = CustomOption.Create(1522, Types.Neutral, "Copycat Max Stored Abilities",
                     3f, 1f, 5f, 1f, SpawnRate);
-                CopycatHasTasks = CustomOption.Create(1523, Types.Neutral, "Copycat Has Tasks",
+                CopycatHasTasks = CustomOption.Create(1523, Types.Neutral, "Copycat Gets Fake Tasks",
                     true, SpawnRate);
                 AbilitiesNeededToWin = CustomOption.Create(1524, Types.Neutral, "Copycat Abilities Needed To Win",
                     1f, 0f, 5f, 1f, SpawnRate);
@@ -442,11 +445,20 @@ namespace UnknownsCollection {
                 SendShootMiss(); // otherwise a suppressed shot is completely silent for the shooter
                 return;
             }
-            bool targetIsImpostor = target.Data.Role != null && target.Data.Role.IsImpostor;
-            if (targetIsImpostor)
+            // The real Sheriff's target rule (TOR Buttons.cs, sheriffKillButton): impostors (a Mini only
+            // once grown), the Spy if "Spy Can Die To Sheriff", every neutral if "Sheriff Can Kill
+            // Neutrals", and always the Jackal and his Sidekick. Anyone else: the shot backfires,
+            // and an Armored Copycat survives the backfire like an Armored Sheriff (audit 04.10.).
+            bool legal = (target.Data.Role != null && target.Data.Role.IsImpostor && (target != Mini.mini || Mini.isGrownUp()))
+                         || (Sheriff.spyCanDieToSheriff && Spy.spy == target)
+                         || (Sheriff.canKillNeutrals && Helpers.isNeutral(target))
+                         || Jackal.jackal == target || Sidekick.sidekick == target;
+            if (legal)
                 RpcUncheckedMurder(copycat.PlayerId, target.PlayerId);          // clean kill
+            else if (!Helpers.checkArmored(copycat, true, false))
+                RpcUncheckedMurder(copycat.PlayerId, copycat.PlayerId);         // backfire kills the Copycat
             else
-                RpcUncheckedMurder(copycat.PlayerId, copycat.PlayerId);         // backfire: shooting Crew kills the Copycat
+                SendShootMiss();                                                // armor took the backfire
         }
 
         public static void MarkFromDraft(byte playerId) => ApplySetCopycat(playerId);
@@ -471,6 +483,11 @@ namespace UnknownsCollection {
             learnedAbilities.Add(ability);
             // Learn blip only for the Copycat itself - nobody else should hear what it just picked up.
             if (IsLocalCopycat()) UCAssets.PlayCopycatLearn();
+            // The button's timer does not run while the ability is unknown (CustomButton.Update stops
+            // before the countdown when HasButton is false), so a fresh ability used to wait out its
+            // FULL cooldown. A short start instead (audit 04.10.).
+            if (IsLocalCopycat() && abilityButtons.TryGetValue(ability, out var learnedButton) && learnedButton != null)
+                learnedButton.Timer = Mathf.Min(learnedButton.MaxTimer, 10f);
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Copycat] Learned ability {ability} (known: {learnedAbilities.Count}).");
 
             // The native Impostor vent button only shows for AU roles it considers vent-capable. A Copycat
@@ -578,10 +595,20 @@ namespace UnknownsCollection {
         // shield at the killer, a different usedAbilities count and so a different Copycat win. Now
         // only the host's observation counts, broadcast as SubLearn (the path the sight-gated Vent
         // learn already uses), so every client holds the same list in the same order.
-        private static void HostLearn(Ability ability) {
+        // `witnesses`: the players whose action is being copied. The Copycat has to SEE one of them
+        // (light radius and line of sight, the Vent learn's rule) - learning a morph or a kill on the
+        // far side of the map gave him knowledge and a sound cue he could not have had (audit 04.10.).
+        // Camouflage passes none: the camouflage itself is visible to everyone, everywhere.
+        private static void HostLearn(Ability ability, params PlayerControl[] witnesses) {
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
             if (!active || !CopycatIsAlive() || MaxAbilities() <= 0) return;
             if (learnedAbilities.Contains(ability)) return;   // no broadcast for a known ability
+            if (witnesses != null && witnesses.Length > 0) {
+                bool seen = false;
+                foreach (var w in witnesses)
+                    if (w != null && copycat != null && (w.PlayerId == copycat.PlayerId || CopycatCanSee(w))) { seen = true; break; }
+                if (!seen) return;
+            }
             SendLearn(ability);
         }
 
@@ -598,7 +625,7 @@ namespace UnknownsCollection {
         static class LearnMorphlingPatch {
             public static void Postfix() {
                 try {
-                    if (Morphling.morphling != null) HostLearn(Ability.Morphling);
+                    if (Morphling.morphling != null) HostLearn(Ability.Morphling, Morphling.morphling);
                 } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Morphling) failed: {e}"); }
             }
         }
@@ -607,16 +634,16 @@ namespace UnknownsCollection {
         static class LearnShieldPatch {
             public static void Postfix() {
                 try {
-                    HostLearn(Ability.Shield);
+                    if (TimeMaster.timeMaster != null) HostLearn(Ability.Shield, TimeMaster.timeMaster);
                 } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Shield) failed: {e}"); }
             }
         }
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.uncheckedMurderPlayer))]
         static class LearnShootPatch {
-            public static void Postfix() {
+            public static void Postfix(byte sourceId, byte targetId) {
                 try {
-                    HostLearn(Ability.Shoot);
+                    HostLearn(Ability.Shoot, Helpers.playerById(sourceId), Helpers.playerById(targetId));
                 } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Copycat] ability sniff (Shoot) failed: {e}"); }
             }
         }
@@ -625,9 +652,9 @@ namespace UnknownsCollection {
         // uncheckedMurderPlayer detour is the one that dropped, the host still sees the kill here.
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
         static class LearnShootGamePatch {
-            public static void Postfix([HarmonyArgument(0)] PlayerControl target) {
+            public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
-                    if (target != null && target.Data != null && target.Data.IsDead) HostLearn(Ability.Shoot);
+                    if (target != null && target.Data != null && target.Data.IsDead) HostLearn(Ability.Shoot, __instance, target);
                 } catch { }
             }
         }
@@ -635,7 +662,8 @@ namespace UnknownsCollection {
         // ====================================================================
         // Shield: suppress normal kills on the shielded Copycat at the same choke point the Medic
         // shield uses (Helpers.checkMuderAttempt), so no downstream MurderPlayer side effects fire.
-        // (Unchecked murders - e.g. Tesla/Saboteur/our own backfire - bypass this, by design.)
+        // (Unchecked murders - e.g. our own backfire - bypass this, by design. The Tesla discharge and
+        // the Saboteur trap ask checkMuderAttempt since 2026-10-04, so this shield covers them too.)
         // ====================================================================
         [HarmonyPatch(typeof(Helpers), nameof(Helpers.checkMuderAttempt))]
         static class ShieldPatch {
@@ -859,15 +887,20 @@ namespace UnknownsCollection {
                     currentMorphTarget = null;
                     if (!CopycatIsAlive() || InMeeting()) return;
 
-                    float closestShoot = 2f;   // shoot range
+                    // Like TOR's setTarget: the lobby's kill distance for the shot, nobody in a vent, nobody
+                    // behind a wall (audit 04.10.: the old pure distance check shot through walls).
+                    float closestShoot = 2f;
+                    try { closestShoot = AmongUs.GameOptions.GameOptionsData.KillDistances[Mathf.Clamp(GameOptionsManager.Instance.currentNormalGameOptions.KillDistance, 0, 2)]; } catch { }
                     float closestMorph = 5f;   // morph can target from farther
                     bool wantShoot = learnedAbilities.Contains(Ability.Shoot);
                     bool wantMorph = learnedAbilities.Contains(Ability.Morphling);
                     if (!wantShoot && !wantMorph) return;
 
                     foreach (var p in PlayerControl.AllPlayerControls) {
-                        if (p == null || !IsAlive(p) || p.PlayerId == copycat.PlayerId) continue;
-                        float d = Vector2.Distance(copycat.GetTruePosition(), p.GetTruePosition());
+                        if (p == null || !IsAlive(p) || p.PlayerId == copycat.PlayerId || p.inVent) continue;
+                        Vector2 from = copycat.GetTruePosition(), diff = p.GetTruePosition() - from;
+                        float d = diff.magnitude;
+                        if (d > 0.01f && PhysicsHelpers.AnyNonTriggersBetween(from, diff / d, d, Constants.ShipAndObjectsMask)) continue;
                         if (wantShoot && d < closestShoot) { closestShoot = d; currentTarget = p; }
                         if (wantMorph && d < closestMorph) { closestMorph = d; currentMorphTarget = p; }
                     }
@@ -926,11 +959,23 @@ namespace UnknownsCollection {
                 () => { /* nothing on meeting */ },
                 GetAbilitySprite(ability),
                 pos,
-                __instance, KeyCode.None, false, AbilityButtonText(ability));
+                __instance, AbilityKey(ability), false, AbilityButtonText(ability));
             button.MaxTimer = AbilityCooldown(ability);
-            button.Timer = button.MaxTimer; // start on cooldown (elapses before the ability is ever learned)
+            // The timer does NOT run before the ability is learned (no HasButton, no countdown);
+            // LearnAbility gives it a short start instead.
+            button.Timer = button.MaxTimer;
             abilityButtons[ability] = button;
         }
+
+        // Keys like TOR's: the shot on Q (the kill key), the rest on F/G/H. Nightfall's key manager
+        // reassigns around collisions with other buttons on screen.
+        private static KeyCode AbilityKey(Ability a) => a switch {
+            Ability.Shoot => KeyCode.Q,
+            Ability.Shield => KeyCode.F,
+            Ability.Morphling => KeyCode.G,
+            Ability.Camouflage => KeyCode.H,
+            _ => KeyCode.None
+        };
 
         private static readonly Dictionary<Ability, Sprite> abilitySpriteCache = new();
         private static Sprite GetAbilitySprite(Ability ability) {

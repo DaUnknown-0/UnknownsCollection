@@ -305,7 +305,9 @@ namespace UnknownsCollection {
         public static void PlayTeslaWarning(float volume = VolStd) => Play("tesla_warning", volume);
         public static void PlayTeslaPromote(float volume = VolStd) => Play("tesla_promote", volume);
         public static void PlayTeslaPulse(float volume = VolSoft) => Play("tesla_pulse", volume);
-        public static void PlayTeslaDischargeAt(Vector2 at, float volume = VolLoud) => PlayAt("tesla_discharge", at, volume);
+        // Heard as far as the discharge flash is seen (TeslaKillFx.FlashRange 12), not across most of
+        // the map on the default 4-22 curve (audit 04.10.).
+        public static void PlayTeslaDischargeAt(Vector2 at, float volume = VolLoud) => PlayAt("tesla_discharge", at, volume, 3f, 12f);
         public static void PlayTeslaSelect(float volume = VolSoft) => Play("tesla_select", volume);
 
         // ---- Sounds: Illusionist / Copycat ----

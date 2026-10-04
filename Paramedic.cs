@@ -93,6 +93,14 @@ namespace UnknownsCollection {
         public static bool IsLocalParamedic() =>
             active && paramedic != null && PlayerControl.LocalPlayer != null && paramedic.PlayerId == PlayerControl.LocalPlayer.PlayerId;
         private static float Window => ReviveWindow?.getFloat() ?? 10f;
+        /// Seconds after a kill in which the Paramedic could still bring the victim back (0 = he
+        /// cannot: no Paramedic, dead, or no revives left). The Follower waits this long (04.10.).
+        internal static float PendingReviveWindow() {
+            try {
+                if (!active || paramedic == null || paramedic.Data == null || paramedic.Data.IsDead || usesLeft <= 0) return 0f;
+                return Window;
+            } catch { return 0f; }
+        }
 
         // ---- RPC ----
         private static MessageWriter BeginRpc(byte sub) {
@@ -198,26 +206,26 @@ namespace UnknownsCollection {
                 var p = Helpers.playerById(victimId);
                 if (p == null || p.Data == null || !p.Data.IsDead) return;
                 if (InMeeting()) return;
-                bool wasImp = p.Data.Role != null && p.Data.Role.IsImpostor;
-                p.Revive();
-                RoleManager.Instance.SetRole(p, wasImp ? RoleTypes.Impostor : RoleTypes.Crewmate);
-                foreach (var body in UnityEngine.Object.FindObjectsOfType<DeadBody>())
-                    if (body != null && body.ParentId == victimId) UnityEngine.Object.Destroy(body.gameObject);
-                try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
-                // TOR's death ledger (Detective, Medic, Hacker vitals, end screen read the FIRST entry):
-                // a revived player must leave it, or a second death reports the first killer and time.
-                // Same cleanup as Pelican.RevivePlayer and Necromancer.ApplyRaise.
-                try { Pelican.DeadPlayersLedger()?.RemoveAll(d => d != null && d.player != null && d.player.PlayerId == victimId); }
-                catch { }
+                // The partner of a revived Lover died of grief (TOR: MurderPlayer(partner, partner)).
+                // Reviving one without the other split the pair for good, so the partner comes back
+                // with him, at his own body, without costing a charge (audit 04.10.). Noted BEFORE
+                // the revive: the grief kill is recognised by killer == victim.
+                byte partnerId = LoverPartnerOf(victimId);
+                bool partnerGrieved = partnerId != byte.MaxValue && killerOf.TryGetValue(partnerId, out byte pk) && pk == partnerId;
+                ReviveOne(p, victimId, at);
                 usesLeft = Mathf.Max(0, usesLeft - 1);
-                killedAt.Remove(victimId);
+                if (partnerGrieved) {
+                    var partner = Helpers.playerById(partnerId);
+                    var partnerBody = BodyOf(partnerId);
+                    if (partner != null && partner.Data != null && partner.Data.IsDead && partnerBody != null) {
+                        ReviveOne(partner, partnerId, partnerBody.TruePosition);
+                        UnknownsCollectionPlugin.Logger?.LogInfo($"[Paramedic] {partner.Data.PlayerName} (Lover) came back with his partner.");
+                    }
+                }
+                // Known exceptions, not undone by a revive: a revived Jackal finds his Sidekick
+                // already promoted, and a Lawyer whose client died already became a Pursuer.
 
                 var lp = PlayerControl.LocalPlayer;
-                if (lp != null && lp.PlayerId == victimId) {
-                    // the owner moves himself; a ghost may have wandered off from his body
-                    try { lp.NetTransform.RpcSnapTo(at); } catch { }
-                    Helpers.showFlash(Color, 1.5f, UCLocalization.Tr("uc.ui.paramedic.revived"));
-                }
                 if (lp != null && IsLocalParamedic()) Helpers.showFlash(Color, 1f, UCLocalization.Tr("uc.ui.paramedic.saved", p.Data.PlayerName));
                 if (lp != null && (TellKiller?.getBool() ?? true) && killerOf.TryGetValue(victimId, out byte k) && k == lp.PlayerId && k != victimId)
                     Helpers.showFlash(new Color(1f, 1f, 1f, 0.6f), 1.5f, UCLocalization.Tr("uc.ui.paramedic.killer_hint"));
@@ -225,6 +233,35 @@ namespace UnknownsCollection {
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Paramedic] ApplyRevive failed: {e}");
             }
+        }
+
+        // One player back on his feet (every client): the living vanilla role from the ghost's faction,
+        // the body gone, the task recount, TOR's leftovers of the death (Pelican.ForgetDeath), and the
+        // owner moves himself back to where his body lay.
+        private static void ReviveOne(PlayerControl p, byte id, Vector2 at) {
+            bool wasImp = p.Data.Role != null && p.Data.Role.IsImpostor;
+            p.Revive();
+            RoleManager.Instance.SetRole(p, wasImp ? RoleTypes.Impostor : RoleTypes.Crewmate);
+            foreach (var body in UnityEngine.Object.FindObjectsOfType<DeadBody>())
+                if (body != null && body.ParentId == id) UnityEngine.Object.Destroy(body.gameObject);
+            try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
+            // TOR's death ledger (Detective, Medic, Hacker vitals, end screen read the FIRST entry) and
+            // a queued Bait report; same cleanup as Pelican.RevivePlayer and Necromancer.ApplyRaise.
+            Pelican.ForgetDeath(id);
+            killedAt.Remove(id);
+            var lp = PlayerControl.LocalPlayer;
+            if (lp != null && lp.PlayerId == id) {
+                // the owner moves himself; a ghost may have wandered off from his body
+                try { lp.NetTransform.RpcSnapTo(at); } catch { }
+                Helpers.showFlash(Color, 1.5f, UCLocalization.Tr("uc.ui.paramedic.revived"));
+            }
+        }
+
+        private static byte LoverPartnerOf(byte id) {
+            if (Lovers.lover1 == null || Lovers.lover2 == null) return byte.MaxValue;
+            if (Lovers.lover1.PlayerId == id) return Lovers.lover2.PlayerId;
+            if (Lovers.lover2.PlayerId == id) return Lovers.lover1.PlayerId;
+            return byte.MaxValue;
         }
 
         // ---- Freshness: every client stamps every murder ----

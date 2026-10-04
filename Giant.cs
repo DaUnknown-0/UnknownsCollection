@@ -132,6 +132,10 @@ namespace UnknownsCollection {
             giant = id == byte.MaxValue ? null : Helpers.playerById(id);
             active = giant != null;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Giant] The Giant is {giant.Data?.PlayerName}.");
+            // The modifier reveal cue for the carrier, like the Sleepwalker and the Void (audit 04.10.:
+            // the Giant got nothing). Modifier pattern: no Claim, he still has his role.
+            if (active && PlayerControl.LocalPlayer != null && giant.PlayerId == PlayerControl.LocalPlayer.PlayerId)
+                UCRevealFx.PlayReveal();
         }
 
         // ---- Pick (host; modifiers have no draft entry) ----

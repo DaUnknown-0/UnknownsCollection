@@ -100,6 +100,7 @@ namespace UnknownsCollection {
         private struct Grant {
             public int Slot;
             public string Who;
+            public int MovedTo;   // -1, or the palette colour the guard moved him to (see LobbyGuardPatch)
         }
 
         private static readonly Dictionary<byte, Grant> grants = new Dictionary<byte, Grant>();
@@ -165,7 +166,7 @@ namespace UnknownsCollection {
         /// covers a host who took over the lobby after the colour was handed out.
         public static void RememberGrant(PlayerControl who, int slot) {
             if (who == null || !IsCustom(slot)) return;
-            grants[who.PlayerId] = new Grant { Slot = slot, Who = Ident(who) };
+            grants[who.PlayerId] = new Grant { Slot = slot, Who = Ident(who), MovedTo = -1 };
         }
 
         // ================================================================================
@@ -329,6 +330,10 @@ namespace UnknownsCollection {
 
                         byte to = (byte)FreeColourFor(p);
                         p.RpcSetColor(to);
+                        // The grant is SUSPENDED, not kept as it was (audit 04.10.): it only comes back
+                        // if he still wears this colour when the lobby is safe again. A colour he picks
+                        // in between is his own choice and ends the grant (Restore).
+                        if (grants.TryGetValue(p.PlayerId, out var g0)) { g0.MovedTo = to; grants[p.PlayerId] = g0; }
                         UnknownsCollectionPlugin.Logger?.LogInfo(
                             $"[UCColors] {p.Data.PlayerName} was moved off a custom colour to {to}: "
                             + "somebody in the lobby does not have this mod and could not render it.");
@@ -387,6 +392,15 @@ namespace UnknownsCollection {
                     if (g.Who != Ident(p)) { grants.Remove(p.PlayerId); continue; }
                     int slot = g.Slot;
                     if (p.Data.DefaultOutfit.ColorId == slot) continue;
+                    if (g.MovedTo >= 0) {
+                        if (p.Data.DefaultOutfit.ColorId != g.MovedTo) {
+                            grants.Remove(p.PlayerId);
+                            UnknownsCollectionPlugin.Logger?.LogInfo($"[UCColors] {p.Data.PlayerName} picked another colour after being moved off his grant - not restored.");
+                            continue;
+                        }
+                        g.MovedTo = -1;
+                        grants[p.PlayerId] = g;
+                    }
                     if (!TryGetSlot(slot, out var rgb)) continue;
                     UCColorGrant.BroadcastSlot(slot, rgb);
                     p.RpcSetColor((byte)slot);

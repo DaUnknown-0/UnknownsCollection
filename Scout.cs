@@ -443,6 +443,17 @@ namespace UnknownsCollection {
                     c.a = alpha;
                     player.cosmetics.nameText.color = c;
                 }
+                // Pet and colorblind label fade along, like TOR's Chameleon does it (audit 04.10.: the
+                // pet trotted on fully visible behind an invisible Scout).
+                try {
+                    if (AmongUs.Data.DataManager.Settings.Accessibility.ColorBlindMode && player.cosmetics.colorBlindText != null)
+                        player.cosmetics.colorBlindText.color = player.cosmetics.colorBlindText.color.SetAlpha(alpha);
+                    var pet = player.cosmetics.currentPet;
+                    if (pet != null) {
+                        foreach (var rend in pet.renderers) if (rend != null) rend.color = rend.color.SetAlpha(alpha);
+                        foreach (var shadow in pet.shadows) if (shadow != null) shadow.color = shadow.color.SetAlpha(alpha);
+                    }
+                } catch { }
             } catch { }
         }
 

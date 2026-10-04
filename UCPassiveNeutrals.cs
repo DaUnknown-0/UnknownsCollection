@@ -9,8 +9,8 @@
  * Arsonist, Vulture, Lawyer, Pursuer). UC's passive neutrals carry isNeutral RoleInfos too, so the
  * Snitch in "Killers" mode pointed arrows and map dots at a Bug, Collector, Copycat, Necromancer or a
  * Follower before his takeover, and those players got the "Snitch revealed" warning. Same fix
- * MultiJester uses for its extra Jesters: a postfix that takes them back out. The Hunter keeps its
- * own copy of this list (Hunter.UcPassiveNeutral) for its prey check.
+ * MultiJester uses for its extra Jesters: a postfix that takes them back out. The Hunter's prey check
+ * asks IsPassive directly as well, so there is exactly one list.
  */
 
 using HarmonyLib;

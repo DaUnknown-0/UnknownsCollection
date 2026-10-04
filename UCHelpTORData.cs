@@ -83,13 +83,19 @@ namespace UnknownsCollection {
                 E("arsonist", "Arsonist", Neutral, () => RoleInfo.arsonist.color, () => CustomOptionHolder.arsonistSpawnRate),
                 E("jackal", "Jackal", Neutral, () => RoleInfo.jackal.color, () => CustomOptionHolder.jackalSpawnRate),
                 // Sidekick has no own spawn rate - the Jackal creates it (jackalCanCreateSidekick),
-                // itself gated behind jackalSpawnRate; that parent option is used here.
-                E("sidekick", "Sidekick", Neutral, () => RoleInfo.sidekick.color, () => CustomOptionHolder.jackalSpawnRate),
+                // itself gated behind jackalSpawnRate. Listed only while the Jackal may create one
+                // (audit 04.10.: it was listed with that option off, its default).
+                E("sidekick", "Sidekick", Neutral, () => RoleInfo.sidekick.color,
+                  () => CustomOptionHolder.jackalCanCreateSidekick != null && CustomOptionHolder.jackalCanCreateSidekick.getBool()
+                        ? CustomOptionHolder.jackalSpawnRate : null),
                 E("vulture", "Vulture", Neutral, () => RoleInfo.vulture.color, () => CustomOptionHolder.vultureSpawnRate),
                 E("lawyer", "Lawyer", Neutral, () => RoleInfo.lawyer.color, () => CustomOptionHolder.lawyerSpawnRate),
                 // Prosecutor/Pursuer are runtime transformations of Lawyer (see RPC.cs), neither has
                 // its own spawn-rate option; both are gated through lawyerSpawnRate.
-                E("prosecutor", "Prosecutor", Neutral, () => RoleInfo.prosecutor.color, () => CustomOptionHolder.lawyerSpawnRate),
+                // ... and the Prosecutor only with a chance above 0 % that the Lawyer is one.
+                E("prosecutor", "Prosecutor", Neutral, () => RoleInfo.prosecutor.color,
+                  () => CustomOptionHolder.lawyerIsProsecutorChance != null && CustomOptionHolder.lawyerIsProsecutorChance.getSelection() > 0
+                        ? CustomOptionHolder.lawyerSpawnRate : null),
                 E("pursuer", "Pursuer", Neutral, () => RoleInfo.pursuer.color, () => CustomOptionHolder.lawyerSpawnRate),
                 E("thief", "Thief", Neutral, () => RoleInfo.thief.color, () => CustomOptionHolder.thiefSpawnRate),
 

@@ -27,6 +27,8 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class TickPatch {
+            // Autotest only: without the env switch the patch is not installed at all (Harmony skips it).
+            static bool Prepare() => On;
             public static void Postfix() {
                 if (!On) return;
                 try {

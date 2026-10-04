@@ -14,7 +14,9 @@
  * WHAT COUNTS AS A KILLER. Impostors (vanilla kill button: killTimer), and - option, on by
  * default - the Jackal and a Sidekick allowed to kill (TOR CustomButtons: jackalKillButton /
  * sidekickKillButton, their Timer). A Janitor never counts, a Mafioso only once the Godfather is
- * dead. Sheriff/Deputy are crew and never count; UC roles with their own strike buttons (Pelican,
+ * dead. The Vampire is read from his bite button (vampireKillButton) and is not ready while a bite
+ * is pending; a player in the Deputy's handcuffs is never ready (audit 04.10.: both read as
+ * permanently ready through the vanilla killTimer, which their kills do not use). Sheriff/Deputy are crew and never count; UC roles with their own strike buttons (Pelican,
  * Stalker, Necromancer ...) are not read either: the sense is about the classic kill.
  *
  * WHY AN RPC. Cooldowns are LOCAL: nobody's client knows another player's killTimer. So every
@@ -239,13 +241,22 @@ namespace UnknownsCollection {
             var me = PlayerControl.LocalPlayer;
             if (me?.Data == null || me.Data.IsDead) return null;
             try {
+                bool cuffed = Deputy.handcuffedKnows != null && Deputy.handcuffedKnows.TryGetValue(me.PlayerId, out float cuff) && cuff > 0f;
                 if (me.Data.Role != null && me.Data.Role.IsImpostor) {
                     if (Janitor.janitor != null && Janitor.janitor.PlayerId == me.PlayerId) return null;
+                    if (cuffed) return false;
+                    if (Vampire.vampire != null && Vampire.vampire.PlayerId == me.PlayerId) {
+                        var vb = Illusionist.TorButton("vampireKillButton");
+                        return vb != null && vb.Timer <= 0f && Vampire.bitten == null;
+                    }
                     if (Mafioso.mafioso != null && Mafioso.mafioso.PlayerId == me.PlayerId
                         && Godfather.godfather != null && !Godfather.godfather.Data.IsDead) return null;
                     return me.killTimer <= 0f;
                 }
                 if (!(DetectsNeutralKillers?.getBool() ?? true)) return null;
+                if (cuffed && ((Jackal.jackal != null && Jackal.jackal.PlayerId == me.PlayerId)
+                               || (Sidekick.sidekick != null && Sidekick.sidekick.PlayerId == me.PlayerId && Sidekick.canKill)))
+                    return false;
                 if (Jackal.jackal != null && Jackal.jackal.PlayerId == me.PlayerId) {
                     var b = TorButton(ref jackalButtonField, "jackalKillButton");
                     return b != null && b.Timer <= 0f;

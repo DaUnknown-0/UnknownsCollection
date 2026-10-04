@@ -303,7 +303,7 @@ namespace UnknownsCollection {
 
         private static void ReadKeyboard() {
             var me = PlayerControl.LocalPlayer;
-            if (me != null) me.moveable = false;
+            if (me != null) { me.moveable = false; pinnedByUs = true; }
             if (Input.GetKeyDown(KeyCode.Escape)) { CloseBox(); return; }
 
             string typed = Input.inputString;
@@ -370,6 +370,12 @@ namespace UnknownsCollection {
             if (countLabel != null) countLabel.text = $"{buffer.Length}/{Cap()}";
         }
 
+        // Did THIS module pin the player? Only then does closing the box hand movement back: CloseBox
+        // also runs at every meeting start and reset on every client, and an unconditional
+        // moveable = true released other modules' locks (Pelican belly, traps, Hacker/Guard, Maniac
+        // freeze), audit 04.10.
+        private static bool pinnedByUs;
+
         private static void CloseBox() {
             typing = false;
             buffer = "";
@@ -377,7 +383,8 @@ namespace UnknownsCollection {
             box = null;
             bodyLabel = null;
             countLabel = null;
-            try { var me = PlayerControl.LocalPlayer; if (me != null && !typing) me.moveable = true; } catch { }
+            try { var me = PlayerControl.LocalPlayer; if (me != null && pinnedByUs) me.moveable = true; } catch { }
+            pinnedByUs = false;
         }
 
         // ---- tiny UGUI helpers (UCColorGrant's shapes, static) ----
@@ -483,6 +490,9 @@ namespace UnknownsCollection {
             if (posted || MeetingHud.Instance == null) return;
             posted = true;
             PostAnonymous("\"" + ApplyChatCensor(words) + "\"");
+            // A message "from yourself" raises no chat notification, so with the chat closed nobody
+            // noticed the note (User 04.10.: confirmed). A short hint on screen points to it.
+            try { Helpers.showFlash(Color, 1.2f, UCLocalization.Tr("uc.ui.lastwords.posted")); } catch { }
             UnknownsCollectionPlugin.Logger?.LogInfo("[LastWords] last words posted.");
         }
 

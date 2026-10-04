@@ -26,6 +26,15 @@
  * individual role files never need to remember the gate themselves. A role that already has its own
  * bespoke promotion feedback (e.g. a future Tesla-specific stinger in Tesla.ApplySetTesla) can pass
  * suppressFx: true to Claim() to avoid a double cue - see the suppressFx parameter below.
+ *
+ * THE RANDOM PICKS RUN IN A SHUFFLED ORDER (User 2026-10-04). Every role still rolls in its own
+ * IntroCutscene.OnDestroy postfix, but those postfixes used to run in Harmony's registration order,
+ * fixed per build: the same roles always had first choice of the plain Impostors/Crewmates.
+ * CentralizePicks (called once after PatchAll) takes every UC IntroEndPatch / IntroEndPickPatch
+ * postfix off the hook and RunPicks calls them from ONE postfix, in a fresh random order each game.
+ * UC neutrals count against TOR's "Maximum Neutral Roles" there, like they do in the draft (their
+ * draft entries are isNeutral, UCRoleDraft.Make): a neutral pick is skipped once that many players
+ * already hold a neutral role.
  */
 
 using System.Linq;
@@ -61,6 +70,71 @@ namespace UnknownsCollection {
 
         public static void ClearClaims() => claimed.Clear();
 
+        // ---- the shuffled pick order ----
+        private static readonly System.Collections.Generic.List<System.Reflection.MethodInfo> picks = new();
+        private static readonly System.Random pickRnd = new();
+        private static readonly System.Collections.Generic.HashSet<string> NeutralPickers = new() {
+            "Bug", "Follower", "Copycat", "Collector", "Pelican", "Necromancer", "Stalker",
+        };
+
+        public static void CentralizePicks(Harmony harmony) {
+            try {
+                var original = AccessTools.Method(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy));
+                var info = Harmony.GetPatchInfo(original);
+                if (info == null) return;
+                foreach (var p in info.Postfixes.ToList()) {
+                    var m = p.PatchMethod;
+                    var t = m?.DeclaringType;
+                    if (p.owner != harmony.Id || t == null) continue;
+                    if (t.Name != "IntroEndPatch" && t.Name != "IntroEndPickPatch") continue;
+                    if (m.GetParameters().Length != 0) continue;
+                    harmony.Unpatch(original, m);
+                    picks.Add(m);
+                }
+                harmony.Patch(original, postfix: new HarmonyMethod(typeof(UCPromotion), nameof(RunPicks)) { priority = Priority.Low });
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[UCPromotion] {picks.Count} intro picks run in a shuffled order.");
+            } catch (System.Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCPromotion] centralizing the picks failed: {e}");
+            }
+        }
+
+        // Picks that depend on what the others handed out run last: the Poisoner needs to know
+        // whether a Paramedic is in play (Fable review 2026-10-04).
+        private static readonly System.Collections.Generic.HashSet<string> LatePickers = new() { "Poisoner" };
+
+        public static void RunPicks() {
+            var order = picks.OrderBy(_ => pickRnd.Next())
+                             .OrderBy(m => LatePickers.Contains(m.DeclaringType?.DeclaringType?.Name ?? "") ? 1 : 0)
+                             .ToList();
+            foreach (var m in order) {
+                try {
+                    string role = m.DeclaringType?.DeclaringType?.Name ?? "";
+                    if (NeutralPickers.Contains(role) && AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost
+                        && !UCRoleDraft.DraftWillRun() && !NeutralSlotFree()) {
+                        UnknownsCollectionPlugin.Logger?.LogInfo($"[UCPromotion] {role}: the neutral roles are at their maximum - not rolled.");
+                        continue;
+                    }
+                    m.Invoke(null, null);
+                } catch (System.Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[UCPromotion] intro pick {m.DeclaringType?.FullName} failed: {e}");
+                }
+            }
+        }
+
+        // Host, at the intro: are there fewer neutral role holders than TOR's maximum? TOR's own
+        // neutrals and the UC ones already handed out (their RoleInfos are isNeutral) both count.
+        private static bool NeutralSlotFree() {
+            try {
+                int max = TheOtherRoles.CustomOptionHolder.neutralRolesCountMax.getSelection();
+                int n = 0;
+                foreach (var p in PlayerControl.AllPlayerControls) {
+                    if (p == null || p.Data == null || p.Data.Disconnected) continue;
+                    if (RoleInfo.getRoleInfoForPlayer(p, false).Any(r => r != null && r.isNeutral)) n++;
+                }
+                return n < max;
+            } catch { return true; }
+        }
+
         public static bool IsAlive(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
 
@@ -75,6 +149,12 @@ namespace UnknownsCollection {
 
         // A plain TOR Crewmate (no special crew/neutral role on top): its first RoleInfo is exactly the
         // Crewmate entry. Excludes anyone already claimed by another UC role.
+        /// One of TOR's Lovers. Neutral roles may be Lovers as in TOR; only the ones whose mechanic
+        /// breaks with a partner leave them out (Pelican, Necromancer, Stalker; Fable review 2026-10-04).
+        public static bool IsLover(PlayerControl p) =>
+            p != null && ((Lovers.lover1 != null && Lovers.lover1.PlayerId == p.PlayerId)
+                       || (Lovers.lover2 != null && Lovers.lover2.PlayerId == p.PlayerId));
+
         public static bool IsPlainCrewmate(PlayerControl p) {
             if (!IsAlive(p) || p.Data.Role == null || p.Data.Role.IsImpostor) return false;
             if (IsClaimed(p.PlayerId)) return false;

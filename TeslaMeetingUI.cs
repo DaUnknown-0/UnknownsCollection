@@ -107,6 +107,14 @@ namespace UnknownsCollection {
                     return;
                 }
 
+                // The pair is only SENT on a confirming click (audit 04.10.: the second pick locked it in
+                // at once, for the whole game). With both chosen, the negative pick clicked again
+                // confirms, the positive one clicked again is dropped to choose anew.
+                if (plusSel != -1 && minusSel != -1) {
+                    if (i == minusSel) { Confirm(hud); return; }
+                    if (i == plusSel) { plusSel = -1; renderers[i].color = Color.white; }
+                    return;   // any other row: ignored until the pair is changed or confirmed
+                }
                 if (i == plusSel) { plusSel = -1; renderers[i].color = Color.white; return; }
                 if (i == minusSel) { minusSel = -1; renderers[i].color = Color.white; return; }
 
@@ -118,9 +126,10 @@ namespace UnknownsCollection {
                     minusSel = i;
                     renderers[i].color = Orange;
                     UCAssets.PlayTeslaSelect();
-                    Confirm(hud);
+                    if (plusSel != -1) {
+                        try { HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer, UCLocalization.Tr("uc.chat.tesla.confirm_hint")); } catch { }
+                    }
                 }
-                // both already chosen -> ignore until one is deselected
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] meeting UI click failed: {e}");
             }

@@ -232,6 +232,12 @@ namespace UnknownsCollection {
                 // SetKillTimer prefix clamps the result to the configured KillCooldown, so it can never
                 // exceed the maximum — but it also never snaps straight to it the way the old hold did.
                 me.SetKillTimer(me.killTimer + penalty);
+                // The Vampire bites through his own button: its Timer is his real cooldown, the vanilla
+                // killTimer above does nothing for him (audit 04.10.). Same push, capped at its maximum.
+                if (Vampire.vampire != null && Vampire.vampire.PlayerId == me.PlayerId) {
+                    var vb = Illusionist.TorButton("vampireKillButton");
+                    if (vb != null) vb.Timer = Mathf.Min(vb.MaxTimer, Mathf.Max(vb.Timer, 0f) + penalty);
+                }
                 if (WarnImpostor == null || WarnImpostor.getBool())
                     SoundEffectsManager.play("vampireBite");
             } catch (Exception e) {

@@ -102,12 +102,14 @@ namespace UnknownsCollection {
             new BetDef(BetKind.SomeoneEjected,   1, false, BetSettle.AtVoteEnd,      "someone_ejected"),
             new BetDef(BetKind.KillInWindow,     2, false, BetSettle.AtMeetingStart, "kill_in_window"),
             new BetDef(BetKind.NoKillThisRound,  2, false, BetSettle.AtMeetingStart, "no_kill"),
-            new BetDef(BetKind.TargetGetsNoVote, 2, true,  BetSettle.AtVoteEnd,      "no_vote"),
+            // Tiers follow the real odds (audit 04.10.): "gets no vote" and "survives" win most of the
+            // time, so they pay the smallest stake.
+            new BetDef(BetKind.TargetGetsNoVote, 1, true,  BetSettle.AtVoteEnd,      "no_vote"),
             new BetDef(BetKind.TargetGetsNVotes, 3, true,  BetSettle.AtVoteEnd,      "n_votes"),
             new BetDef(BetKind.TieVote,          3, false, BetSettle.AtVoteEnd,      "tie"),
             new BetDef(BetKind.DeadlySabotage,   3, false, BetSettle.AtMeetingStart, "deadly_sabotage"),
             new BetDef(BetKind.TargetDoesNTasks, 4, true,  BetSettle.AtMeetingStart, "n_tasks"),
-            new BetDef(BetKind.TargetSurvives,   4, true,  BetSettle.AtMeetingStart, "survives"),
+            new BetDef(BetKind.TargetSurvives,   1, true,  BetSettle.AtMeetingStart, "survives"),
             new BetDef(BetKind.ReporterEjected,  4, false, BetSettle.AtVoteEnd,      "reporter_ejected"),
             new BetDef(BetKind.TargetEjected,    5, true,  BetSettle.AtVoteEnd,      "target_ejected"),
             new BetDef(BetKind.UnanimousVote,    5, false, BetSettle.AtVoteEnd,      "unanimous"),
@@ -141,7 +143,16 @@ namespace UnknownsCollection {
         // Round observations (host keeps them, they drive the settlement).
         private static readonly List<float> killTimes = new List<float>();     // Time.time of each kill this round
         private static readonly Dictionary<byte, int> tasksThisRound = new Dictionary<byte, int>();
-        private static bool deadlySabotageThisRound;
+        // Start times of every deadly sabotage this round: round bets count only what happened AFTER
+        // the bet was placed (audit 04.10.: a reactor before the bet made "deadly sabotage" a sure win).
+        private static readonly List<float> deadlySabotageStarts = new List<float>();
+        // Effects settled during a meeting wait for the round to resume (audit 04.10.): the cooldown
+        // effect of tiers 5/6 was cleared by the same meeting's Close before it ever applied, and a
+        // 30 s speed effect ran out while everybody was voting.
+        private static bool pendingSpeed;
+        private static float pendingSpeedMult = 1f;
+        private static bool pendingCooldown;
+        private static bool pendingCooldownWon;
         private static byte lastReporter = byte.MaxValue;                       // 255 = emergency button
         // Deaths of this round in order, each with the Time.time it happened (AUDIT M-10). The time
         // matters because "who dies next" is asked from the moment the BET is placed, not from the
@@ -645,6 +656,11 @@ namespace UnknownsCollection {
                 } else {
                     target = byte.MaxValue;
                 }
+                // Betting on a sabotage that is already running is no bet (audit 04.10.).
+                if (kind == BetKind.DeadlySabotage && DeadlySabotageActive()) return;
+                // The same bet twice at once only doubles the stake on one outcome.
+                foreach (var open in bets)
+                    if (!open.Settled && open.Kind == kind && open.Target == target) return;
 
                 SendPlaceBet(nextBetId++, kind, target);
             } catch (Exception e) {
@@ -802,9 +818,18 @@ namespace UnknownsCollection {
 
                     if (!AmHost()) return;
 
+                    // The round runs again (no meeting, no exile, ship up): hand out what the meeting settled.
+                    if (!InMeeting() && ShipStatus.Instance != null && (pendingSpeed || pendingCooldown)) {
+                        if (pendingSpeed && gambler != null && IsAlive(gambler)) {
+                            WriteSpeedEffect(gambler.PlayerId, pendingSpeedMult, Time.time + (EffectDuration?.getFloat() ?? 30f));
+                        }
+                        pendingSpeed = false;
+                        if (pendingCooldown) { pendingCooldown = false; ApplyCooldownEffect(pendingCooldownWon); }
+                    }
+
                     if (!InMeeting()) {
                         bool now = DeadlySabotageActive();
-                        if (now && !sabotageWasActive) deadlySabotageThisRound = true;
+                        if (now && !sabotageWasActive) deadlySabotageStarts.Add(Time.time);
                         sabotageWasActive = now;
                     }
 
@@ -860,11 +885,11 @@ namespace UnknownsCollection {
                     return false;
                 }
                 case BetKind.NoKillThisRound:
-                    return killTimes.Count == 0;
+                    return !killTimes.Any(t => t >= b.Placed);
                 case BetKind.DeadlySabotage:
-                    return deadlySabotageThisRound;
+                    return deadlySabotageStarts.Any(t => t >= b.Placed);
                 case BetKind.MoreThanTwoKills:
-                    return killTimes.Count > 2;
+                    return killTimes.Count(t => t >= b.Placed) > 2;
                 case BetKind.TargetDoesNTasks: {
                     int need = Mathf.RoundToInt(TaskThreshold?.getFloat() ?? 4f);
                     return tasksThisRound.TryGetValue(b.Target, out int n) && n >= need;
@@ -932,7 +957,17 @@ namespace UnknownsCollection {
                     anyVoteCast = true;
                     voters++;
                     if (votedFor == SkipVote) continue;                                        // skip is not a target
-                    counts[votedFor] = (counts.TryGetValue(votedFor, out int n) ? n : 0) + 1;
+                    // Weighted like TOR's own count (MeetingPatch.CalculateVotes): the Mayor's double vote.
+                    int weight = (Mayor.mayor != null && Mayor.mayor.PlayerId == state.TargetPlayerId && Mayor.voteTwice) ? 2 : 1;
+                    counts[votedFor] = (counts.TryGetValue(votedFor, out int n) ? n : 0) + weight;
+                }
+                // ... and the Swapper's swap, so the bets read the result the vote really had (04.10.).
+                if (Swapper.swapper != null && Swapper.swapper.Data != null && !Swapper.swapper.Data.IsDead
+                    && Swapper.playerId1 != byte.MaxValue && Swapper.playerId2 != byte.MaxValue) {
+                    counts.TryGetValue(Swapper.playerId1, out int c1);
+                    counts.TryGetValue(Swapper.playerId2, out int c2);
+                    if (c2 > 0) counts[Swapper.playerId1] = c2; else counts.Remove(Swapper.playerId1);
+                    if (c1 > 0) counts[Swapper.playerId2] = c1; else counts.Remove(Swapper.playerId2);
                 }
             } catch { }
             return counts;
@@ -1022,6 +1057,7 @@ namespace UnknownsCollection {
                 if (gambler == null) return;
                 float pct = (SpeedDelta?.getFloat() ?? 15f) / 100f;
                 float mult = won ? 1f + pct : 1f - pct;
+                if (InMeeting()) { pendingSpeed = true; pendingSpeedMult = mult; return; }   // starts with the round
                 byte pid = gambler.PlayerId;
                 WriteSpeedEffect(pid, mult, Time.time + (EffectDuration?.getFloat() ?? 30f));
             } catch (Exception e) {
@@ -1100,6 +1136,9 @@ namespace UnknownsCollection {
         // MULTIPLIERS, so the configured second-delta is converted against the lobby's kill cooldown.
         private static void ApplyCooldownEffect(bool won) {
             try {
+                // Settled in a meeting: apply when the round resumes, so it lasts that round and is
+                // cleared at the next meeting's Close (it used to be cleared by THIS meeting's Close).
+                if (InMeeting()) { pendingCooldown = true; pendingCooldownWon = won; return; }
                 float delta = CooldownDelta?.getFloat() ?? 5f;
                 float baseCd = 25f;
                 try { baseCd = Mathf.Max(1f, GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown); } catch { }
@@ -1142,7 +1181,7 @@ namespace UnknownsCollection {
                     killTimes.Clear();
                     tasksThisRound.Clear();
                     deathOrderThisRound.Clear();
-                    deadlySabotageThisRound = false;
+                    deadlySabotageStarts.Clear();
                     sabotageWasActive = false;
                     lastReporter = byte.MaxValue;
                     // Was `RemoveAll(b => b.Settled)` - the exact inverse of the comment above and of
@@ -1259,7 +1298,8 @@ namespace UnknownsCollection {
             tuningUntil.Clear();
             cooldownEffectActiveThisRound = false;
             lastCooldownMult = 1f;
-            deadlySabotageThisRound = false;
+            deadlySabotageStarts.Clear();
+            pendingSpeed = false; pendingCooldown = false;
             sabotageWasActive = false;
             lastReporter = byte.MaxValue;
             betCooldownLeft = 0f;

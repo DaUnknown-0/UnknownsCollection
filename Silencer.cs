@@ -8,7 +8,8 @@
  * A normal TOR Impostor is silently promoted to "The Silencer" at game start (host-authoritative pick,
  * broadcast via RPC 194). During a round the Silencer marks a victim with a SILENCE button (cooldown +
  * a per-round budget). A marked player is MUTED in the NEXT meeting: they cannot vote (vote area click
- * + skip blocked) and cannot chat (SendChat blocked) - they are excluded from the meeting entirely
+ * + skip blocked), cannot chat (SendChat blocked) and cannot use TOR's meeting abilities (Swapper,
+ * Guesser: prefixes on their click handlers, audit 04.10.) - they are excluded from the meeting entirely
  * rather than having a vote cast on their behalf, so the vote can also end early without waiting on
  * them (see MissedVote in MeetingUpdatePatch). A red [MUTED] marker is shown next to their name ONLY on
  * their meeting vote area (never in-game) - so everyone can mute their voice client - while keeping the
@@ -113,6 +114,25 @@ namespace UnknownsCollection {
             // registers here even when it has no Harmony work left to do - TryPatch is the single
             // place UnknownsCollectionPlugin.Load() calls for every module.
             UCRpc.Register(RpcId, HandleModuleRpc);
+
+            // TOR's Swapper and Guesser act through their own vote-area buttons, not through Select,
+            // so a muted Swapper kept swapping and a muted Guesser kept shooting (audit 04.10.). Both
+            // click handlers are private statics of the internal MeetingHudPatch: patched by name.
+            try {
+                var mh = typeof(CustomOption).Assembly.GetType("TheOtherRoles.Patches.MeetingHudPatch");
+                foreach (var name in new[] { "swapperOnClick", "guesserOnClick" }) {
+                    var m = mh == null ? null : AccessTools.Method(mh, name);
+                    if (m != null) harmony.Patch(m, prefix: new HarmonyMethod(typeof(Silencer), nameof(MeetingAbilityPrefix)));
+                    else UnknownsCollectionPlugin.Logger?.LogWarning($"[Silencer] {name} not found - a muted player keeps that ability.");
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] meeting ability patch failed: {e}");
+            }
+        }
+
+        public static bool MeetingAbilityPrefix() {
+            try { if (LocalIsSilenced() && InMeeting()) return false; } catch { }
+            return true;
         }
 
         // ====================================================================
@@ -311,6 +331,7 @@ namespace UnknownsCollection {
                     wasInMeeting = nowMeeting;
 
                     UpdateTargeting();
+                    UpdateButtonLabel();
                     ApplyMuteMarkers();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Silencer] HudUpdate failed: {e}");
@@ -450,6 +471,17 @@ namespace UnknownsCollection {
         // Buttons: the SILENCE mark button.
         // ====================================================================
         private static TheOtherRoles.Objects.CustomButton silenceButton;
+        private static float selfConfirmUntil;
+        private static bool labelShowsSelf;
+
+        // The button names what it will do: SILENCE on someone else, MUTE SELF on the fallback.
+        private static void UpdateButtonLabel() {
+            if (silenceButton == null || !IsLocalSilencer()) return;
+            bool self = currentTarget != null && currentTarget == PlayerControl.LocalPlayer;
+            if (self == labelShowsSelf) return;
+            labelShowsSelf = self;
+            silenceButton.buttonText = UCLocalization.Tr(self ? "uc.ui.silencer.button_self" : "uc.ui.silencer.button_silence");
+        }
 
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         static class HudStartPatch {
@@ -461,6 +493,15 @@ namespace UnknownsCollection {
                     silenceButton = new TheOtherRoles.Objects.CustomButton(
                         () => { // OnClick
                             if (currentTarget == null || marksLeftThisRound <= 0) return;
+                            // Silencing himself is the fallback when nobody is in reach ("Teammates &
+                            // Self"): a stray F burned the round's only mark on him (audit 04.10.). The
+                            // first press only asks, the second within a few seconds does it.
+                            if (currentTarget == PlayerControl.LocalPlayer && Time.time > selfConfirmUntil) {
+                                selfConfirmUntil = Time.time + 2.5f;
+                                Helpers.showFlash(Color, 0.6f, UCLocalization.Tr("uc.ui.silencer.self_confirm"));
+                                return;
+                            }
+                            selfConfirmUntil = 0f;
                             SendSilence(currentTarget.PlayerId);
                             marksLeftThisRound--;
                             silenceButton.Timer = silenceButton.MaxTimer;

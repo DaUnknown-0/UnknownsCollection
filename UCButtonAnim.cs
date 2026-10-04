@@ -5,10 +5,10 @@
 /*
  * UCButtonAnim - purely cosmetic animation driver for Unknown's Collection ability buttons.
  *
- * Two effects, both riding on the fact that TOR's CustomButton.Update() re-applies
+ * One effect, riding on the fact that TOR's CustomButton.Update() re-applies
  * `actionButtonRenderer.sprite = Sprite` every frame:
  *
- *  1. Flipbook: 16-frame seamless icon loops (AssetGen `anim/` output). Each tick simply sets
+ *  Flipbook: 16-frame seamless icon loops (AssetGen `anim/` output). Each tick simply sets
  *     `btn.Sprite` to the current frame; TOR pushes it to the renderer itself. Buttons are matched
  *     by sprite instance-id (the static icon AND every frame map to the same set), so no role file
  *     needs to register anything - and buttons of OTHER mods/TOR are never touched.
@@ -16,10 +16,8 @@
  *     the icon holds frame 0, so motion itself signals "ready". Playback starts at frame 0 on the
  *     not-ready -> ready transition instead of jumping into a global clock.
  *
- *  2. Ready-pulse: when a button is usable (cooldown done, not mid-effect, not desaturated by
- *     TOR), its transform gently pulses in scale. TOR re-writes position and color every frame
- *     but never scale, so this is patch-order-independent. A per-button amplitude envelope eases
- *     the pulse in/out instead of snapping at the ready/not-ready boundary.
+ *  The size pulse that used to ride along is gone for good (User 2026-10-04), with its client
+ *  option. Buttons without frames simply stay static.
  *
  * Round-start safety (see the resetVariables lesson): this class keeps NO references to buttons
  * across rounds - per-button state is keyed by ActionButton instance-id and cleared on reset;
@@ -33,9 +31,6 @@ using UnityEngine;
 namespace UnknownsCollection {
     public static class UCButtonAnim {
         private const float Fps = 14f;            // flipbook playback speed (16 frames -> ~1.14s loop)
-        private const float PulseAmp = 0.07f;     // ready-pulse scale amplitude (7%)
-        private const float PulseHz = 1.6f;       // ready-pulse speed
-        private const float EnvelopeSpeed = 5f;   // pulse ease-in/out per second
 
         private static readonly int DesatId = Shader.PropertyToID("_Desat");
 
@@ -47,13 +42,11 @@ namespace UnknownsCollection {
 
         // Per-ActionButton cosmetic state, keyed by instance-id. Buttons are re-instantiated every
         // round (HudManager.Start), so stale ids are simply dropped on reset.
-        private static readonly Dictionary<int, Vector3> baseScale = new();
-        private static readonly Dictionary<int, float> pulseEnv = new();
         private static readonly Dictionary<int, float> readySince = new();  // Time.time of the not-ready -> ready flip
 
         static UCButtonAnim() {
             UCFx.RegisterTick(Tick);
-            UCFx.RegisterReset(() => { baseScale.Clear(); pulseEnv.Clear(); readySince.Clear(); });
+            UCFx.RegisterReset(() => readySince.Clear());
         }
 
         // Touched once from the plugin's Load() purely to force the static constructor (and thus
@@ -79,9 +72,7 @@ namespace UnknownsCollection {
                 var go = btn.actionButtonGameObject;
                 if (go == null || !go.activeSelf) continue; // hidden (meeting/dead/no role): skip
 
-                var tr = btn.actionButton.transform;
                 int id = btn.actionButton.GetInstanceID();
-                if (!baseScale.TryGetValue(id, out var bs)) { bs = tr.localScale; baseScale[id] = bs; }
 
                 // "Usable" = cooldown elapsed, no active effect, and TOR did not desaturate it
                 // (reusing TOR's own CouldUse verdict from its material instead of re-running the
@@ -99,18 +90,6 @@ namespace UnknownsCollection {
                     readySince.Remove(id);
                     btn.Sprite = set.frames[0];
                 }
-
-                // 2. Ready-pulse on the transform scale. Client-side setting (gear menu > Mod
-                // Options > Unknown's Collection) can turn it off; the envelope eases the pulse
-                // out instead of snapping, and at env=0 the base scale is rewritten every frame,
-                // so toggling mid-pulse cleanly restores the original size.
-                bool pulseOn = UnknownsCollectionPlugin.ButtonPulseEnabled?.Value ?? true;
-                pulseEnv.TryGetValue(id, out float env);
-                env = Mathf.MoveTowards(env, ready && pulseOn ? 1f : 0f, Time.deltaTime * EnvelopeSpeed);
-                pulseEnv[id] = env;
-
-                float s = 1f + env * PulseAmp * Mathf.Sin(Time.time * 2f * Mathf.PI * PulseHz);
-                tr.localScale = new Vector3(bs.x * s, bs.y * s, bs.z);
             }
         }
 

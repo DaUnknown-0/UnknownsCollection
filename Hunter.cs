@@ -409,6 +409,9 @@ namespace UnknownsCollection {
                 // Werewolf's own transform gate uses, so the two conditions can never disagree.
                 if (!Werewolf.active || !IsAlive(Werewolf.werewolf)) return false;
                 if (!Werewolf.IsLastImpostor()) return false;
+                // ... and has transformed at least once (User 04.10.): in a one-Impostor lobby he is the
+                // last Impostor from the start, and the Hunter fired within a second of round one.
+                if (!Werewolf.everTransformed) return false;
 
                 var s = Sheriff.sheriff;
                 if (!IsAlive(s)) return false;
@@ -569,12 +572,10 @@ namespace UnknownsCollection {
         // Who the silver is allowed to touch. The beast first - in wolf form the toughness rule from W1
         // may still turn this into a mere wound, which is decided in Werewolf.SilverBulletPatch, not
         // here.
-        private static bool Is(PlayerControl holder, PlayerControl t) => holder != null && t != null && holder.PlayerId == t.PlayerId;
 
-        private static bool UcPassiveNeutral(PlayerControl t) =>
-            (Bug.active && Is(Bug.bug, t)) || (Collector.active && Is(Collector.collector, t))
-            || (Follower.active && !Follower.hasCopied && Is(Follower.follower, t))
-            || (Copycat.active && Is(Copycat.copycat, t)) || (Necromancer.active && Is(Necromancer.necromancer, t));
+        // One list for the whole mod (UCPassiveNeutrals). isKiller already filters these through that
+        // file's postfix; asking again here keeps the Hunter right if that managed detour is dropped.
+        private static bool UcPassiveNeutral(PlayerControl t) => UCPassiveNeutrals.IsPassive(t);
 
         private static bool IsLegalPrey(PlayerControl t) {
             try {

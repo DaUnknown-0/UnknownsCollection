@@ -41,9 +41,12 @@
  *    CheckAndEndGameForCrewmateWin (EndGamePatch.cs:562-577) would hand the crew the win while a
  *    living killer is still on the ship. A GameManager.RpcEndGame PREFIX therefore suppresses exactly
  *    the two "no killers left" crew reasons while the Pelican lives - and, once the board is down to
- *    the two hunt participants, every team win, because otherwise an Impostor survivor would end the
- *    round (CheckAndEndGameForImpostorWin fires at 1-vs-1) before the hunt could even start. Task
- *    wins, sabotage wins and the neutral solo wins are never touched: those are legitimate losses.
+ *    the two hunt participants, every team win but the task win, because otherwise an Impostor
+ *    survivor would end the round (CheckAndEndGameForImpostorWin fires at 1-vs-1) before the hunt
+ *    could even start. Task wins, sabotage wins that were allowed to run and the neutral solo wins
+ *    are never touched: those are legitimate losses (the task win too during the hunt, User 04.10.).
+ *    A Pelican who did not win never stands on the winners' list, and a passive neutral survivor
+ *    whose hunt clock ran out wins with the crew instead of losing to it (OnGameEndPatch).
  *    Priority.First puts this prefix AHEAD of Bug's and Collector's own RpcEndGame prefixes, so it
  *    always inspects the RAW reason instead of one they already rewrote.
  *  - THE COUNTDOWN EXPIRY simply STOPS suppressing instead of broadcasting a hand-built win. TOR's
@@ -62,10 +65,11 @@
  *  - THE HUNT RESTRICTIONS reuse the shapes W1 established: a Vent.CanUse POSTFIX (TOR replaces that
  *    method with a prefix returning false, so only a postfix has the last word), a
  *    SabotageButton.Refresh POSTFIX (TOR's own Janitor block, UsablesPatch.cs:205-215), an
- *    EmergencyMinigame.Update POSTFIX (TOR's Swapper/Jester block, UsablesPatch.cs:225-255) and a
- *    PlayerControl.CmdReportDeadBody PREFIX - the single funnel BOTH the report button and the
- *    emergency button go through, so blocking it there cannot be routed around. TOR patches that
- *    method too; returning false only skips the ORIGINAL, never TOR's prefix.
+ *    EmergencyMinigame.Update POSTFIX (TOR's Swapper/Jester block, UsablesPatch.cs:225-255), a
+ *    PlayerControl.CmdReportDeadBody PREFIX for the report and emergency buttons and a
+ *    PlayerControl.ReportDeadBody PREFIX for TOR's own direct calls (the Mayor's remote meeting and
+ *    the Bait's auto-report go through uncheckedCmdReportDeadBody and never touch the Cmd, audit
+ *    04.10.). Returning false only skips the ORIGINAL, never TOR's prefix.
  *    Ability BUTTONS are left alone: freezing every CustomButton's Timer did block them, but a whole
  *    HUD of parked cooldowns reads as a broken game (playtest 2026-07-26), so the hunt restricts
  *    movement and information instead of taking abilities away.
@@ -121,6 +125,11 @@ namespace UnknownsCollection {
         private static readonly Dictionary<byte, DeadBody> swallowedBodies = new();
         // victimId in swallow order - drives the belly readout and survives a body that never spawned.
         private static readonly List<byte> swallowed = new();
+        // The victim of the Pelican's kill that is running right now (MurderPlayer prefix to postfix):
+        // TOR kills a Lover's partner INSIDE that kill (MurderPlayer(partner, partner)), and that grief
+        // death belongs in the belly too (audit 04.10.).
+        private static byte swallowInProgress = byte.MaxValue;
+        private static Vector2 lastPelicanPos;
         // AUDIT-2026-08-16: bumped every time `swallowed` actually changes (swallow/release/digest).
         // TickHud compares against swallowedNamesCacheVersion so it only rewalks the list and resolves
         // names again on frames where the belly contents moved, instead of on every single frame.
@@ -251,6 +260,30 @@ namespace UnknownsCollection {
         // vent anyway, but a third-party ability (a Poltergeist haunt, an Engineer fix) would still
         // interfere with a duel that is supposed to be exactly two people and a clock.
         public static bool HuntRestrictionsActive() => active && huntActive && !huntEnded;
+
+        private static bool IsBait(PlayerControl p) {
+            try { return p != null && Bait.bait != null && Bait.bait.Any(x => x != null && x.PlayerId == p.PlayerId); }
+            catch { return false; }
+        }
+
+        private static bool IsLover(PlayerControl p) =>
+            p != null && ((Lovers.lover1 != null && Lovers.lover1.PlayerId == p.PlayerId)
+                       || (Lovers.lover2 != null && Lovers.lover2.PlayerId == p.PlayerId));
+
+        private static bool ArePartners(PlayerControl a, byte b) {
+            if (a == null || b == byte.MaxValue || Lovers.lover1 == null || Lovers.lover2 == null) return false;
+            return (Lovers.lover1.PlayerId == a.PlayerId && Lovers.lover2.PlayerId == b)
+                || (Lovers.lover2.PlayerId == a.PlayerId && Lovers.lover1.PlayerId == b);
+        }
+
+        /// Does this death go into the belly? The Pelican's own kill (a Bait excepted, see MurderPatch)
+        /// and the grief death of a swallowed Lover's partner. Other roles that react to deaths
+        /// (the Poltergeist) ask this so a swallowed player stays out of their logic.
+        internal static bool SwallowsDeath(PlayerControl killer, PlayerControl target) {
+            if (!active || pelican == null || killer == null || target == null) return false;
+            if (killer.PlayerId == pelican.PlayerId) return !IsBait(target);
+            return killer.PlayerId == target.PlayerId && ArePartners(target, swallowInProgress);
+        }
 
         private static string LoopClipName() =>
             musicVariant <= 0 ? "pelican_hunt_music" : $"pelican_hunt_music{musicVariant + 1}";
@@ -493,7 +526,9 @@ namespace UnknownsCollection {
                     int chance = SpawnRate.getSelection() * 10;
                     if (rnd.Next(1, 101) > chance) return;
 
-                    var candidates = PlayerControl.AllPlayerControls.ToArray().Where(UCPromotion.IsPlainCrewmate).ToList();
+                    // No Lover: his partner's death would kill the Pelican and empty the belly by
+                    // accident (audit 04.10.).
+                    var candidates = PlayerControl.AllPlayerControls.ToArray().Where(p => UCPromotion.IsPlainCrewmate(p) && !IsLover(p)).ToList();
                     if (candidates.Count == 0) return;
                     // The loop variant is rolled ONCE per round, here, and travels with the role
                     // assignment - so the whole lobby hears the same hunt score.
@@ -560,6 +595,15 @@ namespace UnknownsCollection {
                     // Runs BEFORE the "is there even a Pelican" bail-out: this is also the path that
                     // hands movement, the camera and the ghost info back once the belly lets go.
                     TickBelly();
+
+                    // The Pelican left the game: no death, no exile, so nothing else would open the
+                    // belly before the next meeting digests it (audit 04.10.). Disconnects are synced,
+                    // every client releases from the same inputs.
+                    if (active && (swallowed.Count > 0 || swallowedBodies.Count > 0)
+                        && (pelican == null || pelican.Data == null || pelican.Data.Disconnected) && !InMeeting())
+                        ReleaseAll(lastPelicanPos);
+                    if (active && pelican != null && pelican.Data != null && !pelican.Data.Disconnected && !pelican.Data.IsDead)
+                        lastPelicanPos = pelican.GetTruePosition();
 
                     if (!active || pelican == null) { PelicanHud.HideAll(); return; }
 
@@ -867,15 +911,34 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
         static class MurderPatch {
+            [HarmonyPriority(Priority.First)]
+            public static void Prefix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
+                try {
+                    if (active && pelican != null && __instance != null && target != null
+                        && __instance.PlayerId == pelican.PlayerId && !IsBait(target))
+                        swallowInProgress = target.PlayerId;
+                } catch { }
+            }
+
             [HarmonyPriority(Priority.Low)]  // after TOR's own murder bookkeeping
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
+                bool outer = false;
                 try {
                     if (!active || pelican == null || target == null || __instance == null) return;
+                    outer = __instance.PlayerId == pelican.PlayerId;
 
                     // The Pelican falls -> everything he carries reappears on his body.
                     if (target.PlayerId == pelican.PlayerId) { ReleaseAll(target.GetTruePosition()); return; }
 
-                    if (__instance.PlayerId != pelican.PlayerId) return;
+                    if (!SwallowsDeath(__instance, target)) {
+                        // A Bait stays a normal kill with a visible body (the Shade rule): TOR's
+                        // auto-report fires from the KILLER's client and called a meeting over an
+                        // invisible body that pointed straight at the Pelican (audit 04.10.).
+                        if (outer && IsBait(target))
+                            UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] {target.Data?.PlayerName} is a Bait - killed, not swallowed.");
+                        return;
+                    }
+                    ForgetTorBodyTraces(target);
 
                     // Runs on every client from identical inputs, so the swallow list needs no RPC.
                     if (!swallowed.Contains(target.PlayerId)) {
@@ -899,8 +962,31 @@ namespace UnknownsCollection {
                         $"[Pelican] Swallowed {target.Data?.PlayerName} ({swallowed.Count} in the belly).");
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] MurderPatch failed: {e}");
+                } finally {
+                    if (outer) swallowInProgress = byte.MaxValue;
                 }
             }
+        }
+
+        // TOR's murder postfix noted the death for the Seer (soul after the meeting), the Tracker (body
+        // arrows) and the Medium (soul to question, "my killer is the Pelican"). A swallowed body is
+        // gone without a trace, so those notes go too (audit 04.10.). The Seer's "someone died" flash
+        // stays: it says nothing about where. Runs on every client, after TOR's postfix.
+        private static void ForgetTorBodyTraces(PlayerControl target) {
+            try {
+                Vector3 at = target.transform.position;
+                RemoveLast(Seer.deadBodyPositions, at);
+                RemoveLast(Tracker.deadBodyPositions, at);
+                Medium.futureDeadBodies?.RemoveAll(t => t != null && t.Item1 != null && t.Item1.player != null && t.Item1.player.PlayerId == target.PlayerId);
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Pelican] TOR body traces: {e.Message}");
+            }
+        }
+
+        private static void RemoveLast(List<Vector3> list, Vector3 at) {
+            if (list == null) return;
+            for (int i = list.Count - 1; i >= 0; i--)
+                if ((list[i] - at).sqrMagnitude < 0.0001f) { list.RemoveAt(i); return; }
         }
 
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.Exiled))]
@@ -981,6 +1067,24 @@ namespace UnknownsCollection {
             try { return deadPlayersField?.GetValue(null) as List<DeadPlayer>; } catch { return null; }
         }
 
+        /// Everything TOR still holds about a death that was undone by a revive: the death ledger
+        /// (Detective, Medic, Medium, end screen read the FIRST entry) and a Bait's queued self-report
+        /// (Bait.active, fired by TOR's baitUpdate without checking that the Bait is still dead:
+        /// a Bait raised before his delay ran out called a meeting for a body that was gone, audit
+        /// 04.10.). Used by every UC revive: Pelican, Paramedic, Necromancer, PlayerTuning. A revived
+        /// Poltergeist stops haunting here as well.
+        internal static void ForgetDeath(byte id) {
+            try { Poltergeist.OnRevived(id); } catch { }
+            try { Poisoner.ForgetBody(id); } catch { }
+            try { DeadPlayersLedger()?.RemoveAll(d => d != null && d.player != null && d.player.PlayerId == id); }
+            catch { }
+            try {
+                if (Bait.active != null && Bait.active.Count > 0)
+                    foreach (var entry in new Dictionary<DeadPlayer, float>(Bait.active))
+                        if (entry.Key?.player != null && entry.Key.player.PlayerId == id) Bait.active.Remove(entry.Key);
+            } catch { }
+        }
+
         // One victim back on his feet. PlayerControl.Revive() is the game's own path (TOR uses it for
         // PropHunt's "prop becomes hunter", CustomGameModes/PropHunt.cs:500), so animation state,
         // collider and visibility come back the way the game expects them to.
@@ -1000,8 +1104,7 @@ namespace UnknownsCollection {
 
                 // TOR's own death ledger drives the meeting/end-screen "died at" lines and several
                 // roles' information - leaving the entry in would report a living player as murdered.
-                try { DeadPlayersLedger()?.RemoveAll(d => d != null && d.player != null && d.player.PlayerId == id); }
-                catch { }
+                ForgetDeath(id);
 
                 // Host owns GameData: mark the info dirty so the revived state also reaches anyone
                 // whose client did not run this (a late joiner, a dropped message).
@@ -1106,6 +1209,35 @@ namespace UnknownsCollection {
             public static bool Prefix() {
                 try { if (HuntRestrictionsActive()) return false; } catch { }
                 return true;
+            }
+        }
+
+        // TOR's Mayor button and Bait auto-report call RPCProcedure.uncheckedCmdReportDeadBody, which
+        // goes straight to ReportDeadBody on every client (audit 04.10.). HuntRestrictionsActive is
+        // synced, so every client refuses the same call.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.ReportDeadBody))]
+        static class DirectReportBlockPatch {
+            [HarmonyPriority(Priority.First)]
+            public static bool Prefix() {
+                try { if (HuntRestrictionsActive()) return false; } catch { }
+                return true;
+            }
+        }
+
+        // The Mayor's remote meeting button stays dark during the hunt: the click would spend one of
+        // his remote meetings on a meeting that never comes.
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
+        static class MayorButtonPatch {
+            [HarmonyPriority(Priority.Last)]
+            public static void Postfix() {
+                try {
+                    var b = Illusionist.TorButton("mayorMeetingButton");
+                    if (b == null) return;
+                    var orig = b.CouldUse;
+                    b.CouldUse = (Func<bool>)(() => (orig == null || orig()) && !HuntRestrictionsActive());
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] Mayor button wrap failed: {e}");
+                }
             }
         }
 
@@ -1223,6 +1355,9 @@ namespace UnknownsCollection {
                     // is a legitimate loss, as the header says. Blocking it anyway left the meltdown
                     // hanging at 0 until the hunt clock ran out.
                     if (endReason == GameOverReason.ImpostorBySabotage && !SabotageBlocked()) return true;
+                    // The survivor's tasks win the round even during the hunt (User 04.10.): the crew
+                    // earned it, as the header always said.
+                    if (endReason == GameOverReason.HumansByTask) return true;
                     bool block = huntBoard ? IsTeamWin(endReason) : IsCrewNoKillerWin(endReason);
                     if (!block) return true;
 
@@ -1268,12 +1403,28 @@ namespace UnknownsCollection {
                 // Always reassign (Bug.cs precedent): without the else branch a stale id from an
                 // earlier round would survive into a round that has no Pelican.
                 winnerPelicanId = (active && pelicanPlayerId != byte.MaxValue) ? pelicanPlayerId : byte.MaxValue;
+                // The hunt clock ran out: a neutral survivor is noted while the role statics still
+                // hold (TOR's postfix resets them).
+                neutralSurvivorId = byte.MaxValue;
+                try {
+                    if (active && huntEnded) {
+                        foreach (var p in PlayerControl.AllPlayerControls.ToArray()) {
+                            if (!IsAlive(p) || p.PlayerId == pelicanPlayerId) continue;
+                            bool neutral = UCPassiveNeutrals.IsPassive(p)
+                                || RoleInfo.getRoleInfoForPlayer(p, false).Any(r => r != null && r.isNeutral);
+                            if (neutral && !Helpers.isKiller(p)) neutralSurvivorId = p.PlayerId;
+                        }
+                    }
+                } catch { }
             }
 
             [HarmonyPriority(Priority.Last)]
             public static void Postfix() {
                 try {
-                    if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != PelicanWinReason) return;
+                    if ((int)TheOtherRoles.Patches.OnGameEndPatch.gameOverReason != PelicanWinReason) {
+                        LoserFixups();
+                        return;
+                    }
                     if (winnerPelicanId == byte.MaxValue) return;
                     PlayerControl winner = Helpers.playerById(winnerPelicanId);
                     if (winner == null || winner.Data == null) return;
@@ -1285,7 +1436,30 @@ namespace UnknownsCollection {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Pelican] OnGameEnd failed: {e}");
                 }
             }
+
+            // Any other end (audit 04.10.): the Pelican is a vanilla Crewmate, so every crew win put
+            // him on the podium although he lost. And when the hunt clock ran out on a passive neutral
+            // survivor (Jester, Arsonist, Bug...), TOR's check ended it as a crew win: the survivor
+            // wins with them instead of losing to the clock he survived (User 04.10.).
+            private static void LoserFixups() {
+                if (winnerPelicanId == byte.MaxValue) return;
+                var winners = EndGameResult.CachedWinners;
+                if (winners == null) return;
+                var bird = Helpers.playerById(winnerPelicanId);
+                if (bird != null && bird.Data != null) {
+                    var drop = winners.ToArray().Where(w => UCWinners.IsSameWinner(w, bird.Data)).ToList();
+                    foreach (var w in drop) winners.Remove(w);
+                    if (drop.Count > 0) UnknownsCollectionPlugin.Logger?.LogInfo("[Pelican] the Pelican lost - taken off the winners.");
+                }
+                var survivor = neutralSurvivorId == byte.MaxValue ? null : Helpers.playerById(neutralSurvivorId);
+                if (survivor != null && survivor.Data != null && !winners.ToArray().Any(w => UCWinners.IsSameWinner(w, survivor.Data))) {
+                    winners.Add(new CachedPlayerData(survivor.Data));
+                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Pelican] {survivor.Data.PlayerName} outlasted the hunt - wins too.");
+                }
+            }
         }
+
+        private static byte neutralSurvivorId = byte.MaxValue;
 
         [HarmonyPatch(typeof(EndGameManager), nameof(EndGameManager.SetEverythingUp))]
         static class EndGameFxPatch {

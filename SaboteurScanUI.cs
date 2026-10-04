@@ -122,7 +122,7 @@ namespace UnknownsCollection {
                 // Abort if a meeting starts, the player dies, or walks away from the console.
                 if (me == null || me.Data == null || me.Data.IsDead
                     || MeetingHud.Instance != null || ExileController.Instance != null
-                    || Vector2.Distance(me.GetTruePosition(), target) > 1.8f
+                    || Vector2.Distance(me.GetTruePosition(), target) > Saboteur.ScanAbortDistance
                     || Input.GetKeyDown(KeyCode.Escape)) {
                     Close();
                     return;

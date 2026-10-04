@@ -257,9 +257,12 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
         static class MeetingClosePatch {
-            public static void Postfix() {
+            public static void Postfix(MeetingHud __instance) {
                 try {
                     if (!active || bug == null || !IsAlive(bug)) return;
+                    // The exile comes after Close: a Bug voted out in THIS meeting is still "alive" here
+                    // and the "a third party lives" chime would lie (audit 04.10.).
+                    try { if (__instance != null && __instance.exiledPlayer != null && __instance.exiledPlayer.PlayerId == bug.PlayerId) return; } catch { }
                     // Deliberately NOT gated on IsLocalBug(): this is a bewusster Meta-Tell that a third
                     // party exists and is still alive, audible to everyone (see SPEC.md decision 2).
                     UCAssets.PlayBugGlitch();

@@ -69,7 +69,16 @@
  *  - Kill timers go through PlayerControl.SetKillTimer, which TOR clamps to the configured maximum
  *    (PlayerControlPatch.cs:1348-1361) - every value we set is BELOW that clamp, so it always lands.
  *
- * Options: 1551-1559 (core), 1513-1519 (spillover), 1482 (deputy). See ID-Registry.md.
+ *   HOWL     A SECOND button next to the transformation (option 1780, on by default; it is not a
+ *            replacement): spends the same charge on a shorter night (option 1781, % of the wolf
+ *            form) in which the crew walks with torches while he stays in human shape. His fellow
+ *            Impostors keep their sight in either night.
+ *   MAPS     Without a Lights sabotage (Fungle, any map with no Electrical switch system) nothing
+ *            ever charges: the role is not handed out there (audit 04.10.), random pick and draft.
+ *
+ * Options: 1551-1559 (core), 1513-1519 (spillover), 1482 (deputy), 1509 (Bait), 1780-1781 (howl),
+ * 1784 (earliest transformation round).
+ * See ID-Registry.md.
  * RPC: module byte 211 on UCRpc.CallId 230. Subtypes: SubSetWerewolf=0, SubSetForm=1, SubWound=2,
  * SubSetHunter=3 (Hunter.cs) - Paket W2 (the Hunter) is the Sheriff's endgame counter-move against the
  * Werewolf, so it shares this module byte instead of claiming a new one (see Hunter.cs's own header for
@@ -111,6 +120,8 @@ namespace UnknownsCollection {
         public static CustomOption ChargeResetOnLightsFix; // 1559
         // ---- Options (spillover 1513-1519 + 1482) ----
         public static CustomOption OnlyAsLastImpostor;     // 1513
+        public static CustomOption EarliestRound;          // 1784 - no transformation/howl before this round
+        private static int meetingsHeld;                   // meetings of this game (round = meetings + 1)
         public static CustomOption SpyCountsAsImpostor;    // 1514
         public static CustomOption FlashlightRadius;       // 1515 (choice: infinite / 2.0x .. 0.5x)
         public static CustomOption WolfFormRestrictions;   // 1516
@@ -129,6 +140,10 @@ namespace UnknownsCollection {
         // Synced on every client (SubSetForm): drives the skin, the darkness, the fix block and the
         // blood rings, so all of those need no separate RPC of their own.
         public static bool wolfForm;
+        // Has the beast shown itself at least once this game? The Hunter waits for that (User 04.10.):
+        // with a single Impostor the Werewolf is the last one from the first second, and the Sheriff
+        // used to become the Hunter before anything had happened.
+        public static bool everTransformed;
         private static float formEndTime;
         // The HOWL (User 2026-10-02): the alternative to transforming. In human shape, with the
         // lights out and a full charge, he howls: everyone hears it, and for a share of the wolf form
@@ -237,6 +252,12 @@ namespace UnknownsCollection {
 
                 OnlyAsLastImpostor = CustomOption.Create(1513, Types.Impostor, "Only As Last Impostor",
                     true, SpawnRate);
+                // The comeback timing as its own visible option (User 2026-10-04, Fable review) instead
+                // of a hidden extra rule for one-impostor lobbies: with one impostor he is the last one
+                // from the start, which is what "Only As Last Impostor" says. Round 1 = before the
+                // first meeting.
+                EarliestRound = CustomOption.Create(1784, Types.Impostor, "Earliest Transformation Round",
+                    1f, 1f, 5f, 1f, SpawnRate);
                 SpyCountsAsImpostor = CustomOption.Create(1514, Types.Impostor, "Spy Counts As Impostor",
                     false, SpawnRate);
                 // Option 1515 is a CHOICE list, not a numeric slider: the wanted range ("infinite,
@@ -260,7 +281,9 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 IgnoreBaitInWolfForm = CustomOption.Create(1509, Types.Impostor, "Wolf Form Ignores Bait",
                     true, SpawnRate);
-                HowlEnabled = CustomOption.Create(1780, Types.Impostor, "Howl Instead Of Transforming",
+                // An extra button beside the transformation, not a replacement (audit 04.10.: the old
+                // name said "Instead Of").
+                HowlEnabled = CustomOption.Create(1780, Types.Impostor, "Howl Ability (Alternative To Transforming)",
                     true, SpawnRate);
                 HowlDurationPercent = CustomOption.Create(1781, Types.Impostor, "Howl Night Duration (% Of Wolf Form)",
                     50f, 25f, 100f, 5f, SpawnRate);
@@ -365,15 +388,22 @@ namespace UnknownsCollection {
         // SubSetForm, so every client derives the vision override and the fix block from the same flag.
         public static bool WolfDarkActive() => active && (wolfForm || howlNight) && IsAlive(werewolf);
 
-        // The howl's night without the beast: his fellow Impostors keep their own sight then (during
-        // the wolf form he is the last Impostor anyway, so this only ever matters for the howl).
-        private static bool HowlOnlyNight() => howlNight && !wolfForm;
         private static bool HowlOn() => HowlEnabled == null || HowlEnabled.getBool();
         private static float HowlSeconds() =>
             FormDurationValue() * Mathf.Clamp((HowlDurationPercent != null ? HowlDurationPercent.getFloat() : 50f) / 100f, 0.1f, 1f);
 
         // Same probe TOR's own SabotageTuning/Siphoner and UC's BeaconFx use (BeaconFx.cs:171):
         // the Electrical system cast to SwitchSystem, whose IsActive flag is synced on every client.
+        /// Does this map have the Lights sabotage the whole role runs on? (Electrical as a SwitchSystem.)
+        public static bool MapHasLightsSabotage() {
+            try {
+                var ship = ShipStatus.Instance;
+                if (ship == null || ship.Systems == null) return true;   // unknown yet: do not block
+                return ship.Systems.TryGetValue(SystemTypes.Electrical, out ISystemType sys) && sys != null
+                       && sys.TryCast<SwitchSystem>() != null;
+            } catch { return true; }
+        }
+
         private static bool LightsSabotageActive() {
             try {
                 var ship = MapUtilities.CachedShipStatus;
@@ -416,13 +446,18 @@ namespace UnknownsCollection {
         // (and of the crew fixing the lights at all).
         public static bool CanTransformNow() =>
             active && IsLocalWerewolf() && IsAlive(werewolf) && !wolfForm && !howlNight && !InMeeting()
-            && ChargeReady() && LightsSabotageActive()
-            && (OnlyAsLastImpostor == null || !OnlyAsLastImpostor.getBool() || IsLastImpostor());
+            && ChargeReady() && LightsSabotageActive() && LockOpen();
 
-        // The howl: same charge and the same darkness requirement, but no "last impostor" gate.
+        // The howl: same charge, the same darkness requirement and since 2026-10-04 the same locks
+        // ("last impostor", earliest round): it took the crew's repair and put everyone on torches
+        // while the transformation itself was still locked (audit 8.2).
         public static bool CanHowlNow() =>
             HowlOn() && active && IsLocalWerewolf() && IsAlive(werewolf) && !wolfForm && !howlNight && !InMeeting()
-            && ChargeReady() && LightsSabotageActive();
+            && ChargeReady() && LightsSabotageActive() && LockOpen();
+
+        private static bool LockOpen() =>
+            (OnlyAsLastImpostor == null || !OnlyAsLastImpostor.getBool() || IsLastImpostor())
+            && meetingsHeld + 1 >= (int)(EarliestRound?.getFloat() ?? 1f);
 
         private static string MusicClipName() =>
             musicVariant <= 0 ? "werewolf_form_music" : $"werewolf_form_music{musicVariant + 1}";
@@ -544,6 +579,7 @@ namespace UnknownsCollection {
 
             werewolf = Helpers.playerById(id);
             active = werewolf != null;
+            everTransformed = false;
             if (active) UCPromotion.Claim(id);
             musicVariant = Mathf.Clamp(variant, 0, MusicVariants - 1);
             wolfForm = false;
@@ -579,6 +615,7 @@ namespace UnknownsCollection {
             }
             Vector2 pos = werewolf.GetTruePosition();
 
+            if (wolf) everTransformed = true;
             if (wolf) {
                 wolfForm = true;
                 formEndTime = Time.time + secs;
@@ -626,6 +663,9 @@ namespace UnknownsCollection {
 
         private static void ApplySetHowl(bool on, float secs) {
             if (!active || werewolf == null) return;
+            // Same race as ApplySetForm: a howl sent just before a report must not start the night
+            // inside this client's meeting (audit 04.10.).
+            if (on && InMeeting()) return;
             if (on) {
                 if (howlNight) { howlEndTime = Time.time + secs; return; }   // idempotent refresh
                 howlNight = true;
@@ -754,7 +794,9 @@ namespace UnknownsCollection {
                 // below untouched and the Werewolf active into the next round. Nothing here can throw,
                 // so with this order the risky part can only cost itself. See UCResetGuard.cs.
                 werewolf = null;
+                meetingsHeld = 0;
                 active = false;
+                everTransformed = false;
                 wolfForm = false;
                 formEndTime = 0f;
                 howlNight = false;
@@ -786,6 +828,7 @@ namespace UnknownsCollection {
 
                 werewolf = null;
                 active = false;
+                everTransformed = false;
                 wolfForm = false;
                 howlNight = false;
                 silverHitsTaken = 0;
@@ -807,7 +850,12 @@ namespace UnknownsCollection {
         static class GameEndSnapshotPatch {
             [HarmonyPriority(Priority.First)]
             public static void Prefix() {
-                try { HadWerewolfThisRound = active && werewolf != null; } catch { }
+                // A beast that showed itself, or is still alive at the end (audit 04.10.: a Werewolf who
+                // died early and never transformed still got the howl-at-the-moon finale).
+                try {
+                    HadWerewolfThisRound = active && werewolf != null
+                        && (everTransformed || (werewolf.Data != null && !werewolf.Data.IsDead && !werewolf.Data.Disconnected));
+                } catch { }
             }
         }
 
@@ -827,6 +875,10 @@ namespace UnknownsCollection {
 
                     int chance = SpawnRate.getSelection() * 10;
                     if (rnd.Next(1, 101) > chance) return;
+                    if (!MapHasLightsSabotage()) {
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[Werewolf] this map has no Lights sabotage - not handed out.");
+                        return;
+                    }
 
                     var candidates = PlayerControl.AllPlayerControls.ToArray().Where(UCPromotion.IsPlainImpostor).ToList();
                     if (candidates.Count == 0) return;
@@ -1163,7 +1215,7 @@ namespace UnknownsCollection {
         // pipeline runs it LAST and lets it overwrite whatever the grants above produced; a Scout
         // ability lighting up the map would defeat the entire point of the night.
         // Returns true when it took over, so the pipeline can log/behave accordingly.
-        public static bool ApplyNightOverride(ref float result, ShipStatus ship, NetworkedPlayerInfo p) {
+        public static bool ApplyNightOverride(ref float result, ShipStatus ship, NetworkedPlayerInfo p, float torValue = -1f) {
             try {
                 if (!WolfDarkActive() || p == null || ship == null) return false;
                 // The beast owns the dark: full impostor vision - but never LESS than the torch the
@@ -1175,10 +1227,16 @@ namespace UnknownsCollection {
                     result = Mathf.Max(imp, TorchRadius(ship));
                     return true;
                 }
-                // The Lighter keeps whatever TOR just computed for him (explicit carve-out).
-                if (Lighter.lighter != null && p.PlayerId == Lighter.lighter.PlayerId) return true;
-                // The howl's night is the crew's: his fellow Impostors keep their own sight.
-                if (HowlOnlyNight() && p.Role != null && p.Role.IsImpostor) return false;
+                // The Lighter keeps whatever TOR computed for him (explicit carve-out) - TOR's own value,
+                // not one a Beacon or Scout grant raised first (audit 04.10.).
+                if (Lighter.lighter != null && p.PlayerId == Lighter.lighter.PlayerId) {
+                    if (torValue >= 0f) result = torValue;
+                    return true;
+                }
+                // The night is the crew's: his fellow Impostors keep their own sight, in the howl night
+                // and in the wolf form (audit 04.10.: with "Only As Last Impostor" off the wolf could
+                // transform beside living partners, who were then put on a torch as well).
+                if (p.Role != null && p.Role.IsImpostor) return false;
                 // Paket W2: the Hunter is exempted from the blanket flashlight too - he gets the SAME
                 // crew radius as everyone else, scaled up by his own multiplier (option 1504, 1.0-2.5x)
                 // instead of a flat value. At "Infinite" there is nothing left to scale.
@@ -1238,7 +1296,7 @@ namespace UnknownsCollection {
                 if (me == null || me.Data == null || me.Data.IsDead || me.Data.Disconnected) return false;
                 if (werewolf != null && me.PlayerId == werewolf.PlayerId) return false;
                 if (IsLocalLighter()) return false;
-                if (HowlOnlyNight() && me.Data.Role != null && me.Data.Role.IsImpostor) return false;
+                if (me.Data.Role != null && me.Data.Role.IsImpostor) return false;   // see ApplyNightOverride
                 return true;
             } catch {
                 return false;
@@ -1486,6 +1544,7 @@ namespace UnknownsCollection {
         static class MeetingStartPatch {
             public static void Postfix() {
                 try {
+                    meetingsHeld++;
                     EndFormSilent();
                     StopHeartbeat();
                     WerewolfFx.ClearBloodRings(); // the bodies they marked are gone after this meeting

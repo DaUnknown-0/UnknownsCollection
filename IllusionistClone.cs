@@ -109,6 +109,9 @@ namespace UnknownsCollection {
 
         private static TextMeshPro colorBlindSrc;     // live colorblind-mode color-name label (CosmeticsLayer.colorBlindText)
         private static TextMeshPro colorBlindClone;   // its standalone clone, kept in sync each frame
+        private static TextMeshPro nameSrc;           // the live name label (CosmeticsLayer.nameText)
+        private static TextMeshPro nameClone;         // its clone: a figure without a name was an instant tell (04.10.)
+        private static Vector3 nameBaseScale;
         private static Vector3 colorBlindBaseScale = Vector3.one; // label scale at spawn, for the counter-flip
 
         private static Transform[] cosmeticTransforms; // transforms of cosmetics (hat, visor) that need to move with vents
@@ -145,6 +148,9 @@ namespace UnknownsCollection {
         private const float MoveSpeedThresh = 0.5f;  // units/s above which the clone plays the run animation
 
         public static bool IsActive() => active && go != null;
+        /// Out of the vent and visible: only then can it intercept a kill (audit 04.10.: a clone hidden
+        /// in a vent still blocked kills next to an empty vent).
+        public static bool IsSolid() => IsActive() && ventPhase == VentPhase.Out;
         public static Vector2 Position() => currentPos;
 
         // ---- Spawn the clone and start replaying `points` (+ `ventFlags`) over points.Count*interval s ----
@@ -258,6 +264,25 @@ namespace UnknownsCollection {
                     colorBlindClone = null;
                 }
 
+                // The name plate, cloned the same way as the colorblind label (a leaf TextMeshPro).
+                // Text, colour and visibility are mirrored every frame from the live label, so the name
+                // also shows red to the Illusionist's teammates exactly when the real one does.
+                try {
+                    nameSrc = cos.nameText;
+                    if (nameSrc != null) {
+                        var nameGo = UnityEngine.Object.Instantiate(nameSrc.gameObject, go.transform);
+                        nameGo.transform.localPosition = nameSrc.transform.position - bodyWorld;
+                        nameGo.transform.localRotation = nameSrc.transform.rotation;
+                        nameGo.transform.localScale = nameSrc.transform.lossyScale;
+                        nameBaseScale = nameGo.transform.localScale;
+                        nameClone = nameGo.GetComponent<TextMeshPro>();
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Illusionist] name clone failed: {e}");
+                    nameSrc = null;
+                    nameClone = null;
+                }
+
                 path = new List<Vector2>(points);
                 vents = ventFlags != null ? new List<bool>(ventFlags) : new List<bool>();
                 // A 1-sample recording has no second point to interpolate towards: Update() would see
@@ -345,6 +370,8 @@ namespace UnknownsCollection {
         public static void Update() {
             if (!active || go == null) return;
             try {
+                // The Illusionist died: his double does not keep walking and blocking kills (04.10.).
+                if (src == null || src.Data == null || src.Data.IsDead || src.Data.Disconnected) { DespawnWithFx(); return; }
                 float t = Time.time - startTime;
                 float fIdx = t / interval;
                 int i = Mathf.FloorToInt(fIdx);
@@ -453,6 +480,7 @@ namespace UnknownsCollection {
             // The colorblind label is not part of `renderers`; hide it with the rest of the figure while
             // vented. MirrorAppearance() re-shows it (if still appropriate) once the figure is out again.
             if (colorBlindClone != null && !on) colorBlindClone.gameObject.SetActive(false);
+            if (nameClone != null && !on) nameClone.gameObject.SetActive(false);
         }
 
         // Move cosmetics (hat, visor) down/up during vent animations so they follow the body sprite
@@ -562,6 +590,16 @@ namespace UnknownsCollection {
             lastOutfitColorId = outfitColorId;
             mirrorInit = true;
 
+            if (nameClone != null && nameSrc != null) {
+                try {
+                    bool show = nameSrc.gameObject.activeInHierarchy && nameSrc.enabled;
+                    if (nameClone.gameObject.activeSelf != show) nameClone.gameObject.SetActive(show);
+                    if (show) {
+                        if (nameClone.text != nameSrc.text) nameClone.text = nameSrc.text;
+                        nameClone.color = nameSrc.color;
+                    }
+                } catch { }
+            }
             if (colorBlindClone != null && colorBlindSrc != null) {
                 try {
                     bool show = src.cosmetics.showColorBlindText && colorBlindSrc.gameObject.activeInHierarchy;
@@ -650,6 +688,8 @@ namespace UnknownsCollection {
             if (colorBlindClone != null)
                 colorBlindClone.transform.localScale = new Vector3(
                     colorBlindBaseScale.x * facingSign, colorBlindBaseScale.y, colorBlindBaseScale.z);
+            if (nameClone != null)
+                nameClone.transform.localScale = new Vector3(nameBaseScale.x * facingSign, nameBaseScale.y, nameBaseScale.z);
         }
 
         // Pick the starting facing from the first noticeable horizontal move in the path.
@@ -764,6 +804,8 @@ namespace UnknownsCollection {
             cosmeticOriginalPos = null;
             colorBlindSrc = null;
             colorBlindClone = null;
+            nameSrc = null;
+            nameClone = null;
             ventAnimProgress = 0f;
             ventAnimStartTime = 0f;
             ventPhase = VentPhase.Out;

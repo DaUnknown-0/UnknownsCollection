@@ -201,7 +201,7 @@ namespace UnknownsCollection {
             pending = false;
             if (active) {
                 // A modifier rides on top of a role; no Claim(): the Void may share a player with a UC
-                // role, exactly like the Gambler. The reveal cue only plays when the tag is visible to
+                // role. (The Gambler does call Claim, so a Gambler is never also a UC role.) The reveal cue only plays when the tag is visible to
                 // its carrier - an after-death modifier that is hidden must stay silent, or the cue
                 // itself would tell the player what they got.
                 if (IsLocalVoid() && AfterDeathModifiersVisible()) UCRevealFx.PlayReveal();
@@ -271,6 +271,9 @@ namespace UnknownsCollection {
             try {
                 if (!active || hud == null || __result == null) return;
                 if (OwnVoteCounts?.getBool() ?? false) return;
+                // The price ends with the protection (User 04.10.): once the immunity is spent he is
+                // a normal crewmate, and his vote counts again.
+                if (immunityUsed) return;
                 foreach (var ps in hud.playerStates) {
                     if (ps == null || ps.AmDead || !ps.DidVote) continue;
                     if (ps.TargetPlayerId != voidPlayerId) continue;

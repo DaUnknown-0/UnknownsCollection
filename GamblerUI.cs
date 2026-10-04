@@ -420,8 +420,10 @@ namespace UnknownsCollection {
                         () => { Close(); },
                         UCAssets.GamblerIcon,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowRight,
-                        __instance, KeyCode.F, false, UCLocalization.Tr("uc.gambler.ui.button"));
-                    betButton.MaxTimer = 0f;
+                        // B, not F: F is the role button of half the crew roles this modifier rides on
+                        // (Medic, Time Master, Deputy, Tracker, Mayor ...), audit 04.10.
+                        __instance, KeyCode.B, false, UCLocalization.Tr("uc.gambler.ui.button"));
+                    betButton.MaxTimer = Gambler.BetCooldown?.getFloat() ?? 45f;
                     betButton.Timer = 0f;
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Gambler] button creation failed: {e}");
@@ -443,6 +445,13 @@ namespace UnknownsCollection {
                         return;
                     }
                     UpdateStrip();
+                    // The bet button: first free slot (it rides on top of a role with its own buttons),
+                    // and the bet cooldown shown as the button's own countdown instead of a silent grey.
+                    if (betButton != null && Gambler.IsLocalGambler()) {
+                        UCButtonSlots.Place(betButton);
+                        betButton.MaxTimer = Mathf.Max(1f, Gambler.BetCooldown?.getFloat() ?? 45f);
+                        betButton.Timer = Gambler.betCooldownLeft;
+                    }
 
                     // The picker has no business being open during a meeting or after death.
                     if (panel != null &&

@@ -23,16 +23,18 @@
  * ---------------
  *   0. TOR's own result comes in. (TOR patches CalculateLightRadius with a PREFIX that returns false,
  *      so a postfix is the only place that can have the last word - see Werewolf.cs's original note.)
- *   1. Multiplicative dampers   - Poltergeist's Blind hex (x0.35). First, so it scales the honest
- *                                 base value rather than a granted full-vision radius.
+ *   1. Multiplicative bonus     - the Giant's wider sight.
  *   2. Full-vision grants       - Scout ability, Beacon (self + nearby crew with line of sight),
  *                                 Poltergeist's Night Vision hex. Applied as Mathf.Max, NEVER as a
  *                                 hard assignment: that alone makes them commutative among each
  *                                 other, so their relative order stops mattering at all.
+ *   2b. Blind hex               - Poltergeist's damper (x0.35), AFTER the grants (User 2026-10-04):
+ *                                 applied first, any grant lifted a blinded player straight back to
+ *                                 full sight and the hex did nothing.
  *   3. Werewolf night           - a whole-map lighting REGIME, not a per-role bonus: while it is up
  *                                 every player's radius is redefined. Runs last and overwrites the
  *                                 grants above on purpose; a Scout lighting up the map would defeat
- *                                 the entire point of the night.
+ *                                 the entire point of the night. The Lighter keeps TOR's own value.
  *   4. (Chance, Priority.Last)  - multiplicative, outside this file.
  *
  * Adding a new vision feature: put a predicate on the role (like Scout.WantsFullVision) and call it
@@ -57,11 +59,10 @@ namespace UnknownsCollection {
                                        [HarmonyArgument(0)] NetworkedPlayerInfo p) {
                 try {
                     if (p == null || __instance == null) return;
+                    float torValue = __result;   // what TOR computed, before anything UC does
 
-                    // --- 1. multiplicative dampers -------------------------------------------------
-                    float damp = Poltergeist.VisionDamp(p);
-                    if (damp != 1f) __result *= damp;
-                    float giant = Giant.VisionMult(p);   // the Giant sees further (a bonus, same stage)
+                    // --- 1. multiplicative bonus ---------------------------------------------------
+                    float giant = Giant.VisionMult(p);   // the Giant sees further
                     if (giant != 1f) __result *= giant;
 
                     // --- 2. full-vision grants (Max, so order among them is irrelevant) ------------
@@ -71,8 +72,14 @@ namespace UnknownsCollection {
                         __result = Mathf.Max(__result, FullCrewRadius(__instance));
                     }
 
+                    // --- 2b. the Blind hex dampens AFTER the grants (User 04.10.): a Beacon nearby,
+                    // a Scout ability or a night-vision hex used to lift a blinded player straight
+                    // back to full sight, and the ghost paid for nothing.
+                    float damp = Poltergeist.VisionDamp(p);
+                    if (damp != 1f) __result *= damp;
+
                     // --- 3. Werewolf night: total override, last word inside UC --------------------
-                    Werewolf.ApplyNightOverride(ref __result, __instance, p);
+                    Werewolf.ApplyNightOverride(ref __result, __instance, p, torValue);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[UCVision] pipeline failed: {e}");
                 }

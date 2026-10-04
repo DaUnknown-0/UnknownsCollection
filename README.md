@@ -24,18 +24,22 @@ This mod is not affiliated with Among Us or Innersloth LLC, and the content cont
   pair stays too close, a hidden countdown drains; separating pauses it, a meeting refills it. At zero,
   both die. Victims see a `⚡ charged` / pulsing `⚡ danger` warning but never the exact timer.
   *Options:* trigger distance, countdown seconds, min alive players, can-charge-self, self-charge-kills,
-  grace after meeting.
+  grace after meeting, charges end with the Tesla, discharge ignores the Medic shield (off by default:
+  the shield holds and the Medic gets TOR's attack notice).
 - **The Saboteur**: Once per round: sabotage a task console (lethal when the victim completes it, with a
   crew search/defuse counterplay) or lay an invisible stun trap. *Options:* tokens per round, task/trap
-  costs, extra kill cooldown, trap count/stun/limp, crew search & defuse, min-alive gates.
+  costs, extra kill cooldown, trap count/stun/limp, crew search & defuse (with a cooldown), min-alive
+  gates, trap ignores the Medic shield (off by default).
 - **The Silencer**: Marks a victim with the SILENCE button; the marked player is **muted** in the next
   meeting (no vote, no chat) and shown a red `[MUTED]` tag in-game and on their vote area so everyone can
   also mute their voice client. *Options:* mark cooldown, targets per round, muted-can-still-skip,
   show-in-game-marker.
 - **The Poisoner**: Kills poison the victim's body; the next player to **report** a poisoned body becomes
-  poisoned and dies after **X meetings** unless cured by the **Medic's Antidote**. The doomed reporter
-  gets a private "you don't feel so good" message in the meeting. *Options:* poison death after meetings
-  (min 2), Medic antidote uses per round, max poisoned bodies per round.
+  poisoned and dies after **X meetings** unless cured by the **Antidote** of the Medic (or of the
+  Paramedic in a round without a Medic). The doomed reporter gets a private "you don't feel so good"
+  message in the meeting. By default the Poisoner only spawns when a healer is in play. *Options:* poison
+  death after meetings (min 2), antidote uses per round, max poisoned bodies per round, self-poison via
+  Bait / self-report, needs a healer in play.
 - **The Illusionist**: Records a movement path and replays it as an **unkillable, shielded clone** that
   fools would-be killers. *Options:* max recording length, playback cooldown, blocked-kill-costs-cooldown,
   clone-shield-visible-to-everyone.
@@ -63,13 +67,17 @@ This mod is not affiliated with Among Us or Innersloth LLC, and the content cont
   kill cooldown, while the whole map drops into wolf darkness where everyone else is down to a flashlight
   beam. With **Nightfall** installed the transformation switches to a first-person view. *Options:* wolf
   kill cooldown reduction, wolf speed, charge time, form duration, silver interaction, howl, charge reset
-  on lights fix, only as last Impostor, Spy counts as Impostor, form restrictions, exhaustion after the
+  on lights fix, only as last Impostor, earliest transformation round, Spy counts as Impostor, form
+  restrictions, exhaustion after the
   revert, Trapper/Saboteur traps and Deputy handcuffs against the wolf, ignores Bait.
 
 ### Crewmate
 
-- **The Siphoner**: Toggles a DRAIN aura: a nearby Impostor's kill cooldown is held at full (and, for a
-  while after, a lingering deficit) so they can't kill; optionally also holds the sabotage cooldown.
+- **The Siphoner**: Toggles a DRAIN aura: every tick, a nearby Impostor's kill cooldown (the Vampire's
+  bite cooldown too) is pushed back by the penalty, capped at the full cooldown. The net slowdown is
+  penalty minus tick interval per tick, so a penalty at or below the interval only slows the cooldown
+  down. Optionally holds the sabotage cooldown as well; that timer is shared, so it blocks sabotage
+  for ALL impostors while any one of them is in range.
   *Options:* drain range, penalty per tick, tick interval, scale-with-distance, warn drained impostor,
   also-drain-sabotage + block seconds, drain cooldown.
 - **The Witness**: If the Witness is the **sole living crewmate who sees a kill** (in range + clear line

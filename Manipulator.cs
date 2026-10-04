@@ -106,6 +106,28 @@ namespace UnknownsCollection {
             && manipulator.PlayerId == PlayerControl.LocalPlayer.PlayerId;
         public static bool IsFaking() => active && Time.time < fakeUntil;
 
+        // The lie is for the crew: the Manipulator's impostor partners read the real devices
+        // (User 04.10.), they would otherwise act on data their own teammate made up.
+        private static bool FakingForLocal() {
+            if (!IsFaking()) return false;
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (me != null && me.Data != null && me.Data.Role != null && me.Data.Role.IsImpostor) return false;
+            } catch { }
+            return true;
+        }
+
+        // Which devices this map has (vanilla ids: 0 Skeld, 1 Mira, 2 Polus, 3 dlekS, 4 Airship,
+        // 5 Fungle; anything else, e.g. Submerged, is assumed to have both).
+        private static bool MapHasAdmin() { try { return GameOptionsManager.Instance.currentNormalGameOptions.MapId != 5; } catch { return true; } }
+        private static bool MapHasVitals() {
+            try { int m = GameOptionsManager.Instance.currentNormalGameOptions.MapId; return m != 0 && m != 1 && m != 3; } catch { return true; }
+        }
+        /// Is there anything to fake here? Both options off, or only the half the map lacks, made the
+        /// FAKE button a no-op with cooldown, sound and swirl (audit 04.10.).
+        private static bool CanFakeAnything() =>
+            ((FakeAdmin?.getBool() ?? true) && MapHasAdmin()) || ((FakeVitals?.getBool() ?? true) && MapHasVitals());
+
         // ---- RPC plumbing ----
 
         private static MessageWriter BeginRpc(byte subtype) {
@@ -217,6 +239,10 @@ namespace UnknownsCollection {
 
                     int chance = SpawnRate.getSelection() * 10;
                     if (rnd.Next(1, 101) > chance) return;
+                    if (!CanFakeAnything()) {
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[Manipulator] nothing to fake on this map with these options - not handed out.");
+                        return;
+                    }
 
                     var candidates = PlayerControl.AllPlayerControls.ToArray().Where(UCPromotion.IsPlainImpostor).ToList();
                     if (candidates.Count == 0) return;
@@ -238,7 +264,8 @@ namespace UnknownsCollection {
                     manipulateButton = new TheOtherRoles.Objects.CustomButton(
                         () => SendManipulate(rnd.Next(int.MinValue, int.MaxValue), Duration?.getFloat() ?? 12f),
                         () => active && IsLocalManipulator()
-                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
+                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
+                              && CanFakeAnything(),
                         () => PlayerControl.LocalPlayer.CanMove && !IsFaking(),
                         () => { },
                         UCAssets.ManipulatorIcon,
@@ -269,7 +296,7 @@ namespace UnknownsCollection {
             [HarmonyPriority(Priority.First)]
             public static bool Prefix(MapCountOverlay __instance) {
                 try {
-                    if (!IsFaking() || !(FakeAdmin?.getBool() ?? true)) return true;
+                    if (!FakingForLocal() || !(FakeAdmin?.getBool() ?? true)) return true;
 
                     // Comms sabotage: keep the vanilla/TOR "signal lost" path - an admin table that
                     // works during comms would expose the manipulation.
@@ -297,8 +324,29 @@ namespace UnknownsCollection {
                     int bucket = Mathf.FloorToInt((fakeUntil - Time.time) / 4f);
                     var fake = new System.Random(fakeSeed ^ (bucket * 486187739));
                     var counts = new int[__instance.CountAreas.Length];
+                    // The viewer stands where he stands: the real table counts him in his own room, a
+                    // lie that showed his room as empty or full was spotted at once (audit 04.10.).
+                    int selfArea = -1;
+                    var me = PlayerControl.LocalPlayer;
+                    if (__instance.showLivePlayerPosition && me != null && me.Data != null && !me.Data.IsDead) {
+                        Vector2 here = me.GetTruePosition();
+                        for (int i = 0; i < __instance.CountAreas.Length && selfArea < 0; i++) {
+                            PlainShipRoom room = null;
+                            try { ShipStatus.Instance?.FastRooms?.TryGetValue(__instance.CountAreas[i].RoomType, out room); } catch { }
+                            if (room != null && room.roomArea != null && room.roomArea.OverlapPoint(here)) selfArea = i;
+                        }
+                    }
+                    if (selfArea >= 0) { counts[selfArea]++; bodies--; }
+                    // Corpses count too when the table shows them: as many as really lie on the map,
+                    // spread like the living.
+                    if (__instance.includeDeadBodies) {
+                        try { bodies += UnityEngine.Object.FindObjectsOfType<DeadBody>().Length; } catch { }
+                    }
                     for (int b = 0; b < bodies; b++)
                         counts[fake.Next(counts.Length)]++;
+                    // TOR colours the Hacker's icons from its own last REAL snapshot; with the snapshot
+                    // empty they stay plain instead of showing old colours under made-up numbers.
+                    ClearTorAdminSnapshot();
                     for (int i = 0; i < __instance.CountAreas.Length; i++)
                         __instance.CountAreas[i].UpdateCount(counts[i]);
                     return false;
@@ -309,13 +357,31 @@ namespace UnknownsCollection {
             }
         }
 
+        private static System.Reflection.FieldInfo torAdminPlayers;
+        private static void ClearTorAdminSnapshot() {
+            try {
+                if (torAdminPlayers == null) {
+                    var t = typeof(CustomOption).Assembly.GetType("TheOtherRoles.Patches.AdminPanelPatch");
+                    torAdminPlayers = t?.GetField("players", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                }
+                (torAdminPlayers?.GetValue(null) as System.Collections.IDictionary)?.Clear();
+            } catch { }
+        }
+
+        // The lie ends with the meeting, together with the button (audit 04.10.: it ran on into the
+        // next round while the button was already cooling down).
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
+        static class MeetingEndsLiePatch {
+            public static void Postfix() { fakeUntil = 0f; }
+        }
+
         // ---- VITALS fake: postfix flips dead panels back to alive after vanilla updated them ----
 
         [HarmonyPatch(typeof(VitalsMinigame), nameof(VitalsMinigame.Update))]
         static class FakeVitalsPatch {
             public static void Postfix(VitalsMinigame __instance) {
                 try {
-                    if (!IsFaking() || !(FakeVitals?.getBool() ?? true)) return;
+                    if (!FakingForLocal() || !(FakeVitals?.getBool() ?? true)) return;
                     if (__instance == null || __instance.vitals == null) return;
                     foreach (var panel in __instance.vitals) {
                         if (panel == null || !panel.IsDead) continue;

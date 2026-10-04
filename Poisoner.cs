@@ -13,7 +13,7 @@
  * The Medic gets an Antidote button when a reporter is poisoned, and can cure them once per round
  * (configurable).
  *
- * Options live in the 1430-1434 block. See ID-Registry.md.
+ * Options live in the 1430-1436 block. See ID-Registry.md.
  */
 
 using System;
@@ -33,12 +33,15 @@ namespace UnknownsCollection {
         // ---- Theme ----
         public static readonly Color Color = Palette.ImpostorRed;
 
-        // ---- Options (IDs 1430-1434) ----
+        // ---- Options (IDs 1430-1436) ----
         public static CustomOption SpawnRate;             // 1430 (header)
         public static CustomOption SpawnMinPlayers;       // 1431
         public static CustomOption PoisonDeathMeetings;   // 1432 - meetings before poisoned reporter dies
         public static CustomOption AntidoteCharges;       // 1433 - how many times Medic can cure
+        public static CustomOption NeedsHealer;           // 1437 - only spawns with a Medic or Paramedic in play
         public static CustomOption MaxPoisonedPerRound;   // 1434 - max poisoned bodies per round
+        public static CustomOption BaitSelfPoison;        // 1435 - TOR's Bait auto-report poisons the Poisoner too
+        public static CustomOption SelfReportPoison;      // 1436 - reporting his own poisoned body poisons him
 
         // ---- Runtime state ----
         public static PlayerControl poisoner;
@@ -86,6 +89,16 @@ namespace UnknownsCollection {
                     1f, 0f, 5f, 1f, SpawnRate);
                 MaxPoisonedPerRound = CustomOption.Create(1434, Types.Impostor, "Max Poisoned Bodies Per Round",
                     3f, 1f, 5f, 1f, SpawnRate);
+                // Both off by default: the Poisoner is spared his own poison (since 1.2.14.2).
+                BaitSelfPoison = CustomOption.Create(1435, Types.Impostor, "Poisoner Poisons Himself Via Bait",
+                    false, SpawnRate);
+                SelfReportPoison = CustomOption.Create(1436, Types.Impostor, "Poisoner Poisons Himself On Self-Report",
+                    false, SpawnRate);
+                // Poison is only fair when somebody can cure it (User 2026-10-04, Fable review): on by
+                // default, the Medic AND the Paramedic count as the healer. Named so the host sees why
+                // the role does not come in a round without one.
+                NeedsHealer = CustomOption.Create(1437, Types.Impostor, "Poisoner Needs A Healer In Play",
+                    true, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Poisoner] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Poisoner] CreateOptions failed: {e}");
@@ -178,14 +191,33 @@ namespace UnknownsCollection {
         private static void ApplyMarkBody(byte victimId) {
             if (active) poisonedBodies.Add(victimId);
             bodiesPoisonedThisRound.Add(victimId);
+            // The Poisoner learns that the poison took (audit 04.10.: he got no word at all). Only on
+            // his own client.
+            if (IsLocalPoisoner()) Tell(UCLocalization.Tr("uc.ui.poisoner.marked", bodiesPoisonedThisRound.Count, MaxPoisonedValue()));
         }
 
         private static void ApplyPoisonReporter(byte reporterId) {
             if (!active || reporterId == byte.MaxValue) return;
             // Start the countdown: the reporter dies after this many meetings (decremented each meeting).
-            if (!poisonedReporters.ContainsKey(reporterId))
+            if (!poisonedReporters.ContainsKey(reporterId)) {
                 poisonedReporters[reporterId] = PoisonDeathValue();
+                if (IsLocalPoisoner()) {
+                    var r = Helpers.playerById(reporterId);
+                    Tell(UCLocalization.Tr("uc.ui.poisoner.caught", r?.Data?.PlayerName ?? "?", PoisonDeathValue()));
+                }
+            }
         }
+
+        private static bool IsLocalPoisoner() =>
+            active && poisoner != null && PlayerControl.LocalPlayer != null && PlayerControl.LocalPlayer.PlayerId == poisoner.PlayerId;
+
+        private static void Tell(string text) {
+            try { HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer, text); } catch { }
+        }
+
+        /// A revived victim is a new person: a later body of his is not the poisoned one (audit 04.10.).
+        /// Called from Pelican.ForgetDeath, i.e. from every UC revive.
+        internal static void ForgetBody(byte id) => poisonedBodies.Remove(id);
 
         private static void ApplyAntidote(byte targetId) {
             poisonedReporters.Remove(targetId);
@@ -196,7 +228,8 @@ namespace UnknownsCollection {
             // world effect here would tell every bystander "this player was poisoned", the exact leak
             // the fuse-loop PlayerId gate already avoids for the Maniac's bomb carrier (Maniac.cs).
             var me = PlayerControl.LocalPlayer;
-            bool localIsMedic = me != null && Medic.medic != null && me.PlayerId == Medic.medic.PlayerId;
+            var healer = Healer();
+            bool localIsMedic = me != null && healer != null && me.PlayerId == healer.PlayerId;
             bool localIsTarget = me != null && me.PlayerId == targetId;
             if (localIsMedic || localIsTarget) {
                 var target = Helpers.playerById(targetId);
@@ -227,6 +260,17 @@ namespace UnknownsCollection {
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[Poisoner] lawyer promotion failed: {e.Message}");
                 }
                 target.Exiled();
+                // TOR booked that as an exile without a killer (ExilePlayerPatch): the end screen said
+                // "exiled" and the Poisoner's kill count missed it (audit 04.10.). Every client fixes
+                // its own ledger entry, like the exile itself.
+                try {
+                    var ledger = Pelican.DeadPlayersLedger();
+                    var entry = ledger?.LastOrDefault(d => d != null && d.player != null && d.player.PlayerId == targetId);
+                    if (entry != null && poisoner != null) {
+                        entry.deathReason = DeadPlayer.CustomDeathReason.Kill;
+                        entry.killerIfExisting = poisoner;
+                    }
+                } catch { }
                 // Custom kill overlay: the Exiled() path never reaches KillOverlay.ShowKillAnimation,
                 // so trigger it directly - with the vanilla audience (victim + killer only). The
                 // overlay queue holds it until the meeting/exile UI is gone.
@@ -268,7 +312,7 @@ namespace UnknownsCollection {
                     case SubPoisonReporter: { byte id = reader.ReadByte();
                         if (UCRpc.RequireHost("Poisoner.PoisonReporter")) ApplyPoisonReporter(id); break; }
                     case SubAntidote: { byte id = reader.ReadByte();
-                        if (UCRpc.RequireOwnerOrHost(Medic.medic, "Poisoner.Antidote")) ApplyAntidote(id); break; }
+                        if (UCRpc.RequireOwnerOrHost(Healer(), "Poisoner.Antidote")) ApplyAntidote(id); break; }
                     case SubPoisonDeath: { byte id = reader.ReadByte();
                         if (UCRpc.RequireHost("Poisoner.PoisonDeath")) ApplyPoisonDeath(id); break; }
                 }
@@ -322,6 +366,12 @@ namespace UnknownsCollection {
                     int chance = SpawnRate.getSelection() * 10;
                     if (rnd.Next(1, 101) > chance) return;
 
+                    // Runs after every other intro pick (UCPromotion.LatePickers), so a Paramedic of
+                    // this round is already known here.
+                    if ((NeedsHealer == null || NeedsHealer.getBool()) && Healer() == null) {
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[Poisoner] not rolled: no Medic or Paramedic in play.");
+                        return;
+                    }
                     var candidates = PlayerControl.AllPlayerControls.ToArray().Where(UCPromotion.IsPlainImpostor).ToList();
                     if (candidates.Count == 0) return;
                     SendSetPoisoner(candidates[rnd.Next(candidates.Count)].PlayerId);
@@ -336,6 +386,9 @@ namespace UnknownsCollection {
         static class MurderPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
+                    if (IsLocalPoisoner() && __instance != null && target != null && __instance.PlayerId == poisoner.PlayerId
+                        && target.PlayerId != poisoner.PlayerId && bodiesPoisonedThisRound.Count >= MaxPoisonedValue())
+                        Tell(UCLocalization.Tr("uc.ui.poisoner.limit", MaxPoisonedValue()));
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || poisoner == null || target == null) return;
                     if (__instance.PlayerId != poisoner.PlayerId) return;
@@ -362,9 +415,14 @@ namespace UnknownsCollection {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || target == null) return;
                     if (!poisonedBodies.Contains(target.PlayerId)) return;
-                    // The Poisoner reporting his own poisoned body: TOR's Bait auto-report does exactly
-                    // that on the killer's behalf. He must not catch his own poison.
-                    if (poisoner != null && __instance.PlayerId == poisoner.PlayerId) { poisonedBodies.Remove(target.PlayerId); return; }
+                    // The Poisoner reporting his own poisoned body. Two cases, one option each (both
+                    // off by default): TOR's Bait auto-report, which reports a Bait's body on the
+                    // killer's behalf (1435), and a voluntary self-report (1436). Off = he is spared.
+                    if (poisoner != null && __instance.PlayerId == poisoner.PlayerId) {
+                        bool viaBait = Bait.bait != null && Bait.bait.Any(b => b != null && b.PlayerId == target.PlayerId);
+                        var opt = viaBait ? BaitSelfPoison : SelfReportPoison;
+                        if (opt == null || !opt.getBool()) { poisonedBodies.Remove(target.PlayerId); return; }
+                    }
                     if (!IsAlive(__instance)) return;
                     SendPoisonReporter(__instance.PlayerId);
                     poisonedBodies.Remove(target.PlayerId);
@@ -406,8 +464,11 @@ namespace UnknownsCollection {
                     // not freeze the countdown, his poison keeps working just as after his death.
                     if (!active) return;
 
-                    // Reset round tracking
+                    // Reset round tracking. The marks go too: every body leaves the map with the
+                    // meeting, and a mark kept past it hit a revived victim's NEXT body (audit 04.10.).
+                    // The report check runs in ReportDeadBody, before this Start.
                     bodiesPoisonedThisRound.Clear();
+                    poisonedBodies.Clear();
 
                     // (Antidote charges are set once per game in ApplySetPoisoner - refilling them here made
                     // the charges option meaningless, the Medic got a fresh stock every single meeting.)
@@ -472,14 +533,18 @@ namespace UnknownsCollection {
             }
         }
 
-        // ---- Antidote button for Medic ----
-        private static PlayerControl FindMedic() {
-            foreach (var p in PlayerControl.AllPlayerControls) {
-                if (p == null) continue;
-                if (p.PlayerId == Medic.medic?.PlayerId) return p;
-            }
+        // ---- Antidote button for the healer ----
+        /// Who holds the Antidote: the Medic, or the Paramedic in a round without one (User 2026-10-04,
+        /// Fable review: both count as the healer that makes poison curable). Same answer on every
+        /// client, both roles are synced.
+        internal static PlayerControl Healer() {
+            if (Medic.medic != null && Medic.medic.Data != null && !Medic.medic.Data.Disconnected) return Medic.medic;
+            var pm = Paramedic.paramedic;
+            if (pm != null && pm.Data != null && !pm.Data.Disconnected) return pm;
             return null;
         }
+
+        private static PlayerControl FindMedic() => Healer();
 
         // Pulsing green outline for the Medic's Antidote target: setPlayerOutline forces the alpha
         // channel itself (SetAlpha(Chameleon.visibility(...))), so a pulse riding on alpha (as
@@ -506,7 +571,7 @@ namespace UnknownsCollection {
                         },
                         () => active && poisonedReporters.Count > 0 && FindMedic() != null
                               && PlayerControl.LocalPlayer != null
-                              && PlayerControl.LocalPlayer.PlayerId == Medic.medic?.PlayerId
+                              && PlayerControl.LocalPlayer.PlayerId == Healer()?.PlayerId
                               && !PlayerControl.LocalPlayer.Data.IsDead
                               && antidoteUsesLeft > 0,
                         () => PlayerControl.LocalPlayer.CanMove && antidoteTarget != null && !InMeeting(),
@@ -529,7 +594,7 @@ namespace UnknownsCollection {
                 try {
                     if (!active || poisonedReporters.Count == 0) return;
                     if (PlayerControl.LocalPlayer == null) return;
-                    if (PlayerControl.LocalPlayer.PlayerId != Medic.medic?.PlayerId) return;
+                    if (PlayerControl.LocalPlayer.PlayerId != Healer()?.PlayerId) return;
                     if (PlayerControl.LocalPlayer.Data == null || PlayerControl.LocalPlayer.Data.IsDead) return;
 
                     // Find nearest poisoned reporter

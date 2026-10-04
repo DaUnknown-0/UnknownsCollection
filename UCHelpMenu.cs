@@ -10,7 +10,8 @@
  * SEARCH button). Clicking a role shows a detail card: team, a detailed explanation and a small
  * looping DEMO animation acting out the role's mechanic (stateless per-frame vignettes built from
  * the shared UCFx sprites, driven by the same HudManager.Update patch that does the camera fit).
- * A language row toggles between Deutsch and English (persisted via BepInEx config).
+ * The panel follows the active mod language; a per-session language row (dropdown) overrides it for
+ * this window only and is never saved (see the "session language" block below).
  *
  * UI mechanics: plain SpriteRenderer/TextMeshPro objects parented to the HudManager (world-space,
  * sortingOrder 500+ - above world/HUD, below Helpers.showFlash's 999 flashes, see BeaconFx).
@@ -644,10 +645,16 @@ namespace UnknownsCollection {
             string q = searchQuery.Trim().ToLowerInvariant();
             var left = new List<Entry>();
             var right = new List<Entry>();
+            bool ucRolesPossible = true;
+            try { ucRolesPossible = TeslaVersionHandshake.EveryoneHasMod(); } catch { }
             foreach (var e in Entries()) {
                 CustomOption rate = null;
                 try { rate = e.rate?.Invoke(); } catch { }
                 if (e.rate != null && (rate == null || rate.getSelection() <= 0)) continue;
+                // UC roles only spawn when every player has the mod (each pick checks it), so the guide
+                // does not promise them otherwise (audit 04.10.). The Cursed Pirate needs two impostors.
+                if (!ucRolesPossible && e.key != null && e.key.StartsWith("uc.")) continue;
+                if (e.name == "Cursed Pirate" && !CursedPirate.EnoughImpostors()) continue;
                 if (q.Length > 0 && !e.name.ToLowerInvariant().Contains(q)) continue;
                 if (e.faction == Faction.Impostor || e.faction == Faction.Neutral || e.faction == Faction.Ghost)
                     left.Add(e);

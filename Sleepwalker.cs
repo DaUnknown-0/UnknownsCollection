@@ -303,21 +303,33 @@ namespace UnknownsCollection {
                     (anchors[i], anchors[j]) = (anchors[j], anchors[i]);
                 }
 
-                float minTable = MinTableDistance?.getFloat() ?? 10f;
+                float wanted = MinTableDistance?.getFloat() ?? 10f;
                 Vector2 table = ship.MeetingSpawnCenter;
                 var reach = reachGiven ?? BuildReach(ship);
-                int tries = 0;
-                foreach (var a in anchors) {
-                    if (Vector2.Distance(a.pos, table) < minTable) continue;
-                    for (int k = 0; k < 6 && tries < 60; k++) {
-                        tries++;
-                        float ang = (float)(rnd.NextDouble() * Math.PI * 2);
-                        float r = a.spread * (0.25f + 0.75f * (float)rnd.NextDouble());
-                        var p = a.pos + new Vector2(Mathf.Cos(ang) * r, Mathf.Sin(ang) * r);
-                        if (Vector2.Distance(p, table) < minTable) continue;
-                        if (IsWalkable(p) && (reach == null || reach.Contains(p))) return p;
+                // A distance the map cannot offer (Mira HQ at 20 to 30) meant no wake-up ever, in
+                // silence (audit 04.10.). Each empty pass relaxes it by a quarter, the last asks for none.
+                float minTable = wanted;
+                for (int pass = 0; pass < 6; pass++) {
+                    if (pass == 5) minTable = 0f;
+                    int tries = 0;
+                    foreach (var a in anchors) {
+                        if (Vector2.Distance(a.pos, table) < minTable) continue;
+                        for (int k = 0; k < 6 && tries < 60; k++) {
+                            tries++;
+                            float ang = (float)(rnd.NextDouble() * Math.PI * 2);
+                            float r = a.spread * (0.25f + 0.75f * (float)rnd.NextDouble());
+                            var p = a.pos + new Vector2(Mathf.Cos(ang) * r, Mathf.Sin(ang) * r);
+                            if (Vector2.Distance(p, table) < minTable) continue;
+                            if (IsWalkable(p) && (reach == null || reach.Contains(p))) {
+                                if (pass > 0)
+                                    UnknownsCollectionPlugin.Logger?.LogInfo($"[Sleepwalker] nothing at {wanted:0.#} from the table on this map - used {minTable:0.#}.");
+                                return p;
+                            }
+                        }
+                        if (tries >= 60) break;
                     }
-                    if (tries >= 60) break;
+                    if (minTable <= 0f) break;
+                    minTable *= 0.75f;
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Sleepwalker] position search failed: {e}");

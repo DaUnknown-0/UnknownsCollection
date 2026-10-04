@@ -349,7 +349,7 @@ namespace UnknownsCollection {
             [HarmonyPriority(Priority.High)]
             public static bool Prefix(KillButton __instance) {
                 try {
-                    if (!active || !IllusionistClone.IsActive()) return true;
+                    if (!active || !IllusionistClone.IsSolid()) return true;
                     var me = PlayerControl.LocalPlayer;
                     // Any killer (not just Impostors) that clicks the vanilla Kill button near the clone must
                     // be blocked - the clone is designed to look unkillable to EVERY potential killer, per role
@@ -367,14 +367,118 @@ namespace UnknownsCollection {
 
                     // The clone intercepts the kill: shield flash, no death.
                     SendCloneFlash();
-                    if (BlockPenalty == null || BlockPenalty.getBool())
-                        me.SetKillTimer(GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown);
+                    if (BlockPenalty == null || BlockPenalty.getBool()) ApplyBlankPenalty(me);
                     __instance.SetTarget(null);
                     return false;
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] kill intercept failed: {e}");
                     return true;
                 }
+            }
+        }
+
+        // TOR keeps its buttons in the INTERNAL TheOtherRoles.HudManagerStartPatch (the Hunter and the
+        // Sixth Sense read them the same way).
+        private static readonly Dictionary<string, System.Reflection.FieldInfo> torButtonFields = new Dictionary<string, System.Reflection.FieldInfo>();
+        internal static TheOtherRoles.Objects.CustomButton TorButton(string field) {
+            try {
+                if (!torButtonFields.TryGetValue(field, out var fi)) {
+                    var type = typeof(CustomOption).Assembly.GetType("TheOtherRoles.HudManagerStartPatch");
+                    fi = type?.GetField(field, System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                    torButtonFields[field] = fi;
+                }
+                return fi?.GetValue(null) as TheOtherRoles.Objects.CustomButton;
+            } catch { return null; }
+        }
+
+        // TOR's own BlankKill handling (UsablesPatch, KillButton.DoClick): the kill cooldown, plus the
+        // coupled ability timers of the Cleaner, Warlock, Witch and Ninja and the Mini's scaling, which
+        // the clone penalty used to skip (audit 04.10.).
+        private static void ApplyBlankPenalty(PlayerControl me) {
+            float cd = GameOptionsManager.Instance.currentNormalGameOptions.KillCooldown;
+            me.SetKillTimer(cd);
+            try {
+                if (me == Cleaner.cleaner && TorButton("cleanerCleanButton") != null)
+                    Cleaner.cleaner.killTimer = TorButton("cleanerCleanButton").Timer = TorButton("cleanerCleanButton").MaxTimer;
+                else if (me == Warlock.warlock && TorButton("warlockCurseButton") != null)
+                    Warlock.warlock.killTimer = TorButton("warlockCurseButton").Timer = TorButton("warlockCurseButton").MaxTimer;
+                else if (me == Mini.mini && Mini.mini.Data.Role.IsImpostor)
+                    Mini.mini.SetKillTimer(cd * (Mini.isGrownUp() ? 0.66f : 2f));
+                else if (me == Witch.witch && TorButton("witchSpellButton") != null)
+                    Witch.witch.killTimer = TorButton("witchSpellButton").Timer = TorButton("witchSpellButton").MaxTimer;
+                else if (me == Ninja.ninja && TorButton("ninjaButton") != null)
+                    Ninja.ninja.killTimer = TorButton("ninjaButton").Timer = TorButton("ninjaButton").MaxTimer;
+            } catch { }
+        }
+
+        // ====================================================================
+        // The clone for EVERY kill button (User 04.10.): Sheriff, Jackal, Sidekick, Vampire and Thief
+        // kill through TOR CustomButtons, never through KillButton.DoClick, so for them the clone was
+        // not even a target. Their button now lights up for a clone in reach, and a click that would
+        // land on it (no real target, or the clone is closer) bounces off with the shield flash and
+        // costs the button's full cooldown, like the impostor kill above.
+        // ====================================================================
+        private sealed class KillButtonRef {
+            public Func<TheOtherRoles.Objects.CustomButton> Button;
+            public Func<PlayerControl> Target, Owner;
+        }
+        private static KillButtonRef K(Func<TheOtherRoles.Objects.CustomButton> b, Func<PlayerControl> t, Func<PlayerControl> o)
+            => new KillButtonRef { Button = b, Target = t, Owner = o };
+        private static readonly List<KillButtonRef> killButtons = new List<KillButtonRef> {
+            K(() => TorButton("sheriffKillButton"), () => Sheriff.currentTarget, () => Sheriff.sheriff),
+            K(() => TorButton("jackalKillButton"), () => Jackal.currentTarget, () => Jackal.jackal),
+            K(() => TorButton("sidekickKillButton"), () => Sidekick.currentTarget, () => Sidekick.sidekick),
+            K(() => TorButton("vampireKillButton"), () => Vampire.currentTarget, () => Vampire.vampire),
+            K(() => TorButton("thiefKillButton"), () => Thief.currentTarget, () => Thief.thief),
+        };
+
+        private static bool CloneInReach(PlayerControl me, PlayerControl realTarget) {
+            if (!active || !IllusionistClone.IsSolid() || me == null || me.Data == null || me.Data.IsDead || !me.CanMove) return false;
+            Vector2 here = me.GetTruePosition();
+            float cloneDist = Vector2.Distance(here, IllusionistClone.Position());
+            if (cloneDist > KillRange()) return false;
+            float realDist = realTarget != null ? Vector2.Distance(here, realTarget.GetTruePosition()) : float.MaxValue;
+            return cloneDist <= realDist;
+        }
+
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
+        static class CloneTargetWrapPatch {
+            [HarmonyPriority(Priority.Last)]
+            public static void Postfix() {
+                try {
+                    foreach (var kb in killButtons) {
+                        var b = kb.Button();
+                        if (b == null) continue;
+                        var orig = b.CouldUse;
+                        var target = kb.Target;
+                        b.CouldUse = (Func<bool>)(() => (orig == null || orig()) || CloneInReach(PlayerControl.LocalPlayer, target()));
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] kill button wrap failed: {e}");
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(TheOtherRoles.Objects.CustomButton), nameof(TheOtherRoles.Objects.CustomButton.onClickEvent))]
+        static class CloneCustomKillPatch {
+            [HarmonyPriority(Priority.First)]
+            public static bool Prefix(TheOtherRoles.Objects.CustomButton __instance) {
+                try {
+                    if (!active || __instance == null || __instance.Timer >= 0f) return true;
+                    foreach (var kb in killButtons) {
+                        if (kb.Button() != __instance) continue;
+                        var me = PlayerControl.LocalPlayer;
+                        var owner = kb.Owner();
+                        if (owner == null || me == null || owner.PlayerId != me.PlayerId) return true;
+                        if (!CloneInReach(me, kb.Target())) return true;
+                        SendCloneFlash();
+                        __instance.Timer = __instance.MaxTimer;
+                        return false;
+                    }
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Illusionist] custom kill intercept failed: {e}");
+                }
+                return true;
             }
         }
 

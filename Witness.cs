@@ -128,14 +128,32 @@ namespace UnknownsCollection {
         }
 
         // Can `viewer` see world point `at`? (within sight range and a clear line of sight)
+        // The range is also capped by the viewer's real light radius (User 04.10.): in the dark, under
+        // a lights sabotage or a blinding hex nobody sees five units far.
         private static bool CanSee(PlayerControl viewer, Vector2 at) {
             if (!IsAlive(viewer)) return false;
             Vector2 from = viewer.GetTruePosition();
             Vector2 dir = at - from;
             float mag = dir.magnitude;
-            if (mag > Sight()) return false;
+            float range = Sight();
+            try {
+                var ship = ShipStatus.Instance;
+                if (ship != null && viewer.Data != null) range = Mathf.Min(range, ship.CalculateLightRadius(viewer.Data));
+            } catch { }
+            if (mag > range) return false;
             if (mag < 0.05f) return true;
             return !PhysicsHelpers.AnyNonTriggersBetween(from, dir.normalized, mag, Constants.ShipAndObjectsMask);
+        }
+
+        private static bool KillerDisguised(PlayerControl killer) {
+            try {
+                if (killer == null) return false;
+                if (Camouflager.camouflageTimer > 0f) return true;
+                if (Morphling.morphling != null && Morphling.morphling.PlayerId == killer.PlayerId
+                    && Morphling.morphTarget != null && Morphling.morphTimer > 0f) return true;
+                if (Skinwalker.IsDisguised(killer)) return true;
+            } catch { }
+            return false;
         }
 
         // ====================================================================
@@ -212,6 +230,9 @@ namespace UnknownsCollection {
             }
         }
 
+        // Posted in the reporter's name (the chat hides lines "from" the dead Witness from the living),
+        // but worded as the note found on the body, not as the reporter's own sighting (audit 04.10.:
+        // "I saw ..." made the reporter look like the witness).
         private static void ApplyReveal(byte reporterId, byte killerId, byte victimId) {
             revealed = true;
             var reporter = Helpers.playerById(reporterId) ?? PlayerControl.LocalPlayer;
@@ -345,6 +366,9 @@ namespace UnknownsCollection {
                         if (CanSee(p, at)) seers.Add(p.PlayerId);
                     }
 
+                    // A killer in disguise (morphed, camouflaged, in a Skinwalker's skin) is not
+                    // recognised: no sighting at all (User 04.10.), the note never names someone else.
+                    if (KillerDisguised(__instance)) return;
                     // Sole crewmate witness == exactly the Witness, nobody else.
                     if (seers.Count == 1 && seers[0] == witness.PlayerId)
                         SendWitnessed(__instance.PlayerId, target.PlayerId);

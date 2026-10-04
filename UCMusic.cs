@@ -99,10 +99,12 @@ namespace UnknownsCollection {
                     cue = new Cue { id = cueId, resumePos = 0f };
                     cues[cueId] = cue;
                 }
-                if (cue.clip != null && cue.clip != clipName && cue == activeCue) {
+                if (cue.clip != null && cue.clip != clipName) {
                     // Intra-cue clip switch (reactor loop -> boom/fixed): hard cut, position resets -
-                    // the new clip is a new timeline and its start is timing-critical.
-                    StopActiveSource(hard: true);
+                    // the new clip is a new timeline and its start is timing-critical. The reset holds
+                    // for a cue that is pushed aside right now too (audit 04.10.): it kept the old
+                    // loop's position and started a shorter outro at its last frame, i.e. silent.
+                    if (cue == activeCue) StopActiveSource(hard: true);
                     cue.resumePos = 0f;
                 }
                 cue.clip = clipName;

@@ -19,7 +19,7 @@
  * (TeslaVersionHandshake.BeginGameGatePatch): the match cannot even start unless everyone runs the same
  * build, therefore "everyone has the mod" always holds in-game.
  *
- * Options live in the 1410-1427 block (Tesla holds 1400-1406). See ID-Registry.md.
+ * Options live in the 1410-1428 block (Tesla holds 1400-1408). See ID-Registry.md.
  *
  * NOTE: This file currently contains the role scaffold (identity, options, pick, tokens, reset + RPC
  * core). The sabotage-task, kill FX, traps and the crew counterplay are layered on in their own files
@@ -42,7 +42,7 @@ namespace UnknownsCollection {
         // ---- Theme ----
         public static readonly Color Color = Palette.ImpostorRed; // impostor role -> red role tag (matches UCRoleDraft)
 
-        // ---- Options (IDs 1410-1427) ----
+        // ---- Options (IDs 1410-1428) ----
         public static CustomOption SpawnRate;            // 1410 (header) - impostor role chance
         public static CustomOption SpawnMinPlayers;      // 1411 - minimum LOBBY players to spawn
         public static CustomOption MinAliveForKill;      // 1412 - min ALIVE players for the sabotage KILL
@@ -61,6 +61,8 @@ namespace UnknownsCollection {
         public static CustomOption CrewCanSearch;        // 1425 - crew gets the SEARCH button
         public static CustomOption CrewCanDefuse;        // 1426 - crew can defuse a found sabotage
         public static CustomOption MinAliveForTraps;     // 1427 - min ALIVE players for traps to arm
+        public static CustomOption SearchCooldown;       // 1429 - crew SEARCH cooldown (seconds)
+        public static CustomOption IgnoresMedicShield;   // 1428 - the sabotage kill passes the Medic's shield
 
         // ---- Runtime state (reset each round) ----
         public static PlayerControl saboteur;
@@ -88,6 +90,9 @@ namespace UnknownsCollection {
         // share this single constant so they can never drift apart again (used as the HOST's sanity check
         // on the reported position - see HostHandleRequestKill).
         private const float SabotageKillDistanceTolerance = 2.0f;
+        /// The scan window closes beyond this distance from the console: the tolerance plus room to
+        /// shuffle (audit 04.10.: at 1.8 a scan opened between 1.8 and 2.0 closed in the same frame).
+        internal const float ScanAbortDistance = SabotageKillDistanceTolerance + 0.5f;
 
         // The ACTUAL console the local player last used (see ConsoleUsePatch below), not a proximity guess.
         // VictimPoll uses this - instead of re-scanning for "the nearest usable console" - to decide which
@@ -179,6 +184,14 @@ namespace UnknownsCollection {
                     true, CrewCanSearch);
                 MinAliveForTraps = CustomOption.Create(1427, Types.Impostor, "Minimum Alive Players For Traps",
                     3f, 2f, 10f, 1f, SpawnRate);
+                // Worded like TOR's "Guesses Ignore The Medic Shield". Off by default (User 2026-10-04,
+                // Fable review): shields hold as in TOR, the option is the host's exception switch.
+                IgnoresMedicShield = CustomOption.Create(1428, Types.Impostor, "Saboteur Trap Ignores The Medic Shield",
+                    false, SpawnRate);
+                // Scanning was free and unlimited: a scan before every task defused any sabotage at no
+                // risk (User 04.10.: cooldown, 20 s by default).
+                SearchCooldown = CustomOption.Create(1429, Types.Impostor, "Crew Search Cooldown",
+                    20f, 0f, 60f, 2.5f, CrewCanSearch);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Saboteur] Options created.");
             } catch (Exception e) {
@@ -560,6 +573,9 @@ namespace UnknownsCollection {
 
         private static void ApplyKillFx(byte victimId) {
             var victim = Helpers.playerById(victimId);
+            // Every client learns that this round's sabotage kill is spent, so the Saboteur's own
+            // button can go dark instead of selling him a token for a trap that never fires (04.10.).
+            killUsedThisRound = true;
             // Custom kill overlay - task kills ONLY (normal Saboteur knife kills keep vanilla).
             UCKillOverlay.ArmVictim(UCKillOverlay.Kind.SaboteurTask, victimId);
             SaboteurKillFx.Play(victim);
@@ -656,6 +672,30 @@ namespace UnknownsCollection {
                 return;
             }
 
+            // TOR's own shields (User 2026-10-04, shield matrix): the trap is a remote Impostor kill
+            // like the Vampire's bite and the Bomber's blast, so it asks TOR's kill funnel too. Time
+            // Master shield, Armored, the unripe Mini and the first-kill shield hold; the Medic shield
+            // per option 1428. Run on the host only, where the side effects belong (rewind, armor
+            // break, the Medic's murder-attempt notice). A broken armor uses the trap up, a shield
+            // that simply holds leaves it armed (same as the Forgotten Fixes shields above).
+            bool ignoreMedic = IgnoresMedicShield != null && IgnoresMedicShield.getBool();
+            MurderAttemptResult attempt;
+            try { attempt = Helpers.checkMuderAttempt(saboteur, victim, false, true, false, ignoreMedic); }
+            catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] shield check failed: {e}");
+                attempt = MurderAttemptResult.PerformKill;
+            }
+            if (attempt == MurderAttemptResult.BlankKill) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request absorbed by {victim.Data?.PlayerName}'s armor; trap used up.");
+                killUsedThisRound = true;
+                SendClearSabotage();
+                return;
+            }
+            if (attempt != MurderAttemptResult.PerformKill) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request rejected: {victim.Data?.PlayerName} is shielded ({attempt}).");
+                return;
+            }
+
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request ACCEPTED for victim {victim.Data?.PlayerName}.");
             killUsedThisRound = true;
             byte killerId = saboteur.PlayerId;
@@ -691,9 +731,15 @@ namespace UnknownsCollection {
         // HandleFirstDeath: one shared handler, hooked from both the murder and the exile path.
         // ====================================================================
         private static void HandleSaboteurDeath(PlayerControl target) {
+            if (!active || saboteur == null || target == null || target.PlayerId != saboteur.PlayerId) return;
+            // His traps go with him (User 04.10.), like the marked console below. Every client runs
+            // this hook for the same synced death, so each clears its own copy.
+            if (SaboteurTrap.ActiveCount > 0) {
+                SaboteurTrap.Clear();
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Saboteur] Saboteur died - his traps are cleared.");
+            }
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-            if (!active || !sabotagedActive || saboteur == null || target == null) return;
-            if (target.PlayerId != saboteur.PlayerId) return;
+            if (!sabotagedActive) return;
 
             UnknownsCollectionPlugin.Logger?.LogInfo("[Saboteur] Saboteur died with an active sabotage - clearing it.");
             SendClearSabotage();
@@ -1090,7 +1136,10 @@ namespace UnknownsCollection {
                         () => active && IsLocalSaboteur() && !sabotagedActive
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
                               && tokens >= (SabotageTokenCost != null ? Mathf.RoundToInt(SabotageTokenCost.getFloat()) : 1),
-                        () => PlayerControl.LocalPlayer.CanMove && FindUsableConsoleInRange() != null,
+                        // The host refuses the kill below the alive minimum and after the round's kill;
+                        // the button says so up front instead of letting the token fizzle (04.10.).
+                        () => PlayerControl.LocalPlayer.CanMove && FindUsableConsoleInRange() != null
+                              && !killUsedThisRound && AliveCount() >= (MinAliveForKill?.getFloat() ?? 4f),
                         () => { },
                         sabotageSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
@@ -1115,7 +1164,8 @@ namespace UnknownsCollection {
                         () => active && IsLocalSaboteur()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
                               && tokens >= TrapCost() && SaboteurTrap.ActiveCount < MaxTraps(),
-                        () => PlayerControl.LocalPlayer.CanMove && SaboteurTrap.CanPlaceHere(),
+                        () => PlayerControl.LocalPlayer.CanMove && SaboteurTrap.CanPlaceHere()
+                              && AliveCount() >= (MinAliveForTraps?.getFloat() ?? 3f),   // traps are inert below it
                         () => { },
                         trapSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowLeft,
@@ -1149,6 +1199,7 @@ namespace UnknownsCollection {
                             var c = FindConsoleForSearch();
                             if (c == null || SaboteurScanUI.IsOpen) return;
                             SaboteurScanUI.Open(c.transform.position);
+                            searchButton.MaxTimer = SearchCooldown?.getFloat() ?? 20f;
                             searchButton.Timer = searchButton.MaxTimer;
                         },
                         () => CouldSpawn() && (CrewCanSearch == null || CrewCanSearch.getBool())

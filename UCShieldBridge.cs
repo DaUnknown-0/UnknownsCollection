@@ -23,6 +23,7 @@
  *
  *   "UTS.Shield.IsKillProtected" -> Func<byte,bool>
  *   "UTS.Shield.SetPeaceful"     -> Action<bool>
+ *   "UTS.Shield.IsNewcomer"      -> Func<byte,bool>  (the Mixer spares newcomers, User 2026-10-04)
  *
  * The delegates are resolved lazily and re-resolved while they are still missing (plugin load order
  * between two BepInEx plugins is not ours to dictate), then cached for good.
@@ -36,8 +37,10 @@ namespace UnknownsCollection {
 
         private const string KeyIsProtected = "UTS.Shield.IsKillProtected";
         private const string KeySetPeaceful = "UTS.Shield.SetPeaceful";
+        private const string KeyIsNewcomer = "UTS.Shield.IsNewcomer";
 
         private static Func<byte, bool> isProtected;
+        private static Func<byte, bool> isNewcomer;
         private static Action<bool> setPeaceful;
         private static bool logged;
 
@@ -49,6 +52,10 @@ namespace UnknownsCollection {
             }
             if (setPeaceful == null) {
                 try { setPeaceful = AppDomain.CurrentDomain.GetData(KeySetPeaceful) as Action<bool>; }
+                catch { }
+            }
+            if (isNewcomer == null) {
+                try { isNewcomer = AppDomain.CurrentDomain.GetData(KeyIsNewcomer) as Func<byte, bool>; }
                 catch { }
             }
             if (!logged && isProtected != null) {
@@ -64,6 +71,15 @@ namespace UnknownsCollection {
             try {
                 Resolve();
                 return isProtected != null && isProtected(playerId);
+            } catch { return false; }
+        }
+
+        // True while the player holds the newcomer shield (only that one, not spawn protection or the
+        // early-death shield). False when UTS is absent or predates the key.
+        public static bool IsNewcomer(byte playerId) {
+            try {
+                Resolve();
+                return isNewcomer != null && isNewcomer(playerId);
             } catch { return false; }
         }
 

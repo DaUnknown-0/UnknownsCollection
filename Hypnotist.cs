@@ -55,6 +55,8 @@ namespace UnknownsCollection {
         public static CustomOption CannotEscape;   // skip AND a vote never cast are redirected too
         public static CustomOption BreakOnDeath;
         public static CustomOption ViewMode;       // 1756: Off / Peek / Until The Meeting (HypnotistView)
+        public static CustomOption PeekDuration;   // 1782
+        public static CustomOption PeekCooldown;   // 1783
 
         // ---- Runtime state ----
         public static PlayerControl hypnotist;
@@ -90,6 +92,9 @@ namespace UnknownsCollection {
                 BreakOnDeath = CustomOption.Create(1755, Types.Impostor, "Hypnosis Breaks When The Hypnotist Dies", true, SpawnRate);
                 ViewMode = new CustomOption(1756, Types.Impostor, "Hypnotist Sees Through The Victim",
                     new string[] { "Off", "Peek", "Until The Meeting" }, "Peek", SpawnRate, false);
+                // The peek was the role's only hard-coded timing (5 s, 20 s cooldown), audit 04.10.
+                PeekDuration = CustomOption.Create(1782, Types.Impostor, "Hypnotist Peek Duration", 5f, 2f, 15f, 1f, ViewMode);
+                PeekCooldown = CustomOption.Create(1783, Types.Impostor, "Hypnotist Peek Cooldown", 20f, 5f, 60f, 2.5f, ViewMode);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Hypnotist] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Hypnotist] CreateOptions failed: {e}");
@@ -211,6 +216,24 @@ namespace UnknownsCollection {
             if (AmHost()) UnknownsCollectionPlugin.Logger?.LogInfo($"[Hypnotist] redirect pick: {(target == SkipPick ? "skip" : target == NoPick ? "none" : target.ToString())}.");
         }
 
+        // A victim who dies (or leaves) before the meeting can never vote: the hypnosis is void, the
+        // charge comes back and the button is free again (audit 04.10.: it stayed blocked until the end
+        // of the next meeting). Deaths are synced, so every client does this in the same frame range
+        // without an RPC.
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
+        static class VictimLostPatch {
+            public static void Postfix() {
+                try {
+                    if (!active || victimId == byte.MaxValue || InMeeting()) return;
+                    var v = Helpers.playerById(victimId);
+                    if (v != null && v.Data != null && !v.Data.IsDead && !v.Data.Disconnected) return;
+                    ClearHypnosis();
+                    usesLeft++;
+                    if (IsLocalHypnotist()) UnknownsCollectionPlugin.Logger?.LogInfo($"[Hypnotist] the victim is gone before the meeting - charge refunded ({usesLeft}).");
+                } catch { }
+            }
+        }
+
         private static void ClearHypnosis() {
             victimId = byte.MaxValue;
             pick = NoPick;
@@ -247,7 +270,10 @@ namespace UnknownsCollection {
                     currentTarget = null;
                     if (InMeeting() || usesLeft <= 0 || victimId != byte.MaxValue) return;
                     if (__instance.Data == null || __instance.Data.IsDead) return;
-                    currentTarget = PlayerControlFixedUpdatePatch.setTarget();
+                    // Hypnosis is not a kill: announce it as peaceful like the Silencer, so the Forgotten
+                    // Fixes shields (newcomer, spawn protection, early death) let it through (User 2026-10-04).
+                    using (UCShieldBridge.Peaceful())
+                        currentTarget = PlayerControlFixedUpdatePatch.setTarget(true);   // no fellow impostors (04.10.)
                     if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, Spiral);
                 } catch { }
             }
@@ -268,7 +294,9 @@ namespace UnknownsCollection {
                         () => IsLocalHypnotist() && PlayerControl.LocalPlayer.Data != null
                               && !PlayerControl.LocalPlayer.Data.IsDead && usesLeft > 0,
                         () => PlayerControl.LocalPlayer.CanMove && currentTarget != null && victimId == byte.MaxValue,
-                        () => { },
+                        // The cooldown starts over when the meeting ends: one hypnosis per meeting cycle
+                        // already, and a cooldown ticking through the meeting meant almost nothing (04.10.).
+                        () => { if (hypnotizeButton != null) hypnotizeButton.Timer = hypnotizeButton.MaxTimer; },
                         sprite,
                         CustomButton.ButtonPositions.upperRowLeft,
                         __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.hypnotist.button"));

@@ -25,6 +25,9 @@
  *   - Minimum ALIVE players for charges to be lethal (below it the charge does nothing; combined with
  *     the spawn gate this is the "min alive player count").
  *   - Tesla may charge itself; and whether a self-charge also kills the Tesla.
+ *   - Whether the discharge ignores the Medic shield (1408, off by default since 2026-10-04: shields
+ *     hold as in TOR, the Medic gets TOR's attempt notice). Every other shield TOR's
+ *     kill check knows (Time Master, Armored, unripe Mini, first-kill shield) always holds.
  */
 
 using System;
@@ -53,6 +56,8 @@ namespace UnknownsCollection {
         public static CustomOption CanChargeSelf;      // 1405 - Tesla may charge itself
         public static CustomOption DiesIfSelfCharged;  // 1406 - self-charge also kills the Tesla
         public static CustomOption GraceAfterMeeting;  // 1407 - grace seconds after meeting / round start
+        public static CustomOption IgnoresMedicShield; // 1408 - the discharge passes the Medic's shield
+        public static CustomOption ChargesEndWithTesla; // 1409 - the Tesla's death clears his charge
 
         // ---- Runtime state (reset each round) ----
         public static PlayerControl tesla;
@@ -114,6 +119,13 @@ namespace UnknownsCollection {
                     true, CanChargeSelf);
                 GraceAfterMeeting = CustomOption.Create(1407, Types.Impostor, "Tesla Grace Seconds After Meeting",
                     5f, 0f, 30f, 1f, SpawnRate);
+                // Worded like TOR's "Guesses Ignore The Medic Shield". Off by default (User 2026-10-04,
+                // Fable review): shields hold as in TOR, and TOR's kill check tells the Medic about the
+                // attempt; the option stays as the host's exception switch.
+                IgnoresMedicShield = CustomOption.Create(1408, Types.Impostor, "Tesla Discharge Ignores The Medic Shield",
+                    false, SpawnRate);
+                ChargesEndWithTesla = CustomOption.Create(1409, Types.Impostor, "Tesla Charges End With The Tesla",
+                    true, SpawnRate);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Tesla] Options created.");
             } catch (Exception e) {
@@ -306,9 +318,9 @@ namespace UnknownsCollection {
                     PlayerControl.LocalPlayer.NetId, uncheckedMurderRpc, SendOption.Reliable, -1);
                 w.Write(sourceId);
                 w.Write(targetId);
-                w.Write(byte.MaxValue); // showAnimation
+                w.Write((byte)0); // showAnimation = 0: masked, the source is not teleported (see TriggerDeath)
                 AmongUsClient.Instance.FinishRpcImmediately(w);
-                RPCProcedure.uncheckedMurderPlayer(sourceId, targetId, byte.MaxValue);
+                RPCProcedure.uncheckedMurderPlayer(sourceId, targetId, 0);
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] RpcUncheckedMurder failed: {e}");
             }
@@ -504,6 +516,13 @@ namespace UnknownsCollection {
 
             // A charged player who died/left ends the threat - clear the pair.
             if (!IsAlive(plus) || !IsAlive(minus)) { SendClear(); return; }
+            // So does the Tesla's own death (option 1409, on by default; User 04.10.): voted out in the
+            // same meeting or killed later, his charge used to run on to the end.
+            if ((ChargesEndWithTesla?.getBool() ?? true) && !IsAlive(tesla)) {
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Tesla] the Tesla is dead - his charge ends.");
+                SendClear();
+                return;
+            }
 
             // Live gate: below the minimum, charges are harmless (countdown frozen).
             if (!LiveGateOk()) return;
@@ -528,24 +547,68 @@ namespace UnknownsCollection {
             bool killPlus = !(plusId == teslaId && !teslaDies);
             bool killMinus = !(minusId == teslaId && !teslaDies);
 
+            // Shields (User 2026-10-04, shield matrix): the discharge is an Impostor kill, so it asks
+            // TOR's kill funnel like every other one. Time Master shield, Armored, the unripe Mini, the
+            // first-kill shield and the Forgotten Fixes shields hold; the Medic shield per option 1408.
+            // The checks run here on the host only, which is also where their side effects belong
+            // (rewind, armor break, the Medic's murder-attempt notice).
+            // A Time Master with his time shield up rewinds time, and the rewind saves BOTH poles: the
+            // partner does not die either (User 2026-10-04). Only his own check runs (it fires the rewind).
+            bool rewind = (killPlus && TimeShieldUp(plus)) || (killMinus && TimeShieldUp(minus));
+            if (rewind) {
+                ShieldAllows(TimeShieldUp(plus) ? plus : minus);
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Tesla] discharge rewound by the Time Master's shield; both poles survive.");
+                killPlus = killMinus = false;
+            }
+            if (killPlus) killPlus = ShieldAllows(plus);
+            if (killMinus) killMinus = ShieldAllows(minus);
+
             // Kill FX fires at the victim positions BEFORE the murder RPCs (same ordering as
             // Saboteur's SubKillFx), so the electrocution burst is on screen right as the death lands.
             // A spared pole (self-charged Tesla with DiesIfSelfCharged off) is sent as byte.MaxValue -
             // an electrocution burst on a player who visibly survives would be a false public tell.
             SendKillFx(killPlus ? plus.PlayerId : byte.MaxValue, killMinus ? minus.PlayerId : byte.MaxValue);
 
-            // Source = the victim themselves: vanilla MurderPlayer snaps the SOURCE onto the target, so
-            // using the Tesla as source teleported them across the map to the electrocution - a hard
-            // identity reveal. Self-source also keeps killer-attribution info (Detective/Medic reports)
-            // from pointing at the Tesla. Note this is NOT the Maniac's blast pattern: that one sources
-            // the murder at the Maniac and suppresses the teleport with showAnimation = 0 instead,
-            // because his kills are meant to be attributed (Bait, kill count). The Tesla can't do that -
-            // it WANTS the electrocution animation (showAnimation = byte.MaxValue), and showing it is
-            // exactly what would drag the killer along.
-            if (killPlus) RpcUncheckedMurder(plusId, plusId);
-            if (killMinus) RpcUncheckedMurder(minusId, minusId);
+            // Source = the Tesla, the Maniac's blast pattern (audit 04.10.): with the victim as his own
+            // killer TOR's Bait report never fired (baitUpdate matches killerIfExisting) and the end
+            // screen credited the Tesla with no kill. The kill is MASKED (showAnimation = 0): TOR's
+            // KillAnimationCoPerformKillPatch rewrites the animation's source to the target, so the
+            // Tesla is not dragged to the victim; the electrocution itself is the UC overlay armed in
+            // SubKillFx (Kind.Tesla), which never needed the vanilla animation. A Tesla who left the
+            // game falls back to the self-source. A self-charged Tesla dies LAST, so the partner's
+            // death is still attributed to a living killer.
+            byte source = tesla != null && tesla.Data != null && !tesla.Data.Disconnected ? teslaId : byte.MaxValue;
+            void Kill(byte id) => RpcUncheckedMurder(source != byte.MaxValue ? source : id, id);
+            if (killPlus && plusId != teslaId) Kill(plusId);
+            if (killMinus && minusId != teslaId) Kill(minusId);
+            if (killPlus && plusId == teslaId) Kill(plusId);
+            if (killMinus && minusId == teslaId) Kill(minusId);
 
             SendClear();
+        }
+
+        // The Tesla is the attacker for the check, even when dead (his charges outlive him). A Tesla
+        // who left the game is gone from the player list; the victim then stands in as the attacker,
+        // which TOR's check accepts (it only needs a living, connected killer).
+        private static bool TimeShieldUp(PlayerControl p) {
+            try {
+                return p != null && TimeMaster.shieldActive && TimeMaster.timeMaster != null
+                    && TimeMaster.timeMaster.PlayerId == p.PlayerId;
+            } catch { return false; }
+        }
+
+        private static bool ShieldAllows(PlayerControl victim) {
+            try {
+                PlayerControl killer = tesla != null && tesla.Data != null && !tesla.Data.Disconnected ? tesla : victim;
+                bool ignoreMedic = IgnoresMedicShield != null && IgnoresMedicShield.getBool();
+                var result = Helpers.checkMuderAttempt(killer, victim, false, true, true, ignoreMedic);
+                if (result == MurderAttemptResult.PerformKill) return true;
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Tesla] discharge on {victim?.Data?.PlayerName} stopped by a shield ({result}).");
+                return false;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Tesla] shield check failed: {e}");
+                return true;
+            }
         }
 
         // Local cosmetics: show the charge indicator on the charged local player, and a pulsing red

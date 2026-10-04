@@ -20,9 +20,11 @@
  * The sweet spot is therefore the ring between the crew radius and the cone reach, in line of
  * sight: close enough to watch, far enough not to be watched.
  *
- * THE TARGET FEELS IT. Every 15 seconds the Stalker's client sends the remaining time; the target
- * (and only the target) sees a "stalk meter" on the HUD. Option 1645 decides whether that meter is
- * shown never, only once half the time is done, or always.
+ * THE TARGET FEELS IT. The Stalker's client sends the remaining time; the target (and only the
+ * target) sees a "stalk meter" on the HUD. Option 1645 decides whether that meter is shown never,
+ * only once half the time is done, or always; option 1650 how it updates (User 04.10.): every N
+ * seconds whatever the clock does (a pause is no tell), or 0 = live, whenever the shown second
+ * changes (a running number then means: he is watching right now).
  *
  * AT 100 % THE STALKER STRIKES. He gets a kill button (target only, own cooldown) - but any death
  * of the target after 100 % counts: his kill, an ejection at a meeting, a guess by anyone. The
@@ -30,7 +32,10 @@
  *
  * IF THE TARGET DIES EARLY (before 100 %) the Stalker is finished: by default he becomes TOR's
  * Pursuer (the Lawyer's fallback role - the same promotion path), optionally he gets a new target
- * and keeps his progress instead. A target that merely disconnects is replaced either way.
+ * and keeps his progress instead. A target that merely disconnects is replaced either way; after
+ * 100 % the new target has to be stalked again (from zero, or from half with "progress kept"), the
+ * strike is never free (audit 04.10.). If the Pursuer slot is taken and no target is left, the role
+ * ends and the Stalker is told so.
  *
  * WHO COMPUTES WHAT
  *   - The stalking clock runs on the STALKER'S OWN CLIENT: only he knows where his cone points,
@@ -87,6 +92,7 @@ namespace UnknownsCollection {
         public static CustomOption ConeReach;        // x crew vision (1.5-2.0)
         public static CustomOption ConeWidth;        // vanilla flashlight width
         public static CustomOption MeterMode;        // Never / From 50% / Always
+        public static CustomOption MeterInterval;    // 1650 - seconds between meter updates, 0 = live
         public static CustomOption StrikeCooldown;
         public static CustomOption TargetDeath;      // Becomes Pursuer / New Target
         public static CustomOption HasTasks;
@@ -101,6 +107,7 @@ namespace UnknownsCollection {
         private static float progress;               // seconds of unseen stalking so far
         private static bool complete;                // 100 % reached (synced via SubComplete)
         private static float nextMeterSend;
+        private static int lastMeterRemaining = -1;   // live mode: send only when the second changes
         private static float lastMeterSent = -1f;
         // What the other clients know (target HUD + host bookkeeping).
         private static int meterRemaining = -1;      // seconds, -1 = nothing received yet
@@ -158,6 +165,8 @@ namespace UnknownsCollection {
                     FloatRange(0.1f, 0.5f, 0.05f), 0.2f, SpawnRate, false);
                 MeterMode = CustomOption.Create(1645, Types.Neutral, "Target Sees The Stalk Meter",
                     new string[] { "Always", "From 50%", "Never" }, SpawnRate);
+                MeterInterval = CustomOption.Create(1650, Types.Neutral, "Stalk Meter Update Interval (0 = Live)",
+                    15f, 0f, 30f, 5f, MeterMode);
                 StrikeCooldown = CustomOption.Create(1646, Types.Neutral, "Strike Cooldown",
                     10f, 5f, 60f, 5f, SpawnRate);
                 TargetDeath = CustomOption.Create(1647, Types.Neutral, "If The Target Dies Before 100%",
@@ -333,10 +342,19 @@ namespace UnknownsCollection {
         }
 
         private static void ApplySetTarget(byte id) {
+            // A new target after 100 % (the old one left the game) is a new hunt: the strike was earned
+            // on the old one (audit 04.10.: the next random player could be stabbed unwatched and that
+            // won the game). From zero, or from half with "progress kept".
+            if (complete) {
+                complete = false;
+                if (IsLocalStalker()) progress = (TargetDeath?.getSelection() ?? 0) == 1 ? NeedSeconds() * 0.5f : 0f;
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Stalker] new target after 100 % - stalking starts over.");
+            }
             targetId = id;
             meterRemaining = -1;
             meterPercent = 0;
             lastMeterSent = -1f;
+            lastMeterRemaining = -1;
             var t = Target();
             if (IsLocalStalker() && t != null && t.Data != null) {
                 try {
@@ -379,8 +397,12 @@ namespace UnknownsCollection {
         private static void ApplyFallback(byte mode) {
             if (!active) return;
             if (mode == 1) {
+                bool wasLocal = IsLocalStalker();
                 active = false;
                 ForceConeOff();
+                if (wasLocal) {
+                    try { HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer, UCLocalization.Tr("uc.ui.stalker.role_ends")); } catch { }
+                }
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Stalker] target died early, Pursuer slot taken and no new target - the role ends.");
                 return;
             }
@@ -424,7 +446,9 @@ namespace UnknownsCollection {
                     int chance = SpawnRate.getSelection() * 10;
                     if (rnd.Next(1, 101) > chance) return;
 
-                    var candidates = PlayerControl.AllPlayerControls.ToArray().Where(UCPromotion.IsPlainCrewmate).ToList();
+                    // No Lover: the partner as the target breaks the role (Fable review 2026-10-04)
+                    var candidates = PlayerControl.AllPlayerControls.ToArray()
+                        .Where(p => UCPromotion.IsPlainCrewmate(p) && !UCPromotion.IsLover(p)).ToList();
                     if (candidates.Count == 0) return;
                     var pick = candidates[rnd.Next(candidates.Count)];
                     byte target = PickTarget(pick.PlayerId);
@@ -436,11 +460,27 @@ namespace UnknownsCollection {
             }
         }
 
+        // Not his own Lover (killing the partner kills him, and only a living Stalker wins) and not the
+        // Jester (an ejected Jester ends the game as the Jester's win, audit 04.10.). Only when nobody
+        // else is left are they taken after all.
         private static byte PickTarget(byte exclude) {
-            var pool = PlayerControl.AllPlayerControls.ToArray()
+            var alive = PlayerControl.AllPlayerControls.ToArray()
                 .Where(p => IsAlive(p) && p.PlayerId != exclude).ToList();
+            var pool = alive.Where(p => !BadTarget(p, exclude)).ToList();
+            if (pool.Count == 0) pool = alive;
             if (pool.Count == 0) return byte.MaxValue;
             return pool[rnd.Next(pool.Count)].PlayerId;
+        }
+
+        private static bool BadTarget(PlayerControl p, byte stalkerId) {
+            try {
+                if (Jester.jester != null && Jester.jester.PlayerId == p.PlayerId) return true;
+                if (Lovers.lover1 != null && Lovers.lover2 != null) {
+                    if (Lovers.lover1.PlayerId == stalkerId && Lovers.lover2.PlayerId == p.PlayerId) return true;
+                    if (Lovers.lover2.PlayerId == stalkerId && Lovers.lover1.PlayerId == p.PlayerId) return true;
+                }
+            } catch { }
+            return false;
         }
 
         // Draft picks arrive without a target (see MarkFromDraft): the host fills it in on its first
@@ -536,6 +576,7 @@ namespace UnknownsCollection {
         private static void ClockTick() {
             if (complete) { inConeNow = false; seenNow = false; return; }
             if (Time.time < nextClockTick) return;
+            MeterSendTick();
             // Elapsed since the previous tick, capped so a hitch (or the first tick) never credits
             // a whole second of stalking at once.
             float dt = lastClockAt < 0f ? 0f : Mathf.Min(0.25f, Time.time - lastClockAt);
@@ -580,20 +621,28 @@ namespace UnknownsCollection {
                 SendComplete();
                 return;
             }
+        }
 
-            // Meter broadcast every 15 s (only while the option lets the target see it - a message
-            // nobody displays would still be sniffable, so it is simply not sent).
-            if (Time.time >= nextMeterSend) {
-                nextMeterSend = Time.time + 15f;
-                int pct = Percent();
-                int mode = MeterMode?.getSelection() ?? 0;
-                bool allowed = mode == 0 || (mode == 1 && pct >= 50);
-                if (allowed) {
-                    int remaining = Mathf.CeilToInt(NeedSeconds() - progress);
-                    SendMeter(remaining, pct);
-                    lastMeterSent = Time.time;
-                }
+        // The meter goes out on its own beat, whether the clock runs or not (audit 04.10.: sent only
+        // while it ran, every change of the number meant "he is watching you right now"). Interval 0
+        // is the live meter the host can choose on purpose (User 04.10.). Nothing is sent while the
+        // option keeps the target from seeing it - a message nobody displays would still be sniffable.
+        private static void MeterSendTick() {
+            if (InMeeting() || !IsAlive(stalker)) return;
+            int pct = Percent();
+            int mode = MeterMode?.getSelection() ?? 0;
+            if (!(mode == 0 || (mode == 1 && pct >= 50))) return;
+            int remaining = Mathf.CeilToInt(NeedSeconds() - progress);
+            float interval = MeterInterval?.getFloat() ?? 15f;
+            if (interval <= 0f) {
+                if (remaining == lastMeterRemaining) return;
+            } else {
+                if (Time.time < nextMeterSend) return;
+                nextMeterSend = Time.time + interval;
             }
+            lastMeterRemaining = remaining;
+            SendMeter(remaining, pct);
+            lastMeterSent = Time.time;
         }
 
         // Where the cone points: the cone light keeps the last flashlight direction (mouse or stick,

@@ -27,6 +27,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using UnityEngine;
 using UnityEngine.UI;
@@ -34,7 +35,8 @@ using TheOtherRoles.Objects;
 
 namespace UnknownsCollection {
     public static class HypnotistView {
-        private const float PeekSeconds = 5f, PeekCooldown = 20f;
+        private static float PeekSeconds => Hypnotist.PeekDuration?.getFloat() ?? 5f;
+        private static float PeekCooldown => Hypnotist.PeekCooldown?.getFloat() ?? 20f;
         private const float ViewPx = 340f;           // diameter at the 1920x1080 reference
 
         private static CustomButton peekButton;
@@ -113,7 +115,14 @@ namespace UnknownsCollection {
                     cam.orthographicSize = frame;
                     if (Time.unscaledTime >= nextMask) {
                         nextMask = Time.unscaledTime + 0.05f;
-                        PaintMask(at, radius, frame);
+                        // The mask (180 rays + a full texture upload) only changes when the victim moves
+                        // or the light changes; doors are caught by a slow refresh every half second.
+                        if ((at - maskAt).sqrMagnitude > 0.0025f || Mathf.Abs(radius - maskRadius) > 0.02f
+                            || Mathf.Abs(frame - maskFrame) > 0.02f || Time.unscaledTime >= nextMaskForced) {
+                            maskAt = at; maskRadius = radius; maskFrame = frame;
+                            nextMaskForced = Time.unscaledTime + 0.5f;
+                            PaintMask(at, radius, frame);
+                        }
                         RenderAsVictim(victim, at + LightOffset, radius);
                     }
                     if (!overlay.activeSelf) overlay.SetActive(true);
@@ -130,6 +139,11 @@ namespace UnknownsCollection {
         // The camera therefore renders by hand (20 per second, with the mask) and switches the
         // renderers of whatever the victim cannot see off for exactly that one render.
         private static readonly List<Renderer> hiddenForShot = new List<Renderer>();
+        private static Vector2 maskAt = new Vector2(float.MaxValue, float.MaxValue);
+        private static float maskRadius = -1f, maskFrame = -1f, nextMaskForced;
+        // FindObjectsOfType walks the whole scene; bodies appear rarely, once a second is plenty.
+        private static DeadBody[] bodies = new DeadBody[0];
+        private static float nextBodyScan;
 
         private static void RenderAsVictim(PlayerControl victim, Vector2 eye, float radius) {
             hiddenForShot.Clear();
@@ -139,7 +153,11 @@ namespace UnknownsCollection {
                     if (CanSee(eye, radius, p.transform.position)) continue;
                     HideRenderers(p.gameObject);
                 }
-                foreach (var b in UnityEngine.Object.FindObjectsOfType<DeadBody>())
+                if (Time.unscaledTime >= nextBodyScan) {
+                    nextBodyScan = Time.unscaledTime + 1f;
+                    bodies = UnityEngine.Object.FindObjectsOfType<DeadBody>().ToArray();
+                }
+                foreach (var b in bodies)
                     if (b != null && !CanSee(eye, radius, b.TruePosition)) HideRenderers(b.gameObject);
                 cam.Render();
             } finally {
@@ -160,6 +178,7 @@ namespace UnknownsCollection {
         }
 
         private static void Hide() {
+            maskRadius = -1f;   // the next show paints a fresh mask
             if (cam != null && cam.enabled) cam.enabled = false;
             if (overlay != null && overlay.activeSelf) overlay.SetActive(false);
         }

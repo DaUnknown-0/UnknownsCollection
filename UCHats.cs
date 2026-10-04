@@ -215,6 +215,9 @@ namespace UnknownsCollection {
 
         // Animated hats by HatData.name, filled in TryPatch (only hats that actually registered).
         private static readonly Dictionary<string, HatDef> AnimByName = new();
+        // Product ids of our hats that lost a name collision in Register: the hat in the shop under
+        // that name is somebody else's, so neither our animation nor a role-costume lock may touch it.
+        private static readonly HashSet<string> SkippedIds = new();
 
         private static bool loggedAnimError;
 
@@ -272,6 +275,9 @@ namespace UnknownsCollection {
                 }
 
                 if (pending.Count > 0 && !Register(pending)) return;
+                // Register dropped our hats that collide by name; forget their animation as well.
+                foreach (var name in AnimByName.Keys.Where(n => SkippedIds.Contains(HatIdOf(n))).ToList())
+                    AnimByName.Remove(name);
 
                 // Step 3 + 4: the two Harmony hooks. Patched manually (not via [HarmonyPatch]
                 // attributes) so a missing target logs a clear line instead of blowing up PatchAll.
@@ -367,13 +373,15 @@ namespace UnknownsCollection {
                         "[Hats] CustomHatManager.UnregisteredHats not found - custom hats skipped.");
                     return false;
                 }
-                foreach (var hat in hats) {
+                foreach (var hat in hats.ToList()) {
                     // A name collision with the official repository would silently drop our hat -
                     // and for a role costume that means the role loses its look. Worth a line in the
                     // log rather than a quiet `continue`.
                     if (list.Any(h => h?.Name == hat.Name)) {
                         UnknownsCollectionPlugin.Logger?.LogWarning(
                             $"[Hats] a hat named '{hat.Name}' is already registered - ours is skipped.");
+                        SkippedIds.Add(HatIdOf(hat.Name));
+                        hats.Remove(hat);
                         continue;
                     }
                     list.Add(hat);
@@ -615,6 +623,7 @@ namespace UnknownsCollection {
 
         private const string NoHatId = "hat_NoHat";   // vanilla "empty" hat, verified in the 4.7.0 metadata
         private static float lastHatFixTime;          // throttle: never spam RpcSetHat if a swap cannot stick
+        private static bool toldAboutLock;            // the swap is explained once per session
 
         // One entry per hat that a role can put on somebody. Evaluated live; a throwing option read
         // must never lock a hat by accident, so every probe fails to "not locked".
@@ -623,8 +632,20 @@ namespace UnknownsCollection {
             (HunterHatId, HunterHatLocked),
         };
 
+        // A Werewolf who is in play (Role Control, Chaos) always locks it. Otherwise the spawn rate,
+        // and inside a lobby also its minimum player count (audit 04.10.: a 5-player lobby with the
+        // Werewolf at 10 % and minimum 6 locked both role hats for a role that could never roll).
+        // Outside a lobby (main menu wardrobe) there is no player count to ask: stays locked.
         private static bool WerewolfHatLocked() {
-            try { return Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0; }
+            try {
+                if (Werewolf.active && Werewolf.werewolf != null) return true;
+                if (Werewolf.SpawnRate == null || Werewolf.SpawnRate.getSelection() <= 0) return false;
+                if (AmongUsClient.Instance == null || AmongUsClient.Instance.GameState == InnerNet.InnerNetClient.GameStates.NotJoined) return true;
+                int players = 0;
+                foreach (var p in PlayerControl.AllPlayerControls)
+                    if (p != null && p.Data != null && !p.Data.Disconnected) players++;
+                return players >= (Werewolf.SpawnMinPlayers?.getFloat() ?? 6f);
+            }
             catch { return false; }
         }
 
@@ -633,7 +654,7 @@ namespace UnknownsCollection {
         // the hat is nobody's uniform, so it stays an ordinary cosmetic everyone may wear.
         private static bool HunterHatLocked() {
             try {
-                return Werewolf.SpawnRate != null && Werewolf.SpawnRate.getSelection() > 0
+                return WerewolfHatLocked()
                     && Hunter.Enabled != null && Hunter.Enabled.getBool()
                     && Hunter.HatCostume != null && Hunter.HatCostume.getBool()
                     && TheOtherRoles.CustomOptionHolder.sheriffSpawnRate != null
@@ -642,7 +663,7 @@ namespace UnknownsCollection {
         }
 
         private static bool IsHatLocked(string productId) {
-            if (string.IsNullOrEmpty(productId)) return false;
+            if (string.IsNullOrEmpty(productId) || SkippedIds.Contains(productId)) return false;
             foreach (var lock_ in HatLocks)
                 if (productId == lock_.Id && lock_.Locked()) return true;
             return false;
@@ -651,7 +672,7 @@ namespace UnknownsCollection {
         // A role hat is never a valid fallback - not even a currently unlocked one, because the very
         // next option change would need another swap.
         private static bool IsRoleHat(string productId) {
-            if (string.IsNullOrEmpty(productId)) return false;
+            if (string.IsNullOrEmpty(productId) || SkippedIds.Contains(productId)) return false;
             foreach (var lock_ in HatLocks) if (productId == lock_.Id) return true;
             return false;
         }
@@ -686,6 +707,11 @@ namespace UnknownsCollection {
                 if (lp != null) lp.RpcSetHat(prev);
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[Hats] '{saved}' is a role costume in this lobby - swapped back to '{prev}'.");
+                // Say it once per session (audit 04.10.: the hat just changed back without a word).
+                if (!toldAboutLock && HudManager.InstanceExists && HudManager.Instance.Chat != null && lp != null) {
+                    toldAboutLock = true;
+                    try { HudManager.Instance.Chat.AddChat(lp, UCLocalization.Tr("uc.ui.hats.role_costume")); } catch { }
+                }
             } catch (Exception ex) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] hat lock tick failed: {ex.Message}");
             }

@@ -190,11 +190,18 @@ namespace UnknownsCollection {
             var room = LocalRoom();
             if (room == null) return;
             var type = room.RoomId;
-            marks.Remove(type);
+            if (marks.Contains(type)) return;   // the button is dark for a marked room (CanMarkHere)
             marks.Add(type);
             int max = Mathf.RoundToInt(MaxMarks?.getFloat() ?? 3f);
             while (marks.Count > max) marks.RemoveAt(0);
+            try { Helpers.showFlash(Color, 0.5f, UCLocalization.Tr("uc.ui.surveyor.marked", RoomName(type))); } catch { }
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Surveyor] marked {type} ({marks.Count}/{max}).");
+        }
+
+        // Marking the room again did nothing but cost the cooldown, without a word (audit 04.10.).
+        private static bool CanMarkHere() {
+            var room = LocalRoom();
+            return room != null && !marks.Contains(room.RoomId);
         }
 
         // ---- HUD line: "Electrical 2 · MedBay 0" ----
@@ -244,6 +251,7 @@ namespace UnknownsCollection {
                     int n = 0;
                     foreach (var p in PlayerControl.AllPlayerControls.ToArray()) {
                         if (p == null || p == lp || p.Data == null || p.Data.IsDead || p.Data.Disconnected) continue;
+                        if (p.inVent) continue;   // like the admin table: a player in a vent has no collider there (04.10.)
                         if (InRoom(type, p.GetTruePosition())) n++;
                     }
                     count = n.ToString();
@@ -279,7 +287,7 @@ namespace UnknownsCollection {
                     markButton = new CustomButton(
                         () => { Mark(); markButton.Timer = markButton.MaxTimer; },
                         () => IsLocalSurveyor() && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
-                        () => PlayerControl.LocalPlayer.CanMove && LocalRoom() != null,
+                        () => PlayerControl.LocalPlayer.CanMove && CanMarkHere(),
                         () => { },
                         sprite,
                         CustomButton.ButtonPositions.lowerRowRight,

@@ -191,11 +191,25 @@ namespace UnknownsCollection {
             && poltergeist.Data.Role.IsImpostor;
 
         // The ghost buttons only exist while the Poltergeist is a plain dead ghost in the play phase.
+        // Paused during the Pelican's hunt (User 04.10.): the 1-vs-1 is the Pelican's, a haunting ghost
+        // would decide it from outside.
         private static bool GhostButtonsUsable() =>
             IsLocalPoltergeist()
             && PlayerControl.LocalPlayer.Data != null && PlayerControl.LocalPlayer.Data.IsDead
             && MeetingHud.Instance == null && ExileController.Instance == null
-            && !PoltergeistManifest.IsManifested;
+            && !PoltergeistManifest.IsManifested
+            && !Pelican.HuntRestrictionsActive();
+
+        /// A Poltergeist brought back to life (Paramedic, Pelican release, PlayerTuning; called on every
+        /// client from Pelican.ForgetDeath) is a living player again: the haunting ends, his tasks count
+        /// again, and the trigger re-arms for the next death (audit 04.10.).
+        internal static void OnRevived(byte id) {
+            if (!active || poltergeist == null || poltergeist.PlayerId != id) return;
+            ApplySetPoltergeist(byte.MaxValue);
+            if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) promoted = false;
+            try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
+            UnknownsCollectionPlugin.Logger?.LogInfo("[Poltergeist] the Poltergeist was revived - haunting over, trigger armed again.");
+        }
 
         // ---- RPC plumbing ----
 
@@ -352,13 +366,33 @@ namespace UnknownsCollection {
             return best;
         }
 
-        private static PlayerControl NearestLivingPlayer(float maxDist) {
+        // Hex targets (User 04.10.: "Teamkollegen ausnehmen"). Only an IMPOSTOR ghost filters: he knows
+        // his partners, Blind skips them and the two helping hexes (speed, night vision) only land on
+        // them. A CREW ghost does not know who is who, and a button that lights up only next to
+        // opponents would point him at the impostors, so he still hexes whoever is nearest.
+        private static bool HexTargetAllowed(PlayerControl p, int mode) {
+            if (!IsImpostorTeam() || p == null || p.Data == null || p.Data.Role == null) return true;
+            // what the impostors see as their own: the vanilla role, the Spy, a raised impostor thrall
+            bool partner = p.Data.Role.IsImpostor
+                           || (Spy.spy != null && Spy.spy.PlayerId == p.PlayerId)
+                           || Necromancer.ShownAsImpostor(p.PlayerId);
+            return mode == HexBlind ? !partner : partner;
+        }
+
+        private static int CurrentHexMode() {
+            RefreshAllowedHexModes();
+            if (allowedHexModes.Count == 0) return hexMode;
+            return allowedHexModes.Contains(hexMode) ? hexMode : allowedHexModes[0];
+        }
+
+        private static PlayerControl NearestLivingPlayer(float maxDist, int hexFilterMode = -1) {
             if (PlayerControl.LocalPlayer == null) return null;
             Vector2 pos = PlayerControl.LocalPlayer.GetTruePosition();
             PlayerControl best = null;
             float bestD = maxDist;
             foreach (var p in PlayerControl.AllPlayerControls.ToArray()) {
                 if (!IsAlive(p) || p.PlayerId == PlayerControl.LocalPlayer.PlayerId) continue;
+                if (hexFilterMode >= 0 && !HexTargetAllowed(p, hexFilterMode)) continue;
                 float dist = Vector2.Distance(pos, p.GetTruePosition());
                 if (dist < bestD) { bestD = dist; best = p; }
             }
@@ -603,9 +637,12 @@ namespace UnknownsCollection {
         // the Follower (a living player) takes over the dead player's role, while the dead player
         // itself rises as the Poltergeist. ----
 
-        private static void HandleDeath(PlayerControl target, bool byExile) {
+        private static void HandleDeath(PlayerControl target, bool byExile, PlayerControl killer = null) {
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
             if (!armed || promoted || target == null || target.Data == null) return;
+            // Swallowed by the Pelican: not finally dead (he may still come back out), and his ghost
+            // is locked in the belly view. The trigger stays armed for the next death (audit 04.10.).
+            if (!byExile && Pelican.SwallowsDeath(killer, target)) return;
             if (byExile && !(ExileCounts?.getBool() ?? false)) return; // exiles don't consume the trigger
             // Mutual exclusion with the Necromancer (option 1634): both roles feed on the round's
             // first deaths, and a corpse that rises as the Poltergeist's ghost AND as a thrall would
@@ -623,7 +660,7 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
         static class MurderPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
-                try { HandleDeath(target, byExile: false); } catch (Exception e) {
+                try { HandleDeath(target, byExile: false, killer: __instance); } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] murder hook failed: {e}");
                 }
             }
@@ -683,7 +720,7 @@ namespace UnknownsCollection {
                             RefreshAllowedHexModes();
                             if (allowedHexModes.Count == 0) return;
                             if (!allowedHexModes.Contains(hexMode)) hexMode = allowedHexModes[0];
-                            var target = NearestLivingPlayer(3f);
+                            var target = NearestLivingPlayer(3f, hexMode);
                             if (target == null) return;
                             float cost = HexCost?.getFloat() ?? 35f;
                             if (energy < cost) return;
@@ -691,7 +728,7 @@ namespace UnknownsCollection {
                             SendHex(target.PlayerId, (byte)hexMode, HexDuration?.getFloat() ?? 10f);
                         },
                         () => { RefreshAllowedHexModes(); return GhostButtonsUsable() && allowedHexModes.Count > 0; },
-                        () => energy >= (HexCost?.getFloat() ?? 35f) && NearestLivingPlayer(3f) != null,
+                        () => energy >= (HexCost?.getFloat() ?? 35f) && NearestLivingPlayer(3f, CurrentHexMode()) != null,
                         () => { },
                         UCAssets.HexIcon,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
@@ -855,7 +892,8 @@ namespace UnknownsCollection {
 
             private static bool GhostButtonsUsableForHand() =>
                 IsLocalPoltergeist() && PlayerControl.LocalPlayer.Data != null
-                && PlayerControl.LocalPlayer.Data.IsDead && !PoltergeistManifest.IsManifested;
+                && PlayerControl.LocalPlayer.Data.IsDead && !PoltergeistManifest.IsManifested
+                && !Pelican.HuntRestrictionsActive();
 
             private static bool DoorSabotageTimerActive(SystemTypes room) {
                 try {

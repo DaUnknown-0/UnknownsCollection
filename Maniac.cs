@@ -185,9 +185,31 @@ namespace UnknownsCollection {
             bool pierceTime = pierce == 2 || pierce == 3;
             bool hasMedicShield = Medic.shielded != null && Medic.shielded == p;
             bool hasTimeShield = TimeMaster.shieldActive && TimeMaster.timeMaster != null && TimeMaster.timeMaster == p;
-            if (hasMedicShield && !pierceMedic) return false;
+            if (hasMedicShield && !pierceMedic) {
+                // The shield holds: let TOR tell the Medic and the shielded player, like any other
+                // stopped attack (audit 04.10.: the bomb was stopped in silence). checkMuderAttempt's
+                // Medic branch sends exactly that notice and returns before anything else happens.
+                try { Helpers.checkMuderAttempt(maniac ?? p, p, true, true, true, false); } catch { }
+                return false;
+            }
             if (hasTimeShield && !pierceTime) return false;
             return true;
+        }
+
+        // The rest of TOR's kill check for a blast victim that BlastCanKill let through (audit 04.10.):
+        // Armored takes the hit (armor breaks, no death) and a player on a ladder, zipline or platform
+        // is not killed mid-ride (that desyncs). Medic and Time Master were already decided by the
+        // pierce option, so the Medic branch is skipped and a pierced time shield bypasses the check.
+        // blockRewind: a blast never triggers the rewind.
+        private static bool BlastPassesTorCheck(PlayerControl killer, PlayerControl p) {
+            try {
+                if (killer == null || p == null) return true;
+                int pierce = ShieldPierceSel();
+                bool pierceTime = pierce == 2 || pierce == 3;
+                bool hasTimeShield = TimeMaster.shieldActive && TimeMaster.timeMaster != null && TimeMaster.timeMaster == p;
+                if (hasTimeShield && pierceTime) return true;
+                return Helpers.checkMuderAttempt(killer, p, true, true, true, true) == MurderAttemptResult.PerformKill;
+            } catch { return true; }
         }
 
         private static bool IsPlainImpostor(PlayerControl p) => UCPromotion.IsPlainImpostor(p);
@@ -403,7 +425,7 @@ namespace UnknownsCollection {
         public static bool ExcludeBomberOn() => ExcludeBomber == null || ExcludeBomber.getBool();
 
         private static System.Reflection.FieldInfo blockedPairingsField;
-        private static Dictionary<byte, byte[]> BlockedPairings() {
+        internal static Dictionary<byte, byte[]> BlockedPairings() {
             try {
                 blockedPairingsField ??= AccessTools.Field(typeof(CustomOptionHolder), "blockedRolePairings");
                 return blockedPairingsField?.GetValue(null) as Dictionary<byte, byte[]>;
@@ -621,7 +643,12 @@ namespace UnknownsCollection {
                                 if (victims.Remove(killerId)) victims.Add(killerId);
                             }
                             SendExplode(carrierId);
-                            foreach (byte vid in victims) RpcUncheckedMurder(killerId, vid);
+                            var killerPc = Helpers.playerById(killerId);
+                            foreach (byte vid in victims) {
+                                var victimPc = Helpers.playerById(vid);
+                                if (victimPc != null && victimPc.PlayerId != killerId && !BlastPassesTorCheck(killerPc, victimPc)) continue;
+                                RpcUncheckedMurder(killerId, vid);
+                            }
                             SendClear();
                         }
                     }
@@ -658,6 +685,7 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     UpdateTargeting();
+                    UpdateManiacFuseDisplay();
                     UpdateFuseEscalation();
                     UpdateMiniBombCooldown();
                     UpdatePassButtonPosition();
@@ -768,6 +796,24 @@ namespace UnknownsCollection {
             passButton.PositionOffset = collides ? PassButtonNudgedPos : PassButtonDefaultPos;
         }
 
+        // The Maniac's own countdown: seconds until the bomb goes off (hidden phase + pass window, the
+        // same sum the host's tick uses), shown on his BOMB button. When the bomb is gone the normal
+        // cooldown starts. Local only.
+        private static bool fuseShown;
+        private static void UpdateManiacFuseDisplay() {
+            if (bombButton == null || !IsLocalManiac()) { fuseShown = false; return; }
+            if (bombCarrier != null) {
+                float left = bombDetected
+                    ? BombPassWindow() - (Time.time - bombDetectedAt)
+                    : BombUnawareDelay() - (Time.time - bombPlacedAt) + BombPassWindow();
+                bombButton.Timer = Mathf.Max(0.05f, left);
+                fuseShown = true;
+            } else if (fuseShown) {
+                fuseShown = false;
+                bombButton.Timer = bombButton.MaxTimer;
+            }
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
         static class HudStartPatch {
             [HarmonyPriority(Priority.Low)]
@@ -786,10 +832,11 @@ namespace UnknownsCollection {
                             currentTarget = null;
                             bombButton.Timer = bombButton.MaxTimer;
                         },
+                        // Stays visible while the bomb is out: like TOR's Bomber, the button counts the
+                        // fuse down (User 04.10.); it cannot be used until the bomb is gone.
                         () => active && IsLocalManiac()
-                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead
-                              && bombCarrier == null,
-                        () => PlayerControl.LocalPlayer.CanMove && currentTarget != null,
+                              && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
+                        () => PlayerControl.LocalPlayer.CanMove && currentTarget != null && bombCarrier == null,
                         () => { },
                         bombSprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,

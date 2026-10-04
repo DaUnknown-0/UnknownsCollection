@@ -206,6 +206,7 @@ namespace UnknownsCollection {
             public int victimColor;
             public float expires;
             public bool playInMeeting;   // Guesser: vanilla shows its overlay OVER the meeting UI
+            public bool viewerIsKiller;  // the local player is the killer (the Witch watching her spell)
         }
         private static readonly List<Pending> pending = new();
 
@@ -219,7 +220,9 @@ namespace UnknownsCollection {
                 killerColor = killerColorOverride >= 0 ? killerColorOverride : ColorIdOf(killer),
                 victimColor = ColorIdOf(victim),
                 expires = Time.time + 20f,
-                playInMeeting = playInMeeting
+                playInMeeting = playInMeeting,
+                viewerIsKiller = killer != null && victim != null && killer.PlayerId != victim.PlayerId
+                                 && PlayerControl.LocalPlayer != null && killer.PlayerId == PlayerControl.LocalPlayer.PlayerId
             });
         }
 

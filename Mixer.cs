@@ -80,7 +80,7 @@ namespace UnknownsCollection {
         private const byte SubTorSwap = 5;   // targetId, torRole (255 = none)           host -> everyone
         private const byte SubResult = 6;    // targetId, kind, mixesLeft, string        host -> everyone (Mixer + target read it)
 
-        private const byte ResultRefund = 0, ResultKiller = 1, ResultNewRole = 2;
+        private const byte ResultRefund = 0, ResultKiller = 1, ResultNewRole = 2, ResultDied = 4;
         // A refused mix: only puts the Mixer's own counter back to the host's (he counted down before
         // sending). No text; an older client just takes the count (reviews 2026-10-02).
         private const byte ResultSync = 3;
@@ -161,7 +161,9 @@ namespace UnknownsCollection {
                 Tor(RoleId.Seer, Team.Crew, () => CustomOptionHolder.seerSpawnRate),
                 Tor(RoleId.Hacker, Team.Crew, () => CustomOptionHolder.hackerSpawnRate),
                 Tor(RoleId.Tracker, Team.Crew, () => CustomOptionHolder.trackerSpawnRate),
-                Tor(RoleId.Snitch, Team.Crew, () => CustomOptionHolder.snitchSpawnRate),
+                // Not handed out (User 04.10.): a player mixed shortly before finishing his tasks would
+                // be revealed the moment he gets it, one with many tasks left gets a useless role.
+                Tor(RoleId.Snitch, Team.Crew, () => CustomOptionHolder.snitchSpawnRate, inPool: false),
                 Tor(RoleId.Medium, Team.Crew, () => CustomOptionHolder.mediumSpawnRate),
                 Tor(RoleId.Trapper, Team.Crew, () => CustomOptionHolder.trapperSpawnRate),
                 Tor(RoleId.SecurityGuard, Team.Crew, () => CustomOptionHolder.securityGuardSpawnRate),
@@ -272,21 +274,56 @@ namespace UnknownsCollection {
         private static bool IsKiller(PlayerControl p, string name, Team team) =>
             team == Team.Impostor || NeutralKillers.Contains(name);
 
-        private static HashSet<string> HeldNames() {
+        private static HashSet<string> HeldNames(byte except = byte.MaxValue) {
             var held = new HashSet<string>();
             foreach (var p in PlayerControl.AllPlayerControls.ToArray()) {
-                if (p == null || p.Data == null) continue;
+                if (p == null || p.Data == null || p.PlayerId == except) continue;
                 held.Add(RoleOf(p).Name);
                 try { foreach (var ri in RoleInfo.getRoleInfoForPlayer(p, false)) if (ri != null) held.Add(ri.name); } catch { }
             }
             return held;
         }
 
-        private static List<PoolRole> PoolFor(Team team, string current) {
-            var held = HeldNames();
+        /// The roles the target can be mixed into. Roles held by the target itself do not count as
+        /// taken (they leave with the mix), everybody else's do, dead holders included.
+        private static List<PoolRole> PoolFor(Team team, string current, byte targetId) {
+            var held = HeldNames(targetId);
             return Table().Where(r => r.InPool && r.Team == team && r.Name != current && !held.Contains(r.Name)
                                       && (r.Holder != null ? r.UcSet != null : true)
+                                      && !BlockedByPartner(r, held)
                                       && Rate(r) > 0).ToList();
+        }
+
+        // TOR never deals Vampire with Warlock or Vulture with Cleaner (blockedRolePairings), UC never
+        // deals the Bomber next to a Maniac (option 1498). The mix keeps those promises (audit 04.10.).
+        private static bool BlockedByPartner(PoolRole r, HashSet<string> heldByOthers) {
+            if (r.Holder != null) return false;
+            try {
+                var dict = Maniac.BlockedPairings();
+                if (dict != null && dict.TryGetValue((byte)r.Tor, out var partners) && partners != null)
+                    foreach (byte b in partners)
+                        if (Enum.IsDefined(typeof(RoleId), b) && heldByOthers.Contains(TorName((RoleId)b))) return true;
+            } catch { }
+            if (r.Tor == RoleId.Bomber && Maniac.ExcludeBomberOn() && Maniac.maniac != null) return true;
+            return false;
+        }
+
+        // TOR's own rule (Jackal, Sidekick, former Jackals) plus UC roles without a setter (King,
+        // Werewolf...): these cannot be mixed.
+        private static bool Erasable(PlayerControl p, PoolRole entry) {
+            bool erasable = true;
+            try { erasable = p.canBeErased(); } catch { }
+            if (entry != null && entry.Holder != null && entry.UcSet == null) erasable = false;
+            return erasable;
+        }
+
+        /// Will the mix of this player actually swap his role? Decided at the meeting's start, so only
+        /// a real swap is announced and arms the revenge shot (audit 04.10.).
+        private static bool WillSwap(PlayerControl p) {
+            try {
+                var (name, team, entry) = RoleOf(p);
+                return Erasable(p, entry) && PoolFor(team, name, p.PlayerId).Count > 0;
+            } catch { return false; }
         }
 
         private static int Rate(PoolRole r) {
@@ -448,6 +485,10 @@ namespace UnknownsCollection {
                         var p = Helpers.playerById(id);
                         if (!Alive(p)) continue;
                         var role = RoleOf(p);
+                        // A target whose role cannot be swapped (Jackal, King, Werewolf..., or no free
+                        // role) hears nothing and gets no shot: "you get a new role" was a lie, and the
+                        // shot a gift for nothing (audit 04.10.).
+                        if (!WillSwap(p)) continue;
                         bool revenge = (RevengeGuess?.getBool() ?? true) && role.Team != Team.Crew && !HandleGuesser.isGuesser(id) && Alive(mixer);
                         if (revenge) revengeHolders.Add(id);
                         byte bid = id;
@@ -529,6 +570,15 @@ namespace UnknownsCollection {
                     foreach (var kv in revengeButtons) if (kv.Value != null) kv.Value.color = kv.Key == target ? Marked : Color.white;
                     return;
                 }
+                // TOR's own guess rule (MeetingPatch guesserOnClick): with "Guesses Ignore The Medic
+                // Shield" off, a shot at the shielded player is refused, reported as a murder attempt,
+                // and the shot is NOT used up (User 2026-10-04, shield matrix).
+                if (MedicBlocksShot(target)) {
+                    revengeMark = byte.MaxValue;
+                    foreach (var kv in revengeButtons) if (kv.Value != null) kv.Value.color = Color.white;
+                    AnnounceShieldedAttempt();
+                    return;
+                }
                 revengeArmed = false;
                 HideRevengeButtons();
                 if (AmHost()) HostHandleRevenge(lp.PlayerId, target);
@@ -538,6 +588,34 @@ namespace UnknownsCollection {
                     AmongUsClient.Instance.FinishRpcImmediately(w);
                 }
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Mixer] revenge click failed: {e}"); }
+        }
+
+        private static bool MedicBlocksShot(byte target) {
+            try {
+                return !HandleGuesser.killsThroughShield && Medic.shielded != null && Medic.shielded.PlayerId == target;
+            } catch { return false; }
+        }
+
+        // TOR's CustomRPC enum is internal; ShieldedMurderAttempt sits 5 entries after
+        // EngineerFixLights = 120 (RPC.cs). Resolved by name first, like the Hunter's GuesserShoot.
+        private static int shieldedAttemptCallId = -1;
+        private static int ShieldedAttemptCallId() {
+            if (shieldedAttemptCallId >= 0) return shieldedAttemptCallId;
+            try {
+                var t = typeof(RPCProcedure).Assembly.GetType("TheOtherRoles.CustomRPC");
+                shieldedAttemptCallId = t != null ? Convert.ToByte(Enum.Parse(t, "ShieldedMurderAttempt")) : 125;
+            } catch { shieldedAttemptCallId = 125; }
+            return shieldedAttemptCallId;
+        }
+
+        private static void AnnounceShieldedAttempt() {
+            try {
+                var w = AmongUsClient.Instance.StartRpcImmediately(PlayerControl.LocalPlayer.NetId,
+                    (byte)ShieldedAttemptCallId(), SendOption.Reliable, -1);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Mixer] shielded-attempt RPC failed: {e.Message}"); }
+            try { RPCProcedure.shieldedMurderAttempt(); } catch { }
+            try { SoundEffectsManager.play("fail"); } catch { }
         }
 
         private static void HideRevengeButtons() {
@@ -571,6 +649,11 @@ namespace UnknownsCollection {
             var hud = MeetingHud.Instance;
             var shooter = Helpers.playerById(shooterId);
             var guessed = Helpers.playerById(guessedId);
+            // Backstop for the click-side Medic rule above: refuse without using the shot up.
+            if (hud != null && revengeHolders.Contains(shooterId) && MedicBlocksShot(guessedId)) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Mixer] revenge shot at the Medic-shielded {guessed?.Data?.PlayerName} refused.");
+                return;
+            }
             if (hud == null || !revengeHolders.Remove(shooterId) || !Alive(shooter) || !Alive(guessed) || guessedId == shooterId) {
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Mixer] revenge shot of {shooter?.Data?.PlayerName ?? shooterId.ToString()} refused.");
                 return;
@@ -587,7 +670,16 @@ namespace UnknownsCollection {
             int evil = Guesser.remainingShotsEvilGuesser, nice = Guesser.remainingShotsNiceGuesser;
             var (entry, shotsField, gm) = GuesserGmEntry(shooterId);
             try {
-                RPCProcedure.guesserShoot(shooterId, dyingId, guessedId, (byte)RoleId.Crewmate);
+                // No guessed target: TOR's ghost line ("X guessed the role Crewmate for Y") stays out,
+                // the dead read the real story below instead (audit 04.10.). guessedTargetId is only
+                // used for that line.
+                RPCProcedure.guesserShoot(shooterId, dyingId, byte.MaxValue, (byte)RoleId.Crewmate);
+                var lp = PlayerControl.LocalPlayer;
+                var shooter = Helpers.playerById(shooterId);
+                var guessed = Helpers.playerById(guessedId);
+                if (lp != null && lp.Data != null && lp.Data.IsDead && shooter != null && guessed != null)
+                    HudManager.Instance?.Chat?.AddChat(shooter, UCLocalization.Tr(dyingId == shooterId ? "uc.ui.mixer.ghost_miss" : "uc.ui.mixer.ghost_hit",
+                        shooter.Data.PlayerName, guessed.Data.PlayerName));
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Mixer] revenge shot failed: {e}");
             } finally {
@@ -644,16 +736,18 @@ namespace UnknownsCollection {
         private static void HostSwap(byte targetId) {
             var p = Helpers.playerById(targetId);
             if (!Alive(p)) {
-                UnknownsCollectionPlugin.Logger?.LogInfo($"[Mixer] {p?.Data?.PlayerName ?? targetId.ToString()} died before the mix took hold - mix spent.");
+                // The mix never took hold: it comes back, and the Mixer is told (audit 04.10.: it was
+                // spent in silence, e.g. on a killer voted out in the same meeting).
+                hostMixesLeft++;
+                byte leftD = (byte)Mathf.Clamp(hostMixesLeft, 0, 255);
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Mixer] {p?.Data?.PlayerName ?? targetId.ToString()} died before the mix took hold - mix refunded.");
+                Broadcast(SubResult, w => { w.Write(targetId); w.Write(ResultDied); w.Write(leftD); w.Write(""); }, () => ApplyResult(targetId, ResultDied, leftD, ""));
                 return;
             }
             var (oldName, team, oldEntry) = RoleOf(p);
             bool killer = IsKiller(p, oldName, team);
-            bool erasable = true;
-            try { erasable = p.canBeErased(); } catch { }
-
-            if (oldEntry != null && oldEntry.Holder != null && oldEntry.UcSet == null) erasable = false;   // King, Werewolf...
-            var pool = erasable ? PoolFor(team, oldName) : new List<PoolRole>();
+            bool erasable = Erasable(p, oldEntry);
+            var pool = erasable ? PoolFor(team, oldName, targetId) : new List<PoolRole>();
             PoolRole next = pool.Count > 0 ? pool[rnd.Next(pool.Count)] : null;
 
             if (next != null) {
@@ -714,6 +808,10 @@ namespace UnknownsCollection {
                     Say(msg);
                 } else if (kind == ResultRefund) {
                     Say(UCLocalization.Tr("uc.ui.mixer.refund", targetName));
+                } else if (kind == ResultDied) {
+                    Say(UCLocalization.Tr("uc.ui.mixer.target_died", targetName));
+                } else if (kind == ResultNewRole) {
+                    Say(UCLocalization.Tr("uc.ui.mixer.mixed_ok", targetName));
                 }
             }
             if (lp.PlayerId == targetId && !string.IsNullOrEmpty(newRole)) {
@@ -756,7 +854,12 @@ namespace UnknownsCollection {
                     if (!active || __instance != PlayerControl.LocalPlayer || !IsLocalMixer()) return;
                     currentTarget = null;
                     if (InMeeting() || mixesLeft <= 0 || !Alive(__instance)) return;
-                    currentTarget = PlayerControlFixedUpdatePatch.setTarget();
+                    // A mix is not a kill: peaceful for spawn protection and the early-death shield. The
+                    // newcomer stays off limits, he learns his first role in peace (User 2026-10-04).
+                    var spared = PlayerControl.AllPlayerControls.ToArray()
+                        .Where(p => p != null && UCShieldBridge.IsNewcomer(p.PlayerId)).ToList();
+                    using (UCShieldBridge.Peaceful())
+                        currentTarget = PlayerControlFixedUpdatePatch.setTarget(untargetablePlayers: spared);
                     if (currentTarget != null) PlayerControlFixedUpdatePatch.setPlayerOutline(currentTarget, Color);
                 } catch { }
             }

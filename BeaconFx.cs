@@ -65,7 +65,9 @@ namespace UnknownsCollection {
         private static RawImage vignetteImg;
 
         private static void TickSharePulse() {
-            bool sharing = Beacon.LocalGetsShare();
+            // Only while the lights are out: with normal light the share adds nothing, and the chime
+            // and vignette at every line-of-sight edge just pointed at the Beacon (audit 04.10.).
+            bool sharing = Beacon.LocalGetsShare() && LightsSabotageActive();
             if (sharing && !wasSharing) UCAssets.PlayBeaconShare();
             wasSharing = sharing;
 

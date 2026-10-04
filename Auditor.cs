@@ -59,6 +59,7 @@ namespace UnknownsCollection {
         public static CustomOption ShowCompleter;
         public static CustomOption CannotGuessSnitch;
         public static CustomOption VictimNotice;
+        public static CustomOption StealVisual;    // 1610 - may he take tasks whose completion everyone can see?
 
         // Victim notification modes. The order IS the option's selection order, and TOR's string[]
         // overload always defaults to index 0 - so the intended default has to sit first.
@@ -152,6 +153,11 @@ namespace UnknownsCollection {
                     true, SpawnRate);
                 VictimNotice = CustomOption.Create(1609, Types.Impostor, "Victim Notification",
                     new string[] { "Immediately", "At The Next Meeting", "Off" }, SpawnRate);
+                // With the vanilla "Visual Tasks" setting on, a stolen scan / asteroids / shields /
+                // garbage task would let the Auditor PROVE himself crew in front of witnesses (audit
+                // 04.10.). Off by default; without Visual Tasks this option changes nothing.
+                StealVisual = CustomOption.Create(1610, Types.Impostor, "Auditor Can Steal Visual Tasks",
+                    false, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Auditor] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Auditor] CreateOptions failed: {e}");
@@ -405,6 +411,7 @@ namespace UnknownsCollection {
                 // receiving the reset second left EVERY task open. Wait until the reset has landed.
                 foreach (uint id in keepComplete) if (!recompleteIds.Contains(id)) recompleteIds.Add(id);
                 recompleteSince = Time.time;
+                SnapshotPartialSteps(me);
                 NotifyVictim();
             }
             if (IsLocalAuditor()) {
@@ -423,7 +430,64 @@ namespace UnknownsCollection {
         private static float recompleteSince = -1f;
         private const float RecompleteFallback = 8f;
 
+        // ---- Victim side: partial progress of OTHER multi-step tasks (confirmed in play, 04.10.) ----
+        // RpcSetTasks rebuilds every task object, so a half-done Upload Data / Fuel / Divert Power
+        // started over at step 0. Steps are local state (only completion is networked), so the victim
+        // remembers them before the reset and puts them back on the rebuilt objects.
+        private sealed class PartialStep { public int step; public byte[] data; public int oldObject; }
+        private static readonly Dictionary<uint, PartialStep> partialSteps = new Dictionary<uint, PartialStep>();
+        private static float partialSince = -1f;
+
+        private static void SnapshotPartialSteps(PlayerControl me) {
+            try {
+                partialSteps.Clear();
+                if (me?.myTasks == null) return;
+                foreach (var t in me.myTasks) {
+                    var n = t != null ? t.TryCast<NormalPlayerTask>() : null;
+                    if (n == null || n.IsComplete || n.taskStep <= 0) continue;
+                    byte[] data = null;
+                    try { if (n.Data != null) data = n.Data.ToArray(); } catch { }
+                    partialSteps[n.Id] = new PartialStep { step = n.taskStep, data = data, oldObject = n.GetInstanceID() };
+                }
+                partialSince = partialSteps.Count > 0 ? Time.time : -1f;
+            } catch { partialSteps.Clear(); partialSince = -1f; }
+        }
+
+        private static void RestorePartialTick() {
+            if (partialSteps.Count == 0) return;
+            var me = PlayerControl.LocalPlayer;
+            if (me == null || me.myTasks == null) return;
+            // Wait until every remembered task sits on a NEW object (the reset has landed); give up
+            // quietly after the same fallback time as the re-completion.
+            bool rebuilt = true;
+            foreach (var kv in partialSteps) {
+                bool found = false;
+                foreach (var t in me.myTasks)
+                    if (t != null && t.Id == kv.Key) { found = true; if (t.GetInstanceID() == kv.Value.oldObject) rebuilt = false; break; }
+                if (!found) rebuilt = false;
+            }
+            if (!rebuilt) {
+                if (Time.time - partialSince >= RecompleteFallback) { partialSteps.Clear(); partialSince = -1f; }
+                return;
+            }
+            int restored = 0;
+            foreach (var t in me.myTasks) {
+                var n = t != null ? t.TryCast<NormalPlayerTask>() : null;
+                if (n == null || n.IsComplete || !partialSteps.TryGetValue(n.Id, out var ps)) continue;
+                try {
+                    if (ps.data != null && n.Data != null && n.Data.Length == ps.data.Length)
+                        for (int i = 0; i < ps.data.Length; i++) n.Data[i] = ps.data[i];
+                    if (n.taskStep < ps.step) { n.taskStep = ps.step; restored++; }
+                    n.UpdateArrowAndLocation();
+                } catch { }
+            }
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Auditor] restored the partial progress of {restored} task(s) after the reset.");
+            partialSteps.Clear();
+            partialSince = -1f;
+        }
+
         private static void RecompleteTick() {
+            RestorePartialTick();
             if (recompleteIds.Count == 0) return;
             var me = PlayerControl.LocalPlayer;
             if (me == null || me.Data == null || me.Data.Tasks == null || me.myTasks == null) return;
@@ -588,6 +652,9 @@ namespace UnknownsCollection {
                     var t = me.myTasks[i];
                     if (t == null || t.Id >= SyntheticIdBase) continue;
                     if (t.TryCast<NormalPlayerTask>() == null) continue;
+                    // A Colorblind Auditor keeps his cure (Fable review 2026-10-04: no candidate lock,
+                    // the scan task simply survives the pruning while he is still uncured).
+                    if (t.TaskType == TaskTypes.SubmitScan && Colorblind.IsLocalCarrier() && !Colorblind.cured) continue;
                     me.myTasks.RemoveAt(i);
                     t.OnRemove();
                     UnityEngine.Object.Destroy(t.gameObject);
@@ -622,15 +689,17 @@ namespace UnknownsCollection {
                     if (!IsAlive(auditor)) return;
                     if (__instance.PlayerId == auditor.PlayerId) return;
                     if (!IsAlive(__instance)) return;                       // "solange der Crewmate lebt"
-                    var role = __instance.Data.Role;
-                    if (role == null || role.IsImpostor || !role.TasksCountTowardProgress) return;
-                    if (__instance.hasFakeTasks()) return;
+                    // Only tasks that count toward the crew's task bar: not a Bug, Collector, Copycat,
+                    // Lawyer, Thief, Pursuer or a Lover with a killing partner (audit 04.10.). Taking
+                    // one of those would cost the crew nothing and hand the Auditor a free task.
+                    if (!UCTaskCount.CountsTowardBar(__instance.Data)) return;
 
                     int cap = Mathf.RoundToInt(QueueSize?.getFloat() ?? 3f);
                     if (queue.Count >= cap) { SendOverflow(); return; }
 
                     var info = __instance.Data.FindTaskById(idx);
                     if (info == null) return;
+                    if (!(StealVisual?.getBool() ?? false) && IsVisualTask(info.TypeId)) return;
 
                     // AUDIT-2026-08-23, L-18: nextEntryId is only a byte, so after 256 completions it
                     // silently wraps back to 0 (byte++ wraps in an unchecked context, it does not throw).
@@ -663,6 +732,19 @@ namespace UnknownsCollection {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Auditor] CompleteTask postfix failed: {e}");
                 }
             }
+        }
+
+        // A task whose completion everyone can watch, while the vanilla "Visual Tasks" setting is on.
+        private static bool IsVisualTask(byte typeId) {
+            try {
+                var opts = GameOptionsManager.Instance?.CurrentGameOptions;
+                if (opts == null || !opts.GetBool(AmongUs.GameOptions.BoolOptionNames.VisualTasks)) return false;
+                var task = ShipStatus.Instance?.GetTaskById(typeId);
+                if (task == null) return false;
+                var tt = task.TaskType;
+                return tt == TaskTypes.SubmitScan || tt == TaskTypes.ClearAsteroids || tt == TaskTypes.PrimeShields
+                       || tt == TaskTypes.EmptyGarbage || tt == TaskTypes.EmptyChute;
+            } catch { return false; }
         }
 
         // ====================================================================
@@ -829,14 +911,20 @@ namespace UnknownsCollection {
 
         // "Sobald der Crewmate als tot erkannt wird" - the meeting that revealed the death is over,
         // so every entry belonging to a dead victim dies with it.
+        // The player voted out in THIS meeting only dies in the exile afterwards, so IsDead is still
+        // false here; MeetingHud already names him, and he is as "known dead" as anyone (audit 04.10.:
+        // his entries used to linger until the NEXT meeting).
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
         static class MeetingClosePatch {
-            public static void Postfix() {
+            public static void Postfix(MeetingHud __instance) {
                 try {
                     if (!AmHost() || !active) return;
+                    byte exiled = byte.MaxValue;
+                    try { if (__instance != null && __instance.exiledPlayer != null) exiled = __instance.exiledPlayer.PlayerId; } catch { }
                     for (int i = queue.Count - 1; i >= 0; i--) {
                         var victim = Helpers.playerById(queue[i].victim);
-                        if (victim == null || victim.Data == null || victim.Data.IsDead || victim.Data.Disconnected)
+                        if (victim == null || victim.Data == null || victim.Data.IsDead || victim.Data.Disconnected
+                            || queue[i].victim == exiled)
                             SendDequeue(queue[i].id, ReasonVictimKnownDead);
                     }
                 } catch (Exception e) {
@@ -909,6 +997,8 @@ namespace UnknownsCollection {
                 pendingRecomplete.Clear();
                 recompleteIds.Clear();
                 recompleteSince = -1f;
+                partialSteps.Clear();
+                partialSince = -1f;
                 ClearQueue();
             });
         }
@@ -926,6 +1016,8 @@ namespace UnknownsCollection {
                 pendingRecomplete.Clear();
                 recompleteIds.Clear();
                 recompleteSince = -1f;
+                partialSteps.Clear();
+                partialSince = -1f;
                 queue.Clear(); // objects belong to the old scene; nothing to destroy here
             }
         }

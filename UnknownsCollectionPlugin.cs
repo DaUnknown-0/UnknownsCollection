@@ -8,11 +8,9 @@
  * each role is built from Harmony patches: own RoleInfo (display tag), CustomButton/meeting UI,
  * a small custom RPC, and host-authoritative game logic.
  *
- * Roles:
- *  - The Tesla (Impostor) - charges two players (+ / -); a hidden countdown drains while the pair is
- *    too close and only refills in meetings; at zero both die. See Tesla.cs.
- *  - The Saboteur (Impostor) - once per round sabotages a task console (lethal on completion, with a
- *    crew search/defuse counterplay) or lays an invisible stun trap. See Saboteur.cs.
+ * Roles and modifiers: each one lives in its own file (Tesla.cs, Saboteur.cs, Werewolf.cs, ...); the
+ * README lists them all, and ID-Registry.md (in the TOR Mod folder) owns every option ID, RPC module
+ * byte and draft sentinel. This header no longer keeps its own list, it only went stale.
  */
 
 global using Il2CppInterop.Runtime;
@@ -41,7 +39,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.14.1";
+    public const string PluginVersion = "1.2.14.2";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -52,7 +50,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     // so logs, comments and ID-Registry.md still line up; they no longer occupy anything in TOR's
     // callId space, they only have to be unique WITHIN this mod.
     //
-    // The block currently in use is 190-214.
+    // The bytes in use run from 190 to 234 (see the constants below and ID-Registry.md).
     //
     // Consequence: only ONE byte (230) has to stay free globally instead of 18. TOR's CustomRPC enum
     // currently runs 100-183 and keeps growing; the watchdog in Load() below shouts if it ever gets
@@ -101,11 +99,9 @@ public class UnknownsCollectionPlugin : BasePlugin
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
-    public static ConfigEntry<bool> ButtonPulseEnabled { get; set; }
     public static ConfigEntry<bool> MusicWerewolf { get; set; }
     public static ConfigEntry<bool> MusicPelican { get; set; }
     public static ConfigEntry<bool> MusicReactor { get; set; }
-    public static ConfigEntry<bool> HelpMenuGerman { get; set; }
     public static ConfigEntry<bool> KillAnimationsUC { get; set; }
     public static ConfigEntry<bool> KillAnimationsTOR { get; set; }
     public static ConfigEntry<string> PreviousHatBeforeLock { get; set; }
@@ -182,16 +178,12 @@ public class UnknownsCollectionPlugin : BasePlugin
             "Autotest only: starts a Freeplay on map (value - 1, e.g. 3 = Polus), probes wake-up spots once and photographs them into UCShots. 0 = off (default).");
         BugGlitchEnabled = Config.Bind("Bug", "Bug Win Glitch Effects", true,
             "Enable visual/sound glitch effects on the Bug win screen");
-        ButtonPulseEnabled = Config.Bind("Buttons", "Button Ready Pulse", false,
-            "Gently pulse ability buttons in size while the ability is usable (the animated icons are unaffected). Off by default - some players find the size wobble distracting.");
         // Custom kill cutscenes (pure local cosmetics -> per-player config, NOT host-synced).
         // UC roles keep their overlays by default; the TOR-role pack is opt-in.
         KillAnimationsUC = Config.Bind("KillAnimations", "UC Role Kill Animations", true,
-            "Custom kill cutscenes for Unknown's Collection roles (Tesla, Saboteur task kills, Poisoner, Shade, Maniac bomb). Off = vanilla kill overlay.");
+            "Custom kill cutscenes for Unknown's Collection roles (Tesla, Saboteur task kills, Poisoner, Shade, Maniac bomb, Werewolf maul, Hunter silver bolt, Pelican). Off = vanilla kill overlay.");
         KillAnimationsTOR = Config.Bind("KillAnimations", "TOR Role Kill Animations", false,
             "Custom kill cutscenes for TOR roles with special kills (Sheriff, Vampire, Warlock, Witch, Ninja, Bomber, Guesser, Thief, Jackal/Sidekick, Bounty Hunter). Off = vanilla kill overlay.");
-        HelpMenuGerman = Config.Bind("HelpMenu", "German", true,
-            "Language of the in-game '?' role help menu (true = Deutsch, false = English). Also toggleable from the menu itself.");
         // Music beds (UCMusic channel). Purely local taste, like the kill cutscenes above - a player
         // who mutes them still sees every gameplay effect, so these are NOT host-synced. The reactor
         // score additionally has a host option (1483) that decides whether it exists in the round at
@@ -375,6 +367,8 @@ public class UnknownsCollectionPlugin : BasePlugin
         // All attribute-based [HarmonyPatch] classes in this assembly (Tesla patches + handshake +
         // the PingTracker version line + UCOptionsPatch).
         harmony.PatchAll(typeof(UnknownsCollectionPlugin).Assembly);
+        // The role picks at the intro run in a shuffled order, not in registration order (7.1).
+        UCPromotion.CentralizePicks(harmony);
 
         // Reflection-based patch (internal TOR type): inject the Tesla/Saboteur spawn rates into the
         // Role Draft so the draft respects their configured rate + 100% force.
@@ -397,7 +391,7 @@ public class UnknownsCollectionPlugin : BasePlugin
         // to Useful TOR Stuff). Mirrors how ForceImpostorMod registers itself.
         RegisterInModManager(enabled);
 
-        // Cosmetic button animations (flipbook icons + ready-pulse). Init() only forces the
+        // Cosmetic button animations (flipbook icons). Init() only forces the
         // static ctor so its UCFx tick/reset registration happens before the first round.
         UCButtonAnim.Init();
 

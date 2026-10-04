@@ -10,7 +10,7 @@
  * RoleIds - they are tags layered over a plain Impostor / Crewmate, normally chosen by a random
  * promotion at IntroCutscene.OnDestroy. To make them DRAFTABLE without touching TOR source we:
  *
- *   1. add lightweight "draft entries" (own RoleInfo, sentinel RoleId 200-217) to RoleInfo.allRoleInfos
+ *   1. add lightweight "draft entries" (own RoleInfo, sentinel RoleId 200-227) to RoleInfo.allRoleInfos
  *      for the duration of the intro, only while each role's full spawn gate is met. The RoleInfo COLOR
  *      decides the draft faction (RoleInfo.isImpostor == color == Palette.ImpostorRed), so impostor
  *      entries use ImpostorRed and crew entries use their own (non-red) colour -> they are offered to
@@ -124,7 +124,8 @@ namespace UnknownsCollection {
                 Make(ManipulatorDraftId, "Manipulator", Palette.ImpostorRed, "Make the ship's security devices lie",
                      true,  () => Manipulator.SpawnRate, () => Manipulator.SpawnMinPlayers, Manipulator.MarkFromDraft),
                 Make(WerewolfDraftId,    "Werewolf",    Palette.ImpostorRed, "As the last Impostor, become the beast in the dark",
-                     true,  () => Werewolf.SpawnRate,   () => Werewolf.SpawnMinPlayers,   Werewolf.MarkFromDraft),
+                     true,  () => Werewolf.SpawnRate,   () => Werewolf.SpawnMinPlayers,   Werewolf.MarkFromDraft,
+                     Werewolf.MapHasLightsSabotage),
                 // Neutral, but drafted from the CREW pool: the draft's faction filter is purely the
                 // colour (ImpostorRed == impostor entry), and the Pelican is always promoted onto a
                 // plain Crewmate - exactly like the Bug/Follower/Copycat/Collector entries above.
@@ -158,11 +159,17 @@ namespace UnknownsCollection {
             return entries;
         }
 
+        // UC's neutrals count against TOR's "Maximum Neutral Roles" in the draft, as in the random
+        // picks (UCPromotion.RunPicks); as crew entries they used to slip past it (User 04.10.).
+        private static readonly HashSet<string> NeutralEntries = new() {
+            "Bug", "Follower", "Copycat", "Collector", "Pelican", "Necromancer", "Stalker",
+        };
+
         private static Entry Make(byte id, string name, UnityEngine.Color color, string desc, bool impostor,
                                   Func<CustomOption> rateOpt, Func<CustomOption> minOpt, Action<byte> mark, Func<bool> gate = null) {
             return new Entry {
                 id = id,
-                info = new RoleInfo(name, color, desc, desc, (RoleId)id),
+                info = new RoleInfo(name, color, desc, desc, (RoleId)id, NeutralEntries.Contains(name)),
                 impostor = impostor,
                 rateOpt = rateOpt,
                 minOpt = minOpt,

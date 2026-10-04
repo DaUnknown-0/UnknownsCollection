@@ -298,7 +298,7 @@ namespace UnknownsCollection {
                 () => Poltergeist.IsLocalPoltergeist()
                       && PlayerControl.LocalPlayer.Data != null && PlayerControl.LocalPlayer.Data.IsDead
                       && MeetingHud.Instance == null && ExileController.Instance == null
-                      && !IsManifested,
+                      && !IsManifested && !Pelican.HuntRestrictionsActive(),
                 () => Poltergeist.energy >= (Poltergeist.ManifestCost?.getFloat() ?? 60f)
                       && CurrentTemplate() != null && StandingClear(),
                 () => { },
@@ -406,8 +406,9 @@ namespace UnknownsCollection {
             // Keep the disguise consistent with Camouflager camo / mushroom sabotage (see EnforceLook).
             EnforceLook();
 
-            // Duration is owned by the Poltergeist's client; host is the disconnect fallback.
-            if (Time.time >= endTime) {
+            // Duration is owned by the Poltergeist's client; host is the disconnect fallback. The
+            // Pelican's hunt ends a manifestation early (the ghost pauses, User 04.10.).
+            if (Time.time >= endTime || (Pelican.HuntRestrictionsActive() && Poltergeist.IsLocalPoltergeist())) {
                 if (Poltergeist.IsLocalPoltergeist()) SendEnd(0);
                 else if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost
                          && (Poltergeist.poltergeist == null || Poltergeist.poltergeist.Data == null
@@ -488,7 +489,8 @@ namespace UnknownsCollection {
                 [HarmonyArgument(0)] NetworkedPlayerInfo pc,
                 [HarmonyArgument(1)] ref bool canUse, [HarmonyArgument(2)] ref bool couldUse) {
                 try {
-                    if (!IsManifested || Poltergeist.poltergeist == null || pc == null) return;
+                    // During the hunt the Pelican's vent block decides, whichever postfix runs last.
+                    if (!IsManifested || Poltergeist.poltergeist == null || pc == null || Pelican.HuntRestrictionsActive()) return;
                     if (pc.PlayerId != Poltergeist.poltergeist.PlayerId) return;
                     if (!(Poltergeist.ManifestCanVent?.getBool() ?? true)) {
                         canUse = couldUse = false;

@@ -44,6 +44,8 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (Enabled == null || !Enabled.Value) return;
+                    // Freeplay only: online this would hand the local player roles mid-round.
+                    if (AmongUsClient.Instance == null || AmongUsClient.Instance.NetworkMode != NetworkModes.FreePlay) return;
                     var lp = PlayerControl.LocalPlayer;
                     if (ShipStatus.Instance == null || lp == null) { at = -1f; stage = 0; return; }
                     if (at < 0f) { at = Time.realtimeSinceStartup + 10f; return; }

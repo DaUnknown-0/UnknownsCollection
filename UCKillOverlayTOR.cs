@@ -19,8 +19,9 @@
  *   . Because ShowKillAnimation only sees (victim, victim) for masked kills,
  *    the REAL killer color travels through the arming side (ArmVictim killerColor). The Witch's
  *    spell death resolves at meeting end via Exiled() and uses the Poisoner-style direct
- *    PlayFor + queue instead (WitchSpellDeath, hooked at uncheckedExilePlayer - RPC 110 is
- *    witch-exile-exclusive across the whole mod family).
+ *    PlayFor + queue instead (WitchSpellDeath, hooked at uncheckedExilePlayer). RPC 110 is not
+ *    witch-exclusive any more: Forgotten Fixes' LoverRevenger exiles its meeting-end deaths the same
+ *    way and flags them with the AppDomain key TORMods.NonWitchExile, which the hook skips.
  *  - Thief steal kills are armed from RPCProcedure.thiefStealsRole (its parameter IS the
  *    victim); by the time the murder RPC lands, thiefStealsRole has already cleared
  *    Thief.thief via clearAndReload, so the murder hook can no longer attribute it.
@@ -191,6 +192,14 @@ namespace UnknownsCollection {
 
         // ==================== construction ====================
 
+        // A masked death (the kill itself was hidden) seen by the victim, whose client does not show
+        // ghosts the roles: no killer figure. The killer watching (the Witch) always sees herself.
+        private static bool AnonymousDeath(Pending p) {
+            bool masked = p.kind == Kind.VampireBiteDeath || p.kind == Kind.WarlockCurse || p.kind == Kind.WitchSpellDeath;
+            if (!masked || p.viewerIsKiller) return false;
+            try { return !TheOtherRoles.TheOtherRolesPlugin.GhostsSeeRoles.Value; } catch { return false; }   // the config TORMapOptions mirrors (internal)
+        }
+
         private static void BuildTor(Pending p) {
             switch (p.kind) {
                 case Kind.SheriffShot:
@@ -212,13 +221,14 @@ namespace UnknownsCollection {
                     particles = MakeParticles(7, UCFx.Smoke, new Color(0.35f, 0.35f, 0.38f), 20, false);
                     break;
 
-                // The killer figure shows in the death variants too: TOR reveals every role to
-                // ghosts anyway, so the dead victim learns nothing it would not see regardless
-                //. The REAL killer color travels via the arming side.
+                // The killer figure in the masked death variants (bite, curse, spell) shows only
+                // when this client's "Ghosts See Roles" is on (User 04.10.): only then would the
+                // dead victim learn who it was anyway. Otherwise the scene stays anonymous, like
+                // the Saboteur's and the Poisoner's. The REAL killer color travels via the arming side.
                 case Kind.VampireKill:
                 case Kind.VampireBiteDeath:   // bite death: same scene, just no garlic on stage
                     duration = 1.65f;
-                    killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
+                    if (!AnonymousDeath(p)) killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
                     if (p.kind == Kind.VampireKill)
                         propB = Make("garlic", TorSprite("TheOtherRoles.Resources.Garlic.png", 180f), 1.7f, -0.95f, 12, new Color(1f, 1f, 1f, 0f), 1.15f);
                     victimFig = MakeFig(p.victimColor, true, 0.45f, -0.35f, 10);
@@ -229,7 +239,7 @@ namespace UnknownsCollection {
                 case Kind.WarlockKill:
                 case Kind.WarlockCurse:       // curse proxy kill: identical scene
                     duration = 1.65f;
-                    killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
+                    if (!AnonymousDeath(p)) killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
                     victimFig = MakeFig(p.victimColor, true, 0.55f, -0.35f, 10);
                     propA = Make("sigil", UCAssets.OverlaySigil, 0.55f, -0.95f, 8, new Color(1f, 1f, 1f, 0f), 1.15f, true);
                     particles = MakeParticles(8, UCFx.Spark, new Color(0.75f, 0.5f, 1f), 24, true);
@@ -238,9 +248,11 @@ namespace UnknownsCollection {
                 case Kind.WitchKill:
                 case Kind.WitchSpellDeath:    // spell death (after the meeting): same scene
                     duration = 1.7f;
-                    killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
                     victimFig = MakeFig(p.victimColor, true, 2.3f, -0.35f, 10);
-                    propB = Make("hat", UCAssets.OverlayHat, -4.2f, 0.95f, 14, Color.white, 0.68f);
+                    if (!AnonymousDeath(p)) {
+                        killerFig = MakeFig(p.killerColor, false, -4.2f, -0.35f, 10);
+                        propB = Make("hat", UCAssets.OverlayHat, -4.2f, 0.95f, 14, Color.white, 0.68f);
+                    }
                     particles = MakeParticles(9, UCFx.Dot, new Color(0.5f, 0.95f, 0.45f), 24, true);
                     break;
 

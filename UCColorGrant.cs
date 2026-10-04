@@ -50,6 +50,11 @@ namespace UnknownsCollection {
         private const byte SubAnswer  = 1;  // target -> host: yes / no
         private const byte SubSetSlot = 2;  // host -> everyone: slot N is now this colour
         private const byte SubRelease = 3;  // player -> host: I picked a palette colour myself, forget my grant
+        private const byte SubCancel  = 4;  // host -> target: the question is withdrawn, close the prompt
+
+        /// An unanswered question no longer blocks the player's row after this long (audit 04.10.).
+        private const float AskTimeout = 60f;
+        private static readonly Dictionary<byte, float> askedAt = new();
 
         /// The colour the LOCAL player is being asked about, if any.
         public static bool HasPending { get; private set; }
@@ -93,6 +98,7 @@ namespace UnknownsCollection {
             if (!Available() || target == null || !HasMod(target)) return;
 
             Outstanding[target.PlayerId] = rgb;
+            askedAt[target.PlayerId] = Time.realtimeSinceStartup;
             var w = UCRpc.Begin(RpcId);
             w.Write(SubRequest);
             w.Write(target.PlayerId);
@@ -103,6 +109,59 @@ namespace UnknownsCollection {
 
         /// The round started before the player answered: the prompt must not stay on screen.
         internal static void DropPending() { HasPending = false; }
+
+        /// Host: is this player's question still open? One older than AskTimeout is dropped here, so
+        /// the row offers "Pick colour..." again (a player who never answers blocked it for good).
+        public static bool IsWaiting(byte playerId) {
+            if (!Outstanding.ContainsKey(playerId)) return false;
+            if (askedAt.TryGetValue(playerId, out float t) && Time.realtimeSinceStartup - t > AskTimeout) {
+                Cancel(playerId);
+                return false;
+            }
+            return true;
+        }
+
+        /// Host: withdraw a question. The target's prompt closes; a late "yes" is then refused like
+        /// any answer to a question that is not open.
+        public static void Cancel(byte playerId) {
+            Outstanding.Remove(playerId);
+            askedAt.Remove(playerId);
+            try {
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                var w = UCRpc.Begin(RpcId);
+                w.Write(SubCancel);
+                w.Write(playerId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ReceiveCancel(playerId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[UCColorGrant] cancel failed: {e}"); }
+        }
+
+        private static void ReceiveCancel(byte targetId) {
+            var me = PlayerControl.LocalPlayer;
+            if (me != null && me.PlayerId == targetId) HasPending = false;
+        }
+
+        /// Host, before asking: the colour must stay tellable apart from every colour another player
+        /// wears (audit 04.10.: #FF0000 could be handed out next to a Red). Weighted RGB distance
+        /// ("redmean"), 0 to about 765; below MinColourDistance two crewmates read as the same.
+        private const float MinColourDistance = 90f;
+        public static string TooSimilarTo(byte targetId, Color32 rgb) {
+            try {
+                foreach (var p in PlayerControl.AllPlayerControls) {
+                    if (p == null || p.Data == null || p.Data.Disconnected || p.PlayerId == targetId) continue;
+                    int id = p.Data.DefaultOutfit.ColorId;
+                    if (id < 0 || id >= Palette.PlayerColors.Length) continue;
+                    if (ColourDistance(rgb, Palette.PlayerColors[id]) < MinColourDistance) return p.Data.PlayerName ?? "?";
+                }
+            } catch { }
+            return null;
+        }
+
+        private static float ColourDistance(Color32 a, Color32 b) {
+            float rm = (a.r + b.r) / 2f;
+            float dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
+            return Mathf.Sqrt((2f + rm / 256f) * dr * dr + 4f * dg * dg + (2f + (255f - rm) / 256f) * db * db);
+        }
 
         /// Sent by the player's own client when he picks a palette colour in the wardrobe while wearing
         /// a granted one: his own choice ends the grant (the host otherwise restored it every 0.5 s).
@@ -158,6 +217,9 @@ namespace UnknownsCollection {
                     var sender = UCRpc.Sender;
                     if (sender == null || sender.PlayerId != who) return;   // only for oneself
                     if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost) UCColors.ForgetGrant(who);
+                } else if (sub == SubCancel) {
+                    if (!UCRpc.SenderIsHost) return;
+                    ReceiveCancel(r.ReadByte());
                 } else if (sub == SubSetSlot) {
                     if (!UCRpc.SenderIsHost) return;
                     byte slot = r.ReadByte();
@@ -180,6 +242,7 @@ namespace UnknownsCollection {
         private static void ReceiveAnswer(byte who, Color32 rgb, bool accepted) {
             bool asked = Outstanding.TryGetValue(who, out var askedRgb);
             Outstanding.Remove(who);
+            askedAt.Remove(who);
             if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
             // Only an answer to a question the host actually asked, for exactly that colour: an
             // unasked "yes" let a modified client give itself any colour and use up slots (Opus audit
@@ -273,7 +336,7 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
         internal static class ResetPatch {
-            public static void Postfix() { HasPending = false; Outstanding.Clear(); }
+            public static void Postfix() { HasPending = false; Outstanding.Clear(); askedAt.Clear(); }
         }
     }
 
@@ -560,8 +623,14 @@ namespace UnknownsCollection {
             panel = Canvas("UCColorGrantPanel", 9010);
             Box(panel, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero,
                 new Color(0, 0, 0, 0.85f));
+            // Every player gets a row: the card grows with the lobby (audit 04.10.: it stopped at ten
+            // rows, a lobby holds fifteen). Rows tighten from 46 to 38 px once there are more than ten.
+            var rowPlayers = PlayerControl.AllPlayerControls.ToArray()
+                .Where(p => p != null && p.Data != null && !p.Data.Disconnected).ToList();
+            float step = rowPlayers.Count > 10 ? 38f : 46f;
+            float cardH = Mathf.Max(620f, 104f + rowPlayers.Count * step + 70f);
             var card = Box(panel, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-                           Vector2.zero, new Vector2(760, 620), new Color(0.1f, 0.09f, 0.14f, 0.98f));
+                           Vector2.zero, new Vector2(760, cardH), new Color(0.1f, 0.09f, 0.14f, 0.98f));
 
             var head = Box(card, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1),
                            new Vector2(0, -14), new Vector2(-40, 34), new Color(0, 0, 0, 0));
@@ -576,11 +645,9 @@ namespace UnknownsCollection {
                   TMPro.TextAlignmentOptions.TopLeft);
 
             float y = -104f;
-            foreach (var p in PlayerControl.AllPlayerControls) {
-                if (p == null || p.Data == null || p.Data.Disconnected) continue;
+            foreach (var p in rowPlayers) {
                 BuildRow(card, p, y);
-                y -= 46f;
-                if (y < -520f) break;
+                y -= step;
             }
 
             var close = Box(card, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0),
@@ -605,10 +672,23 @@ namespace UnknownsCollection {
                            new Vector2(46, 0), new Vector2(300, 30), new Color(0, 0, 0, 0));
             Label(name, p.Data.PlayerName ?? "?", 17, Color.white, TMPro.TextAlignmentOptions.Left);
 
+            bool waiting = UCColorGrant.HasMod(p) && UCColorGrant.IsWaiting(p.PlayerId);
             string state = !UCColorGrant.HasMod(p) ? UCLocalization.Tr("uc.colorgrant.no_mod")
-                         : UCColorGrant.Outstanding.ContainsKey(p.PlayerId) ? UCLocalization.Tr("uc.colorgrant.waiting")
+                         : waiting ? UCLocalization.Tr("uc.colorgrant.waiting")
                          : !UCColors.Safe() ? UCLocalization.Tr("uc.colorgrant.blocked_short")
                          : "";
+            if (waiting) {
+                // The question can be withdrawn (audit 04.10.): the row was blocked until an answer.
+                var st = Box(row, new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(1, 0.5f),
+                             new Vector2(-172, 0), new Vector2(230, 30), new Color(0, 0, 0, 0));
+                Label(st, state, 15, new Color(0.65f, 0.65f, 0.7f), TMPro.TextAlignmentOptions.Right);
+                var cancel = Box(row, new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(1, 0.5f),
+                                 new Vector2(-12, 0), new Vector2(150, 30), new Color(0.3f, 0.3f, 0.38f, 0.95f));
+                Label(cancel, UCLocalization.Tr("uc.colorgrant.cancel"), 15, Color.white, TMPro.TextAlignmentOptions.Center);
+                byte cid = p.PlayerId;
+                OnClick(cancel, () => { UCColorGrant.Cancel(cid); ClosePanel(); OpenPanel(); });
+                return;
+            }
             if (state != "") {
                 var st = Box(row, new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(1, 0.5f),
                              new Vector2(-12, 0), new Vector2(280, 30), new Color(0, 0, 0, 0));
@@ -711,6 +791,12 @@ namespace UnknownsCollection {
             if (!rgb.HasValue) return;                     // still incomplete - do nothing
             var target = PlayerControl.AllPlayerControls.ToArray()
                                       .FirstOrDefault(x => x != null && x.PlayerId == hexTarget);
+            string clash = target != null ? UCColorGrant.TooSimilarTo(target.PlayerId, rgb.Value) : null;
+            if (clash != null) {
+                // Not sent: the lobby could not tell the two apart (User 04.10.).
+                if (hexHint != null) hexHint.text = UCLocalization.Tr("uc.colorgrant.too_similar", clash);
+                return;
+            }
             if (target != null) UCColorGrant.Ask(target, rgb.Value);
             StopTyping();
             ClosePanel();

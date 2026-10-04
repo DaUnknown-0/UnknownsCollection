@@ -231,8 +231,9 @@ namespace UnknownsCollection {
                 // so trigger it directly - with the vanilla audience (victim + killer only). The
                 // overlay queue holds it until the meeting/exile UI is gone.
                 var lp = PlayerControl.LocalPlayer;
-                if (lp != null && (lp.PlayerId == targetId || (poisoner != null && lp.PlayerId == poisoner.PlayerId)))
-                    UCKillOverlay.PlayFor(UCKillOverlay.Kind.Poisoner, poisoner?.Data, target.Data);
+                bool poisonerHere = poisoner != null;   // Unity null after a disconnect
+                if (lp != null && (lp.PlayerId == targetId || (poisonerHere && lp.PlayerId == poisoner.PlayerId)))
+                    UCKillOverlay.PlayFor(UCKillOverlay.Kind.Poisoner, poisonerHere ? poisoner.Data : null, target.Data);
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Poisoner] Player {targetId} died from poison (no body).");
             }
             poisonedReporters.Remove(targetId);
@@ -359,8 +360,11 @@ namespace UnknownsCollection {
                     // its own SendPoisonReporter (redundant RPC storm). SendPoisonReporter is a single-
                     // broadcaster like the rest of the role (mirrors Witness's ReportPatch).
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || poisoner == null || target == null) return;
+                    if (!active || target == null) return;
                     if (!poisonedBodies.Contains(target.PlayerId)) return;
+                    // The Poisoner reporting his own poisoned body: TOR's Bait auto-report does exactly
+                    // that on the killer's behalf. He must not catch his own poison.
+                    if (poisoner != null && __instance.PlayerId == poisoner.PlayerId) { poisonedBodies.Remove(target.PlayerId); return; }
                     if (!IsAlive(__instance)) return;
                     SendPoisonReporter(__instance.PlayerId);
                     poisonedBodies.Remove(target.PlayerId);
@@ -398,7 +402,9 @@ namespace UnknownsCollection {
         static class MeetingStartPatch {
             public static void Postfix() {
                 try {
-                    if (!active || poisoner == null) return;
+                    // Gated on active only: a Poisoner who disconnected (destroyed PlayerControl) must
+                    // not freeze the countdown, his poison keeps working just as after his death.
+                    if (!active) return;
 
                     // Reset round tracking
                     bodiesPoisonedThisRound.Clear();
@@ -445,7 +451,7 @@ namespace UnknownsCollection {
         static class MeetingClosePatch {
             public static void Postfix() {
                 try {
-                    if (!active || poisoner == null || _pendingPoisonDeaths.Count == 0) return;
+                    if (!active || _pendingPoisonDeaths.Count == 0) return;
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
 
                     foreach (byte id in _pendingPoisonDeaths) {

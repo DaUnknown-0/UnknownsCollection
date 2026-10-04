@@ -41,7 +41,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.14";
+    public const string PluginVersion = "1.2.14.1";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -499,6 +499,9 @@ public class UnknownsCollectionPlugin : BasePlugin
         // changes by some path that does not raise that event.
         private static string cachedLine;
         private static string cachedForName;
+        // FormatRich also depends on the shared "show test versions" switch; without it in the key
+        // the line kept its old form after toggling until the language changed or the game restarted.
+        private static bool cachedForTest;
 
         [HarmonyPriority(Priority.Low)]  // after TOR's own PingTracker postfix
         public static void Postfix(PingTracker __instance)
@@ -508,9 +511,11 @@ public class UnknownsCollectionPlugin : BasePlugin
             if (string.IsNullOrEmpty(text)) return;
 
             string name = ModName;
-            if (cachedLine == null || !string.Equals(cachedForName, name, StringComparison.Ordinal))
+            bool test = VersionDisplay.ShowTestVersions();
+            if (cachedLine == null || !string.Equals(cachedForName, name, StringComparison.Ordinal) || cachedForTest != test)
             {
                 cachedForName = name;
+                cachedForTest = test;
                 cachedLine = $"<color=#1FB8FF>{name}</color> v{VersionDisplay.FormatRich(UnknownsCollectionPlugin.Version)}";
             }
 

@@ -842,11 +842,14 @@ namespace UnknownsCollection {
                     // Copycat's own look back to default - reapply the morph on top.
                     float realCamoTimer = Camouflager.camouflageTimer;
                     if (lastRealCamoTimer > 0f && realCamoTimer <= 0f && !Helpers.MushroomSabotageActive()) {
-                        if (camouflaged)
+                        // Braces matter: without them the else bound to the inner "if (player != null)"
+                        // and the morph was never reapplied after a real camouflage ended.
+                        if (camouflaged) {
                             foreach (PlayerControl player in PlayerControl.AllPlayerControls)
                                 if (player != null) player.setLook("", 6, "", "", "", "");
-                        else if (isMorphed)
+                        } else if (isMorphed) {
                             RestoreLook();
+                        }
                     }
                     lastRealCamoTimer = realCamoTimer;
 

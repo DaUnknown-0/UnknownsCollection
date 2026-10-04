@@ -429,9 +429,19 @@ namespace UnknownsCollection {
             [HarmonyPriority(Priority.Low)]
             public static void Postfix(MeetingHud __instance) {
                 try {
-                    revengeArmed = false;
-                    revengeMark = byte.MaxValue;
-                    revengeButtons.Clear();
+                    // The host's notify can reach a client in the same frame as the meeting's spawn,
+                    // i.e. BEFORE this Start. An arm from the last few seconds therefore belongs to
+                    // THIS meeting and survives; only an older one is cleared. Its buttons are built
+                    // by RevengeTickPatch once the player rows exist.
+                    bool freshArm = revengeArmed && Time.time - revengeArmedAt < 5f;
+                    if (!freshArm) {
+                        revengeArmed = false;
+                        revengeBuildPending = false;
+                        revengeMark = byte.MaxValue;
+                        revengeButtons.Clear();
+                    } else if (revengeButtons.Count == 0) {
+                        revengeBuildPending = true;
+                    }
                     if (!AmHost() || pending.Count == 0) return;
                     revengeHolders.Clear();
                     foreach (byte id in pending.ToList()) {
@@ -456,9 +466,16 @@ namespace UnknownsCollection {
             Say(UCLocalization.Tr("uc.ui.mixer.mixed"));
             if (!revenge) return;
             revengeArmed = true;
+            revengeArmedAt = Time.time;
             Say(UCLocalization.Tr("uc.ui.mixer.revenge"));
-            BuildRevengeButtons();
+            // The meeting's rows may not exist yet (see MeetingStartPatch); then the tick builds them.
+            var hud = MeetingHud.Instance;
+            if (hud != null && hud.playerStates != null && hud.playerStates.Length > 0) BuildRevengeButtons();
+            else revengeBuildPending = true;
         }
+
+        private static float revengeArmedAt = -99f;
+        private static bool revengeBuildPending;
 
         private static void Say(string text) {
             try { HudManager.Instance?.Chat?.AddChat(PlayerControl.LocalPlayer, text); } catch { }
@@ -534,8 +551,13 @@ namespace UnknownsCollection {
 
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Update))]
         static class RevengeTickPatch {
-            public static void Postfix() {
+            public static void Postfix(MeetingHud __instance) {
                 try {
+                    if (revengeBuildPending && revengeArmed && __instance != null
+                        && __instance.playerStates != null && __instance.playerStates.Length > 0) {
+                        revengeBuildPending = false;
+                        BuildRevengeButtons();
+                    }
                     if (revengeButtons.Count == 0) return;
                     if (!Alive(PlayerControl.LocalPlayer)) { revengeArmed = false; HideRevengeButtons(); return; }
                     // a target that died meanwhile loses its button
@@ -804,6 +826,8 @@ namespace UnknownsCollection {
             pending.Clear();
             revengeHolders.Clear();
             revengeArmed = false;
+            revengeArmedAt = -99f;
+            revengeBuildPending = false;
             revengeMark = byte.MaxValue;
             revengeButtons.Clear();
         }

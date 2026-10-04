@@ -40,6 +40,19 @@ namespace UnknownsCollection {
             try { return b.actionButton != null ? b.actionButton.Pointer : IntPtr.Zero; } catch { return IntPtr.Zero; }
         }
 
+        // A new HUD builds new buttons. Within one HUD the keyed buttons all live at once, so their
+        // native addresses are unique; across HUDs a freed address can come back for a NEW button,
+        // which then counted as "already prepared" and kept its translator. So the sets start over.
+        [HarmonyPatch(typeof(HudManager), nameof(HudManager.Start))]
+        static class HudStartResetPatch {
+            [HarmonyPriority(Priority.First)]
+            public static void Prefix() {
+                prepared.Clear();
+                labelLogged.Clear();
+                throwLogged.Clear();
+            }
+        }
+
         [HarmonyPatch(typeof(CustomButton), nameof(CustomButton.Update))]
         static class PreparePatch {
             [HarmonyPriority(Priority.First)]

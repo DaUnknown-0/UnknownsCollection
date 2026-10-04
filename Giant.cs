@@ -116,16 +116,19 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Giant] HandleRpc failed: {e}"); }
         }
 
+        private static void RestoreNormalSize(PlayerControl p) {
+            if (p == null) return;   // Unity null too: a destroyed PlayerControl needs nothing
+            try {
+                p.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
+                var collider = p.Collider.CastFast<CircleCollider2D>();
+                if (collider != null) collider.radius = Mini.defaultColliderRadius;
+            } catch { }
+        }
+
         private static void ApplySet(byte id) {
             // Taken away (Role Control): give the old holder normal size back. In a running round TOR's
             // playerSizeUpdate would do it next frame, in freeplay nothing would.
-            if (giant != null && giant.PlayerId != id) {
-                try {
-                    giant.transform.localScale = new Vector3(0.7f, 0.7f, 1f);
-                    var collider = giant.Collider.CastFast<CircleCollider2D>();
-                    if (collider != null) collider.radius = Mini.defaultColliderRadius;
-                } catch { }
-            }
+            if (giant != null && giant.PlayerId != id) RestoreNormalSize(giant);
             giant = id == byte.MaxValue ? null : Helpers.playerById(id);
             active = giant != null;
             if (active) UnknownsCollectionPlugin.Logger?.LogInfo($"[Giant] The Giant is {giant.Data?.PlayerName}.");
@@ -247,6 +250,9 @@ namespace UnknownsCollection {
 
         // ---- Resets ----
         private static void FullReset() {
+            // TOR's playerSizeUpdate only runs in a started game, so outside one (lobby, freeplay
+            // end) nothing else would shrink a still-existing former Giant back.
+            RestoreNormalSize(giant);
             giant = null;
             active = false;
         }

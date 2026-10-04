@@ -451,9 +451,15 @@ namespace UnknownsCollection {
             FigPut("tri", tx, 0f, p >= 0.6f, walking ? 1f : 0f);
             FigCol("tri", TricksterCol, 1f);
 
+            // One shared button: only the box whose window is running may drive it. Calling BtnPop for
+            // all three let the later (idle) calls hide it again, so only the third pop was visible.
+            int popIdx = -1;
             for (int i = 0; i < 3; i++) {
-                BtnPop("boxBtn", boxX[i], BtnY, Seg(p, placeStart[i] + 0.04f, placeEnd[i] + 0.06f));
+                float s = Seg(p, placeStart[i] + 0.04f, placeEnd[i] + 0.06f);
+                if (s > 0f && s < 1f) popIdx = i;
             }
+            BtnPop("boxBtn", boxX[popIdx < 0 ? 0 : popIdx], BtnY,
+                   popIdx < 0 ? 0f : Seg(p, placeStart[popIdx] + 0.04f, placeEnd[popIdx] + 0.06f));
 
             // boxes: near-invisible once placed, then pop fully visible once the network reveals
             float revealed = Plateau(Seg(p, 0.5f, 0.58f), Seg(p, 0.94f, 0.99f));

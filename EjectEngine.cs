@@ -593,9 +593,15 @@ internal static class EjectEngine {
             _bot.transform.localScale = new Vector3(40f / 0.16f, Doc.Bottom * bi / 0.16f, 1f);
         }
 
+        private bool _released;
+
         public void Release() {
+            if (_released) return;
+            _released = true;
             try { if (World != null) Object.Destroy(World.gameObject); } catch { }
             try { if (Screen != null) Object.Destroy(Screen.gameObject); } catch { }
+            // The sprites carry HideAndDontSave too and are separate native objects from their textures.
+            foreach (var spr in _sprites.Values) if (spr != null) Object.Destroy(spr);
             foreach (var tex in _textures) if (tex != null) Object.Destroy(tex);
             _textures.Clear();
             _sprites.Clear();
@@ -605,7 +611,13 @@ internal static class EjectEngine {
     // ================================================================== Ablauf im ExileController
 
     /// <summary>Koroutine: Einblenden, Szene, Impostor-Zeile, Ausblenden, WrapUp (Airship: WrapUpAndSpawn).</summary>
+    // A scene whose coroutine died with its ExileController (scene change, game end mid-scene) never
+    // reached Release; its scene textures stayed resident. The next scene cleans it up at the latest.
+    private static Run _live;
+
     public static IEnumerator Play(Run run) {
+        if (_live != null && _live != run) { try { _live.Release(); } catch { } }
+        _live = run;
         var ec = run.Ec;
         var hud = HudManager.Instance;
         if (hud != null) hud.StartCoroutine(hud.CoFadeFullScreen(Color.black, Color.clear, 0.2f, false));
@@ -632,6 +644,7 @@ internal static class EjectEngine {
         if (hud != null) hud.StartCoroutine(hud.CoFadeFullScreen(Color.clear, Color.black, 0.2f, false));
         for (float u = 0f; u < 0.25f; u += Time.deltaTime) yield return null;
         run.Release();
+        if (_live == run) _live = null;
         var air = ec.TryCast<AirshipExileController>();
         if (air != null) ec.StartCoroutine(air.WrapUpAndSpawn());
         else ec.WrapUp();

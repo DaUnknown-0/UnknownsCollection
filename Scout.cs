@@ -345,7 +345,14 @@ namespace UnknownsCollection {
                         () => active && IsLocalScout()
                               && PlayerControl.LocalPlayer.Data != null && !PlayerControl.LocalPlayer.Data.IsDead,
                         () => PlayerControl.LocalPlayer.CanMove && !abilityActive,
-                        () => { if (IsLocalScout()) SendDeactivate(); },
+                        // Only a running ability is ended (RPC + whoosh/poof); otherwise just the usual
+                        // cooldown reset. It used to send the RPC and play the effect after EVERY
+                        // meeting, also with nothing active and also as a dead Scout.
+                        () => {
+                            if (!IsLocalScout()) return;
+                            if (abilityActive) SendDeactivate();
+                            else if (scoutButton != null) scoutButton.Timer = scoutButton.MaxTimer;
+                        },
                         sprite,
                         TheOtherRoles.Objects.CustomButton.ButtonPositions.lowerRowCenter,
                         __instance, KeyCode.F, false, UCLocalization.Tr("uc.ui.scout.button_scout"));

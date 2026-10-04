@@ -43,7 +43,6 @@ namespace UnknownsCollection {
 
         private static TheOtherRoles.Objects.CustomButton betButton;
         private static GameObject panel;
-        private static BetKind? pendingKind;      // set once a bet is chosen, waiting for a target
 
         private sealed class HitBox {
             public Transform anchor;
@@ -147,7 +146,6 @@ namespace UnknownsCollection {
             try { if (panel != null) UnityEngine.Object.Destroy(panel); } catch { }
             panel = null;
             hits.Clear();
-            pendingKind = null;
         }
 
         public static void Toggle() {
@@ -261,7 +259,6 @@ namespace UnknownsCollection {
                 Close();
                 return;
             }
-            pendingKind = def.Kind;
             OpenTargetList(def);
         }
 
@@ -287,10 +284,13 @@ namespace UnknownsCollection {
                     var text = NewText(panel.transform, p.Data.PlayerName, 1.05f, Color.white);
                     text.transform.localPosition = new Vector3(x, y, -0.1f);
 
+                    // The bet kind travels in the closure. It used to sit in a static that NewPanel's
+                    // Close() wiped right after it was set, so no targeted bet was ever placed.
                     byte pid = p.PlayerId;
+                    BetKind kind = def.Kind;
                     AddHit(panel.transform, new Vector3(x + PanelW / 4f - 0.35f, y, 0f),
                            PanelW / 2f - 0.4f, RowH * 0.92f, () => {
-                               if (pendingKind.HasValue) Gambler.RequestBet(pendingKind.Value, pid);
+                               Gambler.RequestBet(kind, pid);
                                Close();
                            }, true);
                 }
@@ -434,7 +434,14 @@ namespace UnknownsCollection {
         static class UpdatePatch {
             public static void Postfix() {
                 try {
-                    if (!Gambler.active) { if (panel != null) Close(); return; }
+                    if (!Gambler.active) {
+                        if (panel != null) Close();
+                        // The strip hangs on the HudManager and was only torn down inside UpdateStrip,
+                        // which this early return skipped: after a mid-round withdrawal (Sidekick,
+                        // Role Control) the open bets stayed on screen.
+                        if (strip != null) { try { UnityEngine.Object.Destroy(strip.gameObject); } catch { } strip = null; ResetStripCache(); }
+                        return;
+                    }
                     UpdateStrip();
 
                     // The picker has no business being open during a meeting or after death.

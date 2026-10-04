@@ -546,6 +546,10 @@ namespace UnknownsCollection {
                 if (spriteChanged || colorChanged || globalChanged) {
                     var mat = (cloneMaterials != null && k < cloneMaterials.Length) ? cloneMaterials[k] : c.material;
                     try { if (mat != null) mat.CopyPropertiesFromMaterial(s.material); } catch { }
+                    // The copy also brought over the live player's _Outline/_OutlineColor (normally
+                    // off). ApplyOutline, which runs right after this, only writes on a change of its
+                    // own cache, so force it to write again or the clone loses its shield glow.
+                    outlineInit = false;
                 }
 
                 lastSourceSprite[k] = spritePtr;

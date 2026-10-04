@@ -199,9 +199,22 @@ namespace UnknownsCollection {
                 float fin = Mathf.Clamp01((now - activeFadeStart) / CrossfadeSecs);
                 try { activeSource.volume = activeCue.volume * (fin * fin * (3f - 2f * fin)); } catch { }
             } else if (activeCue != null && activeSource == null) {
-                // Source died underneath us (SFX toggling, scene noise) - retry.
-                StartCue(activeCue);
+                // Source died underneath us (SFX toggling, scene noise) - retry. Not for a one-shot
+                // clip that simply played to its end: the SoundManager drops a finished source too,
+                // and a retry played the clip again from the top while its owner kept requesting it
+                // (Pelican outro until the win lands). It stays silent until released.
+                if (activeCue.loop || !ActiveClipPlayedOut()) StartCue(activeCue);
             }
+        }
+
+        private static float activePlayStart, activeResumePos;
+
+        private static bool ActiveClipPlayedOut() {
+            try {
+                var clip = UCAssets.GetClipByName(activeClipName);
+                if (clip == null) return false;
+                return activeResumePos + (Time.time - activePlayStart) >= clip.length - 0.1f;
+            } catch { return false; }
         }
 
         private static void StartCue(Cue cue) {
@@ -209,6 +222,8 @@ namespace UnknownsCollection {
             activeSource = StartClip(cue.clip, cue.loop, cue.resumePos);
             activeClipName = cue.clip;
             activeFadeStart = Time.time;
+            activePlayStart = Time.time;
+            activeResumePos = cue.resumePos;
         }
 
         private static AudioSource StartClip(string clipName, bool loop, float resumePos) {

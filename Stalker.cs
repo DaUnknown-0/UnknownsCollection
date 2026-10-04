@@ -349,6 +349,11 @@ namespace UnknownsCollection {
         }
 
         private static void ApplyMeter(int remaining, int percent) {
+            // The wire carries the rest in one byte, but "Stalking Time Needed" goes up to 300 s. A
+            // clamped 255 is re-derived from the percentage and the (synced) option instead of showing
+            // a too-low number for the first ~45 s. Wire format unchanged, so mixed versions still read it.
+            if (remaining >= 255)
+                remaining = Mathf.Max(255, Mathf.CeilToInt(NeedSeconds() * (100 - percent) / 100f));
             meterRemaining = remaining;
             meterPercent = percent;
         }

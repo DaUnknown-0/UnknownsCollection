@@ -968,10 +968,15 @@ namespace UnknownsCollection {
                     if (candidate == byte.MaxValue) return false;   // everyone skipped
                     int eligible = voters;
                     // The accused does not have to vote for themselves.
+                    // Only subtract a vote that CountVotes actually counted: the Gambler's own and a
+                    // 252 (muted / could not vote) never were, and subtracting them made "4 of 5"
+                    // pass as unanimous when the Gambler himself was the accused.
                     foreach (var state in MeetingHud.Instance.playerStates) {
                         if (state == null) continue;
                         if (state.TargetPlayerId != candidate) continue;
-                        if (state.VotedFor != candidate && state.VotedFor != byte.MaxValue && state.VotedFor != 254)
+                        if (gambler != null && state.TargetPlayerId == gambler.PlayerId) break;
+                        if (state.VotedFor != candidate && state.VotedFor != byte.MaxValue && state.VotedFor != 254
+                            && state.VotedFor != 252)
                             eligible--;
                         break;
                     }

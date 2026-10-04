@@ -1219,6 +1219,10 @@ namespace UnknownsCollection {
                     // (Checked on the board, not on huntActive, so the Impostor win that fires the very
                     // frame the third player dies cannot beat the hunt-start broadcast to the punch.)
                     bool huntBoard = AliveCount() <= 2;
+                    // A sabotage that was allowed to run (option 1549 off, or the hunt not under way)
+                    // is a legitimate loss, as the header says. Blocking it anyway left the meltdown
+                    // hanging at 0 until the hunt clock ran out.
+                    if (endReason == GameOverReason.ImpostorBySabotage && !SabotageBlocked()) return true;
                     bool block = huntBoard ? IsTeamWin(endReason) : IsCrewNoKillerWin(endReason);
                     if (!block) return true;
 

@@ -365,7 +365,12 @@ namespace UnknownsCollection {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] NetworkedPlayerInfo target) {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
-                    if (!active || !HasNote() || revealed || target == null) return;
+                    // notesGiven: the reveal is for a Witness who dies BEFORE the note meeting; once the
+                    // notes are out, a later death must not publish the old sighting.
+                    if (!active || !HasNote() || notesGiven || revealed || target == null) return;
+                    // The postfix also runs when the original bailed out because a meeting is already
+                    // on; such a report starts nothing and must not arm a reveal for a later meeting.
+                    if (MeetingHud.Instance != null || ExileController.Instance != null) return;
                     if (target.PlayerId == witness.PlayerId) pendingReporter = __instance.PlayerId;
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Witness] report check failed: {e}");
@@ -381,11 +386,13 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                    // Consumed by THIS meeting in any case, so it can never carry over into a later one.
+                    byte reporter = pendingReporter;
+                    pendingReporter = byte.MaxValue;
                     if (!active || !HasNote()) return;
 
-                    if (pendingReporter != byte.MaxValue && !revealed) {
-                        SendReveal(pendingReporter, noteKillerId, noteVictimId);
-                        pendingReporter = byte.MaxValue;
+                    if (reporter != byte.MaxValue && !revealed) {
+                        SendReveal(reporter, noteKillerId, noteVictimId);
                         return;
                     }
 

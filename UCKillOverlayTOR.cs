@@ -155,11 +155,14 @@ namespace UnknownsCollection {
         // figure). Hook point: RPCProcedure.uncheckedExilePlayer - RPC 110 is sent EXCLUSIVELY by
         // TOR's witch-execution block (verified across TOR and the whole mod family), and it runs
         // exactly once per client, so no dedup is needed.
+        // 03.10.: no longer exclusive - UsefulTORStuff's LoverRevenger exiles its meeting-end deaths
+        // the same way. It flags those calls with the AppDomain key below, which is skipped here.
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.uncheckedExilePlayer))]
         static class WitchExileObserverPatch {
             public static void Prefix(byte targetId) {
                 try {
                     if (!TorAnimsOn || Witch.witch == null) return;
+                    if (AppDomain.CurrentDomain.GetData("TORMods.NonWitchExile") is bool nonWitch && nonWitch) return;
                     var lp = PlayerControl.LocalPlayer;
                     if (lp == null) return;
                     if (lp.PlayerId != targetId && lp.PlayerId != Witch.witch.PlayerId) return;   // audience

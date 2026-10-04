@@ -569,6 +569,10 @@ namespace UnknownsCollection {
 
         private static void ApplySetForm(bool wolf, float secs) {
             if (!active || werewolf == null) return;
+            // A transform sent just before a report can land after this client's meeting start, whose
+            // EndFormSilent already ran: it would put the wolf into the meeting (look, howl, flare) on
+            // some clients only. The meeting always wins.
+            if (wolf && InMeeting()) return;
             if (wolf == wolfForm) {
                 if (wolf) formEndTime = Time.time + secs; // idempotent refresh
                 return;

@@ -204,6 +204,11 @@ namespace UnknownsCollection {
                 foreach (var body in UnityEngine.Object.FindObjectsOfType<DeadBody>())
                     if (body != null && body.ParentId == victimId) UnityEngine.Object.Destroy(body.gameObject);
                 try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
+                // TOR's death ledger (Detective, Medic, Hacker vitals, end screen read the FIRST entry):
+                // a revived player must leave it, or a second death reports the first killer and time.
+                // Same cleanup as Pelican.RevivePlayer and Necromancer.ApplyRaise.
+                try { Pelican.DeadPlayersLedger()?.RemoveAll(d => d != null && d.player != null && d.player.PlayerId == victimId); }
+                catch { }
                 usesLeft = Mathf.Max(0, usesLeft - 1);
                 killedAt.Remove(victimId);
 

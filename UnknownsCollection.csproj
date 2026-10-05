@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.2.14.2</Version>
+        <Version>1.2.14.3</Version>
         <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade, Manipulator, Werewolf, Auditor (Impostor); Siphoner, Witness, Scout, Beacon, Hunter, King (Crewmate); Bug, Follower, Copycat, Collector, Pelican, Necromancer, Stalker (Neutral); Poltergeist (ghost, keeps its team); Gambler, Void (crew modifiers).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
@@ -205,8 +205,8 @@
         <EmbeddedResource Include="Resources\overlay_claw.png" />
         <EmbeddedResource Include="Resources\overlay_wanted.png" />
         <EmbeddedResource Include="Resources\overlay_coin.png" />
-        <!-- Custom hats (UCHats): "Virus", "Werbetafel" (6 blink frames + climb), "Werewolf" and
-             "Monster Hunter" (both full-body: 6 glint frames + back + climb). Explicit LogicalName so the lookup
+        <!-- Custom hats (UCHats): "Virus", "Werbetafel" (16 idle frames + climb), "Werewolf" and
+             "Monster Hunter" (both full-body: 16 idle + 12 walk frames + back + climb). Explicit LogicalName so the lookup
              never depends on the root-namespace default. UCHats extracts only the files TOR
              itself has to read (main/back/climb per hat) into <Among Us>\TheOtherHats; the
              remaining animation frames are only ever read from here. -->

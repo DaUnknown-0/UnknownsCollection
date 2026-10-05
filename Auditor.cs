@@ -28,7 +28,7 @@
  *    RpcSetTasks resets the WHOLE list, the victim's own client re-completes everything else right
  *    after - netting exactly one open task.
  *
- * Options 1600-1609, module byte 214 on the shared UC channel, draft sentinel 218.
+ * Options 1600-1609 plus 1599, module byte 214 on the shared UC channel, draft sentinel 218.
  * Full design record: tmp/AUDITOR_PLAN.md. See ID-Registry.md.
  */
 
@@ -48,7 +48,7 @@ namespace UnknownsCollection {
         // ---- Theme ----
         public static readonly Color Color = Palette.ImpostorRed; // impostor role -> red role tag
 
-        // ---- Options (IDs 1600-1609) ----
+        // ---- Options (IDs 1600-1609, StealVisual 1599: 1610 belongs to Gambler) ----
         public static CustomOption SpawnRate;
         public static CustomOption SpawnMinPlayers;
         public static CustomOption QueueSize;
@@ -59,7 +59,7 @@ namespace UnknownsCollection {
         public static CustomOption ShowCompleter;
         public static CustomOption CannotGuessSnitch;
         public static CustomOption VictimNotice;
-        public static CustomOption StealVisual;    // 1610 - may he take tasks whose completion everyone can see?
+        public static CustomOption StealVisual;    // 1599 - may he take tasks whose completion everyone can see?
 
         // Victim notification modes. The order IS the option's selection order, and TOR's string[]
         // overload always defaults to index 0 - so the intended default has to sit first.
@@ -156,7 +156,7 @@ namespace UnknownsCollection {
                 // With the vanilla "Visual Tasks" setting on, a stolen scan / asteroids / shields /
                 // garbage task would let the Auditor PROVE himself crew in front of witnesses (audit
                 // 04.10.). Off by default; without Visual Tasks this option changes nothing.
-                StealVisual = CustomOption.Create(1610, Types.Impostor, "Auditor Can Steal Visual Tasks",
+                StealVisual = CustomOption.Create(1599, Types.Impostor, "Auditor Can Steal Visual Tasks",
                     false, SpawnRate);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Auditor] Options created.");
             } catch (Exception e) {

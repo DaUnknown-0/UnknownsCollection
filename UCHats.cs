@@ -143,6 +143,14 @@ namespace UnknownsCollection {
             public int AnimFrames;                  // 0 = static hat
             public float AnimFps;
             public string AnimPattern;              // "{0}" = 1-based frame index
+            // Walk loop (2026-10-05): one frame per sprite of the crewmate's own run cycle (12). The
+            // artwork of each frame is shifted by the measured offset between body and hat in that
+            // run sprite, so the costume stays glued to the body while running.
+            public int WalkFrames;                  // 0 = no walk loop
+            public string WalkPattern;
+            public string BackWalkPattern;          // optional: back layer frames for the walk loop
+            public Sprite[] Walk, BackWalk;
+            public Sprite BackIdle;
             public AnimTarget Target;
             public bool LockFlip;                   // true = never mirror (pure-text hats)
             public bool FollowBody;                 // true = ride the body's walk animation (see below)
@@ -155,7 +163,10 @@ namespace UnknownsCollection {
         private static readonly HatDef[] Defs = {
             new HatDef {
                 Name = "Virus",
-                MainFile = "UC_Virus.png", MainRes = "virus.png",
+                MainFile = "UC_Virus.png", MainRes = "virus_1.png",
+                AnimFrames = 16, AnimFps = 10f, AnimPattern = "virus_{0}.png",
+                WalkFrames = 12, WalkPattern = "virus_walk_{0}.png",
+                Target = AnimTarget.Front, FollowBody = true,
                 // Ladder pose: deliberately the SAME png as idle. The spike wreath sits AROUND the
                 // body and fits the climb silhouette too; before this, the hat vanished on ladders
                 // (ClimbImage == null). No ClimbRes -> no second copy on disk.
@@ -167,7 +178,10 @@ namespace UnknownsCollection {
                 // Ladder pose shows the player from behind, so this is the BACK of the billboard
                 // (plain metal, no text - also sidesteps every mirrored-text problem).
                 ClimbFile = "UC_Werbetafel_climb.png", ClimbRes = "werbetafel_climb.png",
-                AnimFrames = 6, AnimFps = 6f, AnimPattern = "werbetafel_{0}.png",
+                AnimFrames = 16, AnimFps = 10f, AnimPattern = "werbetafel_{0}.png",
+                // No walk loop and no FollowBody: a Behind-only hat lives on the back layer, which the
+                // head-node sync does not drive the way it drives a front layer (test 2026-10-05: the
+                // sign jumped against the body with baked walk offsets).
                 // Behind without BackImage -> TOR renders the whole hat through the BackLayer.
                 Target = AnimTarget.Back,
                 // Never mirror the billboard: a hat that is pure text has no "left version" - it
@@ -182,7 +196,8 @@ namespace UnknownsCollection {
                 ClimbFile = "UC_Werewolf_climb.png", ClimbRes = "werewolf_climb.png",
                 // Full-body beast in side profile (crewmates stand sideways; the snout points the
                 // same way as the visor). Frames 2..6 only vary the glowing eye.
-                AnimFrames = 6, AnimFps = 6f, AnimPattern = "werewolf_{0}.png",
+                AnimFrames = 16, AnimFps = 10f, AnimPattern = "werewolf_{0}.png",
+                WalkFrames = 12, WalkPattern = "werewolf_walk_{0}.png",
                 // BackImage present -> BOTH layers active; the eye lives on the FrontLayer.
                 Target = AnimTarget.Front,
                 LockFlip = false,                   // the profile mirrors with the walk direction
@@ -201,7 +216,8 @@ namespace UnknownsCollection {
                 ClimbFile = "UC_Hunter_climb.png", ClimbRes = "hunter_climb.png",
                 // Side profile like the wolf (crewmates stand sideways); frames 2..6 only vary the
                 // silver glint on the bolt tip and the sheriff star.
-                AnimFrames = 6, AnimFps = 6f, AnimPattern = "hunter_{0}.png",
+                AnimFrames = 16, AnimFps = 10f, AnimPattern = "hunter_{0}.png",
+                WalkFrames = 12, WalkPattern = "hunter_walk_{0}.png", BackWalkPattern = "hunter_back_walk_{0}.png",
                 Target = AnimTarget.Front,
                 LockFlip = false,                   // the profile mirrors with the walk direction
                 FollowBody = true,
@@ -507,9 +523,18 @@ namespace UnknownsCollection {
                 var strip = GetFrames(def);
                 if (strip == null) return;
 
-                int index = Mathf.FloorToInt(Time.time * def.AnimFps) % strip.Length;
-                var frame = strip[index];
+                // Walk loop: follows the crewmate's own run cycle sprite by sprite.
+                int runIndex = def.Walk != null ? RunFrameOf(__instance, def.WalkFrames) : -1;
+                var frame = runIndex >= 0
+                    ? def.Walk[runIndex]
+                    : strip[Mathf.FloorToInt(Time.time * def.AnimFps) % strip.Length];
                 if (frame != null && renderer.sprite != frame) renderer.sprite = frame;
+                if (def.BackWalk != null && def.Target == AnimTarget.Front && __instance.BackLayer != null) {
+                    var back = __instance.BackLayer;
+                    if (def.BackIdle == null && runIndex < 0) def.BackIdle = back.sprite;
+                    var want = runIndex >= 0 ? def.BackWalk[runIndex] : def.BackIdle;
+                    if (want != null && back.sprite != want) back.sprite = want;
+                }
             } catch (Exception ex) {
                 if (loggedAnimError) return;
                 loggedAnimError = true;
@@ -545,6 +570,39 @@ namespace UnknownsCollection {
             return viewCache != null && viewCache.TryGetValue(name, out view);
         }
 
+        private static readonly Dictionary<int, (PlayerControl pc, float recheck)> hatOwners = new();
+
+        // -1 = not running (or no player behind this hat: shop preview, lobby dummy).
+        private static int RunFrameOf(HatParent hat, int frames) {
+            try {
+                int id = hat.GetInstanceID();
+                if (!hatOwners.TryGetValue(id, out var e) || (e.pc == null && Time.time >= e.recheck)) {
+                    if (hatOwners.Count > 256) hatOwners.Clear();
+                    e = (hat.GetComponentInParent<PlayerControl>(), Time.time + 2f);
+                    hatOwners[id] = e;
+                }
+                var anims = e.pc != null && e.pc.MyPhysics != null ? e.pc.MyPhysics.Animations : null;
+                if (anims == null || !anims.IsPlayingRunAnimation()) return -1;
+                var animator = anims.Animator != null ? anims.Animator.m_animator : null;
+                if (animator == null) return -1;
+                float t = animator.GetCurrentAnimatorStateInfo(0).normalizedTime;
+                return Mathf.Clamp(Mathf.FloorToInt((t - Mathf.Floor(t)) * frames), 0, frames - 1);
+            } catch { return -1; }
+        }
+
+        private static Sprite[] LoadStrip(HatDef def, string pattern, int count) {
+            if (pattern == null || count <= 0) return null;
+            var built = new Sprite[count];
+            for (int i = 0; i < count; i++) {
+                built[i] = LoadHatSprite(ResourcePrefix + string.Format(pattern, i + 1));
+                if (built[i] == null) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] {def.Name}: frame {string.Format(pattern, i + 1)} missing - that loop is off.");
+                    return null;
+                }
+            }
+            return built;
+        }
+
         // Lazily built on the first rendered frame (Unity is definitely up by then). All frames or
         // none: a half-loaded strip would blink with holes, so we fall back to the static frame 1
         // that TOR already loaded from disk.
@@ -560,6 +618,8 @@ namespace UnknownsCollection {
                 return null;
             }
             def.Frames = built;
+            def.Walk = LoadStrip(def, def.WalkPattern, def.WalkFrames);
+            def.BackWalk = def.Walk != null ? LoadStrip(def, def.BackWalkPattern, def.WalkFrames) : null;
             return built;
         }
 

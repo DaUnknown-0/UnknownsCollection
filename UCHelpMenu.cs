@@ -271,11 +271,18 @@ namespace UnknownsCollection {
         };
 
         // ---- theme ----
+        // The game's own lobby-pane look (see UTS VanillaUI): grey frame around a dark body, dark
+        // fields for rows and cards, upper-case grey title. UC gold stays for the role accents only.
         internal static readonly Color Accent = new Color(1f, 0.82f, 0.35f);          // UC gold
-        private static readonly Color PanelBg = new Color(0.055f, 0.07f, 0.115f, 0.97f);
-        private static readonly Color HeaderBg = new Color(0.10f, 0.125f, 0.20f, 1f);
-        private static readonly Color CardBg = new Color(0.085f, 0.105f, 0.165f, 1f);
-        private static readonly Color BorderCol = new Color(1f, 0.82f, 0.35f, 0.55f);
+        private static readonly Color FrameCol = new Color(0.72f, 0.78f, 0.84f);
+        private static readonly Color BodyCol = new Color(0.09f, 0.11f, 0.15f);
+        private static readonly Color CardBg = new Color(0.14f, 0.17f, 0.22f);
+        private static readonly Color FieldHover = new Color(0.21f, 0.26f, 0.33f);
+        private static readonly Color FieldSel = new Color(0.16f, 0.70f, 0.66f);
+        private static readonly Color TitleCol = new Color(1f, 1f, 1f);
+        private static readonly Color MutedCol = new Color(0.66f, 0.72f, 0.80f);
+        private static readonly Color ShadowCol = new Color(0f, 0f, 0f, 0.45f);
+        private const float FrameW = 0.05f;
         private const int SortBg = 500;
         private const int SortMid = 501;
         private const int SortText = 502;
@@ -398,12 +405,63 @@ namespace UnknownsCollection {
             return sr;
         }
 
-        // Thin border frame around a rect (4 lines).
-        private static void NewFrame(Transform parent, Vector3 center, Vector2 size, Color color, float thickness = 0.025f, int sort = SortMid) {
-            NewRect(parent, center + new Vector3(0, size.y / 2f, 0), new Vector2(size.x, thickness), color, sort);
-            NewRect(parent, center + new Vector3(0, -size.y / 2f, 0), new Vector2(size.x, thickness), color, sort);
-            NewRect(parent, center + new Vector3(-size.x / 2f, 0, 0), new Vector2(thickness, size.y), color, sort);
-            NewRect(parent, center + new Vector3(size.x / 2f, 0, 0), new Vector2(thickness, size.y), color, sort);
+        // A rounded rectangle as a 9-sliced SpriteRenderer (size through sr.size, scale stays 1).
+        // Radius in pixels at 100 ppu, i.e. 0.01 world units per pixel.
+        private static readonly Dictionary<int, Sprite> roundedCache = new Dictionary<int, Sprite>();
+        private static Sprite RoundedSprite(int radius) {
+            if (roundedCache.TryGetValue(radius, out var cached) && cached != null) return cached;
+            int n = radius * 2 + 8;   // 4 px centre: a sliced SpriteRenderer draws nothing with a 0-px middle
+            var tex = new Texture2D(n, n, TextureFormat.RGBA32, false);
+            var px = new Color[n * n];
+            float half = n / 2f;
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++) {
+                    float qx = Mathf.Abs(x + 0.5f - half) - (half - radius);
+                    float qy = Mathf.Abs(y + 0.5f - half) - (half - radius);
+                    float outside = new Vector2(Mathf.Max(qx, 0), Mathf.Max(qy, 0)).magnitude + Mathf.Min(Mathf.Max(qx, qy), 0) - radius;
+                    px[y * n + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(0.5f - outside));
+                }
+            tex.SetPixels(px);
+            tex.filterMode = FilterMode.Bilinear;
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.Apply(false, true);
+            tex.hideFlags |= HideFlags.HideAndDontSave;
+            float b = radius + 2;
+            var s = Sprite.Create(tex, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, new Vector4(b, b, b, b));
+            s.hideFlags |= HideFlags.HideAndDontSave;
+            roundedCache[radius] = s;
+            return s;
+        }
+
+        private static SpriteRenderer NewRounded(Transform parent, Vector3 localPos, Vector2 size, Color color, int radius = 8, int sort = SortBg) {
+            var go = new GameObject("UCHelpRound");
+            go.layer = parent.gameObject.layer;
+            go.transform.SetParent(parent, false);
+            go.transform.localPosition = localPos;
+            var sr = go.AddComponent<SpriteRenderer>();
+            sr.sprite = RoundedSprite(radius);
+            sr.drawMode = SpriteDrawMode.Sliced;
+            sr.size = size;
+            sr.color = color;
+            sr.sortingOrder = sort;
+            return sr;
+        }
+
+        // The game's lobby pane: shadow, grey frame, dark body.
+        private static void NewPanel(Transform parent, Vector3 center, Vector2 size, int sort = SortBg) {
+            NewRounded(parent, center + new Vector3(0f, -0.06f, 0.03f), size, ShadowCol, 18, sort);
+            NewRounded(parent, center + new Vector3(0f, 0f, 0.02f), size, FrameCol, 18, sort);
+            NewRounded(parent, center + new Vector3(0f, 0f, 0.01f), size - new Vector2(2 * FrameW, 2 * FrameW), BodyCol, 11, sort);
+        }
+
+        // The grey tile sprite of the game's corner buttons (chat, settings, map), null before the HUD exists.
+        private static Sprite TileSprite() {
+            try {
+                var hud = HudManager.Instance;
+                var bg = hud != null && hud.MapButton != null ? hud.MapButton.transform.Find("Background") : null;
+                var sr = bg != null ? bg.GetComponent<SpriteRenderer>() : null;
+                return sr != null ? sr.sprite : null;
+            } catch { return null; }
         }
 
         // ====================================================================
@@ -428,23 +486,34 @@ namespace UnknownsCollection {
                     button.layer = __instance.gameObject.layer;
                     button.transform.SetParent(__instance.transform, false);
 
+                    // the game's own corner tile (same sprite as chat/settings/map) with a "?" glyph;
+                    // the gold ring stays as the fallback when the tile sprite is not reachable
                     var ring = new GameObject("ring");
                     ring.layer = button.layer;
                     ring.transform.SetParent(button.transform, false);
                     var rr = ring.AddComponent<SpriteRenderer>();
-                    rr.sprite = UCFx.Ring;
-                    rr.color = new Color(Accent.r, Accent.g, Accent.b, 0.75f);
+                    var tile = TileSprite();
+                    if (tile != null) {
+                        rr.sprite = tile;
+                        rr.color = Color.white;
+                        ring.transform.localScale = Vector3.one * 0.36f;
+                    } else {
+                        rr.sprite = UCFx.Ring;
+                        rr.color = new Color(Accent.r, Accent.g, Accent.b, 0.75f);
+                        ring.transform.localScale = Vector3.one * 0.5f;
+                    }
                     rr.sortingOrder = SortBg;
-                    ring.transform.localScale = Vector3.one * 0.5f;
 
-                    var q = NewText(button.transform, "?", 3.0f, new Color(1f, 1f, 1f, 0.9f), TextAlignmentOptions.Center);
+                    var q = NewText(button.transform, "?", 3.0f, tile != null ? new Color(0.9f, 0.92f, 0.94f) : new Color(1f, 1f, 1f, 0.9f), TextAlignmentOptions.Center);
+                    q.fontStyle = FontStyles.Bold;
                     q.transform.localPosition = new Vector3(0f, 0f, -0.1f);
 
                     var ap = button.AddComponent<AspectPosition>();
                     ap.Alignment = AspectPosition.EdgeAlignments.RightTop;
                     // y: 2.3 was one button footprint (0.7 world units, the click box below) too high
                     // and crowded the vanilla buttons above it (playtest 2026-09-04).
-                    ap.DistanceFromEdge = new Vector3(0.5f, 3.0f, -10f);
+                    // top right, left of the chat and settings tiles (User 2026-10-07: the old spot covered the lobby pane)
+                    ap.DistanceFromEdge = new Vector3(2.6f, 0.42f, -10f);
                     ap.AdjustPosition();
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[UCHelpMenu] button creation failed: {e}");
@@ -455,6 +524,9 @@ namespace UnknownsCollection {
         // ====================================================================
         // Panel build / teardown
         // ====================================================================
+        /// <summary>Autotest (UTS UIGallery, via reflection): open or close the panel.</summary>
+        public static void DiagToggle() => TogglePanel();
+
         private static void TogglePanel() {
             if (panel != null) ClosePanel();
             else OpenPanel();
@@ -503,15 +575,15 @@ namespace UnknownsCollection {
 
                 float topY = PanelH / 2f;
 
-                // Backdrop + gold frame + header bar
-                NewRect(panel.transform, Vector3.zero, new Vector2(PanelW, PanelH), PanelBg);
-                NewFrame(panel.transform, Vector3.zero, new Vector2(PanelW, PanelH), BorderCol);
-                NewRect(panel.transform, new Vector3(0f, topY - HeaderH / 2f, -0.02f), new Vector2(PanelW, HeaderH), HeaderBg, SortMid);
-                NewRect(panel.transform, new Vector3(0f, topY - HeaderH, -0.03f), new Vector2(PanelW, 0.03f), BorderCol, SortMid);
+                // The game's lobby pane: shadow, grey frame, dark body, a rule under the title row
+                NewPanel(panel.transform, Vector3.zero, new Vector2(PanelW, PanelH));
+                NewRounded(panel.transform, new Vector3(0f, topY - HeaderH - 0.02f, -0.03f), new Vector2(PanelW - 0.9f, 0.02f), FrameCol, 1, SortMid);
 
-                float headY = topY - HeaderH / 2f - 0.02f;
-                var title = NewText(panel.transform, T("uc.helpui.title"), 1.45f, Color.white);
-                title.transform.localPosition = new Vector3(-PanelW / 2f + 0.25f, headY, -0.1f);
+                float headY = topY - HeaderH / 2f - 0.04f;
+                var title = NewText(panel.transform, T("uc.helpui.title").ToUpperInvariant(), 1.45f, TitleCol);
+                title.fontStyle = FontStyles.Bold;
+                title.characterSpacing = 4f;
+                title.transform.localPosition = new Vector3(-PanelW / 2f + 0.3f, headY, -0.1f);
 
                 // Language control: quick EN|<base> toggle when the game language is not
                 // English; a full session dropdown (3-column grid) when it is.
@@ -538,18 +610,18 @@ namespace UnknownsCollection {
                     Select(reopen);
                 } });
 
-                var close = NewText(panel.transform, "X", 1.8f, new Color(1f, 0.5f, 0.5f), TextAlignmentOptions.Center);
-                close.transform.localPosition = new Vector3(PanelW / 2f - 0.28f, headY, -0.1f);
+                // close: a small red game-style button
+                NewRounded(panel.transform, new Vector3(PanelW / 2f - 0.4f, headY, -0.04f), new Vector2(0.44f, 0.34f), new Color(0.86f, 0.28f, 0.32f), 17, SortMid);
+                var close = NewText(panel.transform, "X", 1.3f, Color.white, TextAlignmentOptions.Center);
+                close.fontStyle = FontStyles.Bold;
+                close.transform.localPosition = new Vector3(PanelW / 2f - 0.4f, headY, -0.1f);
                 hits.Add(new HitBox { anchor = close.transform, w = 0.45f, h = 0.45f, onClick = ClosePanel });
 
                 // Search row (live filter; typed input is captured in HudUpdatePatch)
                 float searchY = topY - HeaderH - 0.30f;
                 float searchW = 3.6f;
                 float searchX = -PanelW / 2f + 0.25f + searchW / 2f;
-                NewRect(panel.transform, new Vector3(searchX, searchY, -0.02f), new Vector2(searchW, 0.34f),
-                    new Color(0f, 0f, 0f, 0.35f), SortMid);
-                NewFrame(panel.transform, new Vector3(searchX, searchY, 0f), new Vector2(searchW, 0.34f),
-                    new Color(1f, 1f, 1f, 0.18f), 0.02f, SortMid);
+                NewRounded(panel.transform, new Vector3(searchX, searchY, -0.02f), new Vector2(searchW, 0.34f), CardBg, 7, SortMid);
                 searchLabel = NewText(panel.transform, "", 1.05f, new Color(1f, 1f, 1f, 0.9f));
                 searchLabel.transform.localPosition = new Vector3(searchX - searchW / 2f + 0.12f, searchY, -0.1f);
                 var clear = NewText(panel.transform, "x", 1.2f, new Color(1f, 1f, 1f, 0.5f), TextAlignmentOptions.Center);
@@ -578,9 +650,7 @@ namespace UnknownsCollection {
                 float cardW = 4.15f, cardH = 3.7f;
                 float cardX = PanelW / 2f - cardW / 2f - 0.3f;
                 float cardY = (topY - HeaderH - 0.35f) - cardH / 2f + 0.05f;
-                NewRect(panel.transform, new Vector3(cardX, cardY, -0.02f), new Vector2(cardW, cardH), CardBg, SortMid);
-                NewFrame(panel.transform, new Vector3(cardX, cardY, 0f), new Vector2(cardW, cardH),
-                    new Color(1f, 1f, 1f, 0.14f), 0.02f, SortMid);
+                NewRounded(panel.transform, new Vector3(cardX, cardY, -0.02f), new Vector2(cardW, cardH), CardBg, 9, SortMid);
 
                 float cardLeft = cardX - cardW / 2f + 0.22f;
                 float cardTop = cardY + cardH / 2f;
@@ -681,14 +751,14 @@ namespace UnknownsCollection {
                 float trackX = colRight + rowW + 0.14f;
                 float trackH = listTop - listBottom;
                 float trackMid = (listTop + listBottom) / 2f;
-                NewRect(listRoot.transform, new Vector3(trackX, trackMid, -0.05f),
-                    new Vector2(0.03f, trackH), new Color(1f, 1f, 1f, 0.08f), SortMid);
+                NewRounded(listRoot.transform, new Vector3(trackX, trackMid, -0.05f),
+                    new Vector2(0.04f, trackH), CardBg, 2, SortMid);
                 int total = maxScroll + visible;
                 float thumbH = Mathf.Max(0.15f, trackH * visible / total);
                 float t = maxScroll == 0 ? 0f : (float)scrollLines / maxScroll;
                 float thumbY = trackMid + (trackH - thumbH) / 2f - t * (trackH - thumbH);
-                NewRect(listRoot.transform, new Vector3(trackX, thumbY, -0.06f),
-                    new Vector2(0.05f, thumbH), new Color(1f, 0.82f, 0.35f, 0.5f), SortMid);
+                NewRounded(listRoot.transform, new Vector3(trackX, thumbY, -0.06f),
+                    new Vector2(0.05f, thumbH), FrameCol, 2, SortMid);
             }
         }
 
@@ -720,8 +790,8 @@ namespace UnknownsCollection {
                         new Vector2(rowW - 0.2f, 0.018f), new Color(fc.r, fc.g, fc.b, 0.35f), SortMid);
                     continue;
                 }
-                var hover = NewRect(listRoot.transform, new Vector3(x + rowW / 2f - 0.1f, y, -0.05f),
-                    new Vector2(rowW, RowH * 0.92f), new Color(1f, 1f, 1f, 0f), SortMid);
+                var hover = NewRounded(listRoot.transform, new Vector3(x + rowW / 2f - 0.1f, y, -0.05f),
+                    new Vector2(rowW, RowH * 0.9f), CardBg, 5, SortMid);
                 Color rowCol;
                 try { rowCol = e.color(); } catch { rowCol = Color.white; }
                 var row = NewText(listRoot.transform, e.name, 1.35f, rowCol);
@@ -748,9 +818,7 @@ namespace UnknownsCollection {
             drop.layer = panel.layer;
             drop.transform.SetParent(panel.transform, false);
             drop.transform.localPosition = new Vector3(0f, 0f, -0.5f);
-            var bg = NewRect(drop.transform, new Vector3(cx, cy, 0f), new Vector2(w, h),
-                new Color(0.05f, 0.06f, 0.1f, 0.97f), 520);
-            NewFrame(drop.transform, new Vector3(cx, cy, -0.01f), new Vector2(w, h), BorderCol, 0.02f, 521);
+            NewPanel(drop.transform, new Vector3(cx, cy, 0f), new Vector2(w, h), 520);
             for (int i = 0; i < count; i++) {
                 string code = UCLocalization.KnownCodes[i];
                 int col = i % cols, r = i / cols;
@@ -1903,9 +1971,8 @@ namespace UnknownsCollection {
                             bool over = Mathf.Abs(local.x - h.anchor.localPosition.x) < h.w / 2f
                                         && Mathf.Abs(local.y - h.anchor.localPosition.y) < h.h / 2f;
                             bool isSelected = h.entry != null && h.entry == selected;
-                            float alpha = isSelected ? 0.16f : over ? 0.09f : 0f;
-                            Color c = isSelected ? Accent : Color.white;
-                            h.hover.color = new Color(c.r, c.g, c.b, alpha);
+                            // rows are dark fields: lighter under the mouse, teal when selected
+                            h.hover.color = isSelected ? FieldSel : over ? FieldHover : CardBg;
                         }
                     }
 

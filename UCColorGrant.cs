@@ -525,10 +525,13 @@ namespace UnknownsCollection {
                 if (Time.time < nextPoll) return;
                 nextPoll = Time.time + 0.25f;
 
-                bool host = AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost;
-                bool show = host && UCColorGrant.InLobby() && UCColors.Installed;
-                if (show && lobbyButton == null) BuildLobbyButton();
-                if (!show && lobbyButton != null) { Destroy(lobbyButton); lobbyButton = null; lobbyButtonRect = null; ClosePanel(); }
+                bool show = ShouldShow();
+                if (!inLobbyMenu) JoinLobbyMenu();
+                // with UTS's lobby menu the entry sits there; the own button only without it
+                bool own = show && !inLobbyMenu;
+                if (own && lobbyButton == null) BuildLobbyButton();
+                if (!own && lobbyButton != null) { Destroy(lobbyButton); lobbyButton = null; lobbyButtonRect = null; }
+                if (!show && panel != null) ClosePanel();
                 if (lobbyButtonRect != null) lobbyButtonRect.anchoredPosition = LobbyButtonPos();
 
                 // A question that outlives the lobby (the game started first) is dropped (Opus audit round 2).
@@ -569,8 +572,31 @@ namespace UnknownsCollection {
             } catch { }
         }
 
+        [HideFromIl2Cpp]
+        private static bool ShouldShow() =>
+            AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost
+            && UCColorGrant.InLobby() && UCColors.Installed;
+
         /*
-         * UTS lines its own lobby buttons (mod sync, newcomer shield, early-death shield, ...) up in
+         * UTS (since 2026-10-05) gathers the lobby panels in one menu behind a corner button and
+         * publishes an Add delegate for other mods' entries. Plain BCL and Unity types only, so no
+         * reference to UTS is needed: (id, order, visible, label, click, colour).
+         */
+        private bool inLobbyMenu;
+
+        [HideFromIl2Cpp]
+        private void JoinLobbyMenu() {
+            try {
+                if (!(AppDomain.CurrentDomain.GetData("UTS.LobbyMenu.Add")
+                        is Action<string, int, Func<bool>, Func<string>, Action, Color> add)) return;
+                add("uc.colorgrant", 50, ShouldShow, () => UCLocalization.Tr("uc.colorgrant.lobby_button"),
+                    () => Instance?.TogglePanel(), new Color(0.35f, 0.1f, 0.5f));
+                inLobbyMenu = true;
+            } catch { }
+        }
+
+        /*
+         * Without the lobby menu (a UTS from before it): UTS lines its own lobby buttons (mod sync, newcomer shield, early-death shield, ...) up in
          * one row along the bottom edge and publishes the next free X. A column grew upwards into the
          * lobby's settings button (2026-10-02). A UTS from before the row only publishes the next free
          * Y of its column; without UTS the bottom-left corner is free.

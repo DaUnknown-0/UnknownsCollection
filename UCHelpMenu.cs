@@ -1906,6 +1906,24 @@ namespace UnknownsCollection {
         // ====================================================================
         // Per-frame: visibility gate + manual hover/click resolution.
         // ====================================================================
+
+        // Under the game's chat tile (or the settings tile when chat is hidden), one tile lower: a fixed
+        // screen spot sat on TOR's version text in the lobby and on the map tile in a round (User 2026-10-07).
+        private static void FollowCornerButton(HudManager hud) {
+            Transform anchor = null;
+            try {
+                var chat = hud.Chat != null ? hud.Chat.chatButton : null;
+                if (chat != null && chat.gameObject.activeInHierarchy) anchor = chat.transform;
+                else if (hud.SettingsButton != null && hud.SettingsButton.activeInHierarchy) anchor = hud.SettingsButton.transform;
+            } catch { }
+            if (anchor == null) return;
+            var ap = button.GetComponent<AspectPosition>();
+            if (ap != null) ap.enabled = false;
+            Vector3 p = anchor.position;
+            var want = new Vector3(p.x, p.y - 0.74f, button.transform.position.z);
+            if ((button.transform.position - want).sqrMagnitude > 0.0001f) button.transform.position = want;
+        }
+
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class HudUpdatePatch {
             [HarmonyPriority(Priority.Low)]
@@ -1917,6 +1935,7 @@ namespace UnknownsCollection {
                                    && !MeetingHud.Instance && !ExileController.Instance;
                     if (button.activeSelf != visible) button.SetActive(visible);
                     if (!visible) { if (panel != null) ClosePanel(); return; }
+                    FollowCornerButton(__instance);
 
                     if (panel != null && Input.GetKeyDown(KeyCode.Escape)) {
                         if (searchFocused) searchFocused = false; // first Escape only leaves the field

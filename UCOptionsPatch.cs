@@ -42,23 +42,11 @@ namespace UnknownsCollection {
                     return UnknownsCollectionPlugin.BugGlitchEnabled.Value;
                 },
                 () => UnknownsCollectionPlugin.BugGlitchEnabled.Value),
-            new(() => UCLocalization.Tr("uc.ui.options.kill_anim_uc_toggle"),
-                () => {
-                    UnknownsCollectionPlugin.KillAnimationsUC.Value =
-                        !UnknownsCollectionPlugin.KillAnimationsUC.Value;
-                    return UnknownsCollectionPlugin.KillAnimationsUC.Value;
-                },
-                () => UnknownsCollectionPlugin.KillAnimationsUC.Value),
-            new(() => UCLocalization.Tr("uc.ui.options.kill_anim_tor_toggle"),
-                () => {
-                    UnknownsCollectionPlugin.KillAnimationsTOR.Value =
-                        !UnknownsCollectionPlugin.KillAnimationsTOR.Value;
-                    return UnknownsCollectionPlugin.KillAnimationsTOR.Value;
-                },
-                () => UnknownsCollectionPlugin.KillAnimationsTOR.Value),
-            // Music beds. Like the kill cutscenes these are local taste, so they belong here next to
-            // them rather than in the host's game options. (The reactor score also has a HOST option
-            // deciding whether it plays at all this round; this switch only mutes it for this client.)
+            // (The kill-cutscene toggles that used to sit here moved to the HOST's game options on
+            // 2026-10-07: UCKillOverlay.CreateOptions, "UC/TOR Role Kill Animations" + one per role.)
+            // Music beds are local taste, so they belong here rather than in the host's game options.
+            // (The reactor score also has a HOST option deciding whether it plays at all this round;
+            // this switch only mutes it for this client.)
             new(() => UCLocalization.Tr("uc.ui.options.music_werewolf_toggle"),
                 () => {
                     UnknownsCollectionPlugin.MusicWerewolf.Value =

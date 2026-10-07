@@ -187,7 +187,7 @@ namespace UnknownsCollection {
             var optToKey = EnToKey("uc.option.", "");
             var valueToKey = EnToKey("uc.", ""); // per-element selection match (any uc.* text)
             foreach (var opt in CustomOption.options.ToArray()) {
-                if (opt == null || opt.id < 1400 || (opt.id > 1699 && (opt.id < 1740 || opt.id > 1799))) continue;   // 1700-1739 Nightfall + Atlas
+                if (opt == null || opt.id < 1400 || (opt.id > 1699 && (opt.id < 1740 || opt.id > 1899))) continue;   // 1700-1739 Nightfall + Atlas; 1800-1899 UC (kill animations)
                 if (!optionOriginals.TryGetValue(opt, out var orig)) {
                     orig = (opt.name, opt.selections);
                     optionOriginals[opt] = orig;

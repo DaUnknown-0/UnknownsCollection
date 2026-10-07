@@ -53,13 +53,63 @@ namespace UnknownsCollection {
             VampireBiteDeath, WarlockCurse, WitchSpellDeath
         }
 
-        private static bool UcAnimsOn {
-            get { try { return UnknownsCollectionPlugin.KillAnimationsUC == null || UnknownsCollectionPlugin.KillAnimationsUC.Value; } catch { return true; } }
+        // ==================== host options (2026-10-07) ====================
+        //
+        // Until now the cutscenes were a per-client BepInEx toggle (UC on, TOR off). The host now
+        // decides for the whole lobby in the TOR settings ("Unknown's Collection" block, General
+        // tab): one switch per family plus one per role underneath, so a host can keep the Sheriff
+        // duel and drop the Guesser overlay. The former local toggles are gone (User 07.10.: "Host
+        // entscheidet, lokale Schalter weg"). IDs 1800-1820 (see ID-Registry.md).
+        public static CustomOption UcAnims, TorAnims;
+        private static readonly Dictionary<Kind, CustomOption> perRole = new();
+
+        public static void CreateOptions() {
+            try {
+                var g = CustomOption.CustomOptionType.General;
+                UcAnims = CustomOption.Create(1800, g, "UC Role Kill Animations", true, null, true, null, "Unknown's Collection");
+                void Role(int id, string name, bool def, CustomOption parent, params Kind[] kinds) {
+                    var o = CustomOption.Create(id, g, name, def, parent);
+                    foreach (var k in kinds) perRole[k] = o;
+                }
+                Role(1801, "Kill Animation: Tesla", true, UcAnims, Kind.Tesla);
+                Role(1802, "Kill Animation: Saboteur Task Kill", true, UcAnims, Kind.SaboteurTask);
+                Role(1803, "Kill Animation: Poisoner", true, UcAnims, Kind.Poisoner);
+                Role(1804, "Kill Animation: Shade", true, UcAnims, Kind.Shade);
+                Role(1805, "Kill Animation: Maniac Bomb", true, UcAnims, Kind.ManiacBomb);
+                Role(1806, "Kill Animation: Werewolf", true, UcAnims, Kind.WerewolfMaul);
+                Role(1807, "Kill Animation: Monster Hunter", true, UcAnims, Kind.SilverBolt);
+                Role(1808, "Kill Animation: Pelican", true, UcAnims, Kind.Pelican);
+                // The TOR pack stays opt-in, as the local default was before.
+                TorAnims = CustomOption.Create(1810, g, "TOR Role Kill Animations", false, null, false);
+                Role(1811, "Kill Animation: Sheriff", true, TorAnims, Kind.SheriffShot, Kind.SheriffMisfire);
+                Role(1812, "Kill Animation: Vampire", true, TorAnims, Kind.VampireKill, Kind.VampireBiteDeath);
+                Role(1813, "Kill Animation: Warlock", true, TorAnims, Kind.WarlockKill, Kind.WarlockCurse);
+                Role(1814, "Kill Animation: Witch", true, TorAnims, Kind.WitchKill, Kind.WitchSpellDeath);
+                Role(1815, "Kill Animation: Ninja", true, TorAnims, Kind.NinjaDash);
+                Role(1816, "Kill Animation: Bomber", true, TorAnims, Kind.BomberBomb);
+                Role(1817, "Kill Animation: Guesser", true, TorAnims, Kind.GuesserShot);
+                Role(1818, "Kill Animation: Thief", true, TorAnims, Kind.ThiefSteal, Kind.ThiefFail);
+                Role(1819, "Kill Animation: Jackal", true, TorAnims, Kind.JackalClaw);
+                Role(1820, "Kill Animation: Bounty Hunter", true, TorAnims, Kind.BountyHit);
+                UnknownsCollectionPlugin.Logger?.LogInfo("[UCKillOverlay] Options created.");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[UCKillOverlay] CreateOptions failed: {e}");
+            }
         }
-        private static bool TorAnimsOn {
-            get { try { return UnknownsCollectionPlugin.KillAnimationsTOR == null || UnknownsCollectionPlugin.KillAnimationsTOR.Value; } catch { return true; } }
+
+        private static bool On(CustomOption o, bool fallback) {
+            try { return o == null ? fallback : o.getBool(); } catch { return fallback; }
         }
-        private static bool KindEnabled(Kind k) => k >= Kind.SheriffShot ? TorAnimsOn : UcAnimsOn;
+
+        // The TOR observers (UCKillOverlayTOR.cs) do not even arm when the family is off.
+        private static bool TorAnimsOn => On(TorAnims, false);
+
+        // Family switch AND the role's own switch; without options (creation failed) the old defaults.
+        private static bool KindEnabled(Kind k) {
+            bool tor = k >= Kind.SheriffShot;
+            if (!On(tor ? TorAnims : UcAnims, !tor)) return false;
+            return !perRole.TryGetValue(k, out var o) || On(o, true);
+        }
 
         private const float DimMax = 0.82f;
 
@@ -272,6 +322,12 @@ namespace UnknownsCollection {
         private static int hudLayer;
 
         private static SpriteRenderer dim, flash;
+        // 2026-10-07 polish: the vanilla overlay's red slanted band under the actors (the Halloween
+        // cutscenes have it too), lit up on every impact, and a stage shake driven by Impact().
+        private static SpriteRenderer band;
+        private static float shakeAmp;
+        private static readonly Color BandDark = new Color(0.588f, 0.055f, 0.078f, 1f);
+        private static readonly Color BandFlash = new Color(0.925f, 0.235f, 0.204f, 1f);
         private static Fig killerFig, victimFig;
         private static SpriteRenderer propA, propB, propC;      // role props (bolt/console/vial/shadow/bomb/burst)
         private static SpriteRenderer[] particles;              // small accents (sparks/smoke/bubbles)
@@ -323,7 +379,7 @@ namespace UnknownsCollection {
             activeKind = Kind.None;
             activePlaysInMeeting = false;
             killerFig = null; victimFig = null;
-            dim = flash = propA = propB = propC = null;
+            dim = flash = band = propA = propB = propC = null;
             particles = null;
             extraFig = null;                 // TOR sequences (poster mini-fig etc.)
         }
@@ -405,6 +461,11 @@ namespace UnknownsCollection {
             rng = new System.Random(Environment.TickCount);
 
             dim = Make("dim", UCAssets.OverlayWhite, 0f, 0f, 0, new Color(0f, 0f, 0f, 0f), 400f);
+            band = Make("band", UCAssets.OverlayWhite, 0f, 0f, 1, new Color(BandDark.r, BandDark.g, BandDark.b, 0f));
+            float unit = band.sprite != null ? Mathf.Max(0.0001f, band.sprite.bounds.size.y) : 0.04f;
+            band.transform.localScale = new Vector3(400f, 5.2f / unit, 1f);
+            band.transform.localRotation = Quaternion.Euler(0f, 0f, 6.8f);
+            shakeAmp = 0f;
             flash = Make("flash", UCAssets.OverlayWhite, 0f, 0f, 90, new Color(1f, 1f, 1f, 0f), 400f);
 
             switch (p.kind) {
@@ -525,6 +586,7 @@ namespace UnknownsCollection {
             float dimA = DimMax * Smooth(Seg(t, 0f, 0.12f)) * (1f - Smooth(Seg(t, 0.88f, 1f)));
             SetAlpha(dim, dimA);
             float exit = 1f - Smooth(Seg(t, 0.88f, 1f));   // global fade-out factor for actors
+            shakeAmp = 0f;
 
             switch (activeKind) {
                 case Kind.Tesla: UpdateTesla(t, exit); break;
@@ -537,6 +599,19 @@ namespace UnknownsCollection {
                 case Kind.Pelican: UpdatePelican(t, exit); break;
                 default: UpdateTorSeq(t, exit); break;   // UCKillOverlayTOR.cs
             }
+
+            // band follows the dim, flares with the impact; the whole stage shakes with it
+            if (band != null) {
+                var c = Color.Lerp(BandDark, BandFlash, Mathf.Clamp01(shakeAmp * 7f));
+                band.color = new Color(c.r, c.g, c.b, dimA / DimMax);
+            }
+            if (root != null)
+                root.transform.localPosition = new Vector3(Jitter(shakeAmp), Jitter(shakeAmp), -500f);
+        }
+
+        // One impact beat: shake (and band flare) of amplitude amp, decaying over dur of the timeline.
+        private static void Impact(float t, float t0, float dur, float amp) {
+            if (t >= t0 && t < t0 + dur) shakeAmp = Mathf.Max(shakeAmp, amp * (1f - (t - t0) / dur));
         }
 
         private static void UpdateTesla(float t, float exit) {
@@ -546,6 +621,8 @@ namespace UnknownsCollection {
             killerFig.SetAlpha(ein * exit);
 
             bool zapping = t >= 0.3f && t < 0.72f;
+            Impact(t, 0.3f, 0.12f, 0.12f);
+            if (zapping) shakeAmp = Mathf.Max(shakeAmp, 0.035f);
             if (t >= 0.28f) Sound(1, () => UCAssets.PlayTeslaDischargeAt(PlayerControl.LocalPlayer.GetTruePosition()));
 
             // Charge sparks around the killer's raised side before/while the arc burns.
@@ -609,6 +686,7 @@ namespace UnknownsCollection {
 
             // Zap: short arc console -> victim, sparks fly.
             bool zap = t >= 0.62f && t < 0.78f;
+            Impact(t, 0.62f, 0.14f, 0.12f);
             if (t >= 0.6f) Sound(1, () => UCAssets.PlayZap(PlayerControl.LocalPlayer.GetTruePosition()));
             SetAlpha(propB, zap ? (((int)(Time.time * 20f)) % 2 == 0 ? 0.95f : 0.4f) : 0f);
             if (zap) {
@@ -673,6 +751,7 @@ namespace UnknownsCollection {
             }
 
             // Collapse.
+            Impact(t, 0.9f, 0.08f, 0.04f);
             if (t >= 0.8f) {
                 float fall = Smooth(Seg(t, 0.8f, 0.97f));
                 victimFig.SetRot(84f * fall);
@@ -695,6 +774,7 @@ namespace UnknownsCollection {
             if (t >= 0.2f) Sound(1, () => UCAssets.PlayShadeVanish());
 
             // The maw rises from below the frame.
+            Impact(t, 0.5f, 0.12f, 0.06f);
             float rise = Smooth(Seg(t, 0.2f, 0.5f));
             propA.transform.localPosition = new Vector3(0.6f, Mathf.Lerp(-3.6f, -1.35f, rise), 0f);
             propA.transform.localScale = new Vector3(2.2f + 0.06f * Mathf.Sin(t * 19f), 2.2f, 1f);
@@ -732,6 +812,7 @@ namespace UnknownsCollection {
             victimFig.SetAlpha(ein * (t < 0.92f ? 1f : exit));
 
             bool exploded = t >= 0.58f;
+            Impact(t, 0.58f, 0.2f, 0.2f);
 
             if (!exploded) {
                 victimFig.SetPos(1.1f + Jitter(0.03f * Seg(t, 0.3f, 0.58f)), -0.4f);
@@ -782,6 +863,7 @@ namespace UnknownsCollection {
 
             float ein = EaseOut(Seg(t, 0f, 0.18f));
             bool bitten = t >= 0.52f;
+            Impact(t, 0.52f, 0.16f, 0.16f);
 
             if (!bitten) {
                 victimFig.SetPos(Mathf.Lerp(4.2f, 2.2f, ein), -0.35f);
@@ -844,6 +926,7 @@ namespace UnknownsCollection {
 
             bool fired = t >= 0.42f;
             if (fired) Sound(1, () => TorSfx("pursuerBlank"));
+            Impact(t, 0.6f, 0.12f, 0.12f);
 
             // The bolt sits on the crossbow, then crosses the whole stage in ~0.2 s.
             float fly = EaseOut(Seg(t, 0.42f, 0.62f));
@@ -893,6 +976,7 @@ namespace UnknownsCollection {
             // The beak sweeps in from off-screen, gaping, then snaps shut on the victim.
             float sweep = Smooth(Seg(t, 0.1f, 0.48f));
             float snap = Seg(t, 0.48f, 0.58f);
+            Impact(t, 0.48f, 0.12f, 0.1f);
             float leave = Smooth(Seg(t, 0.72f, 1f));
             propA.transform.localPosition = new Vector3(Mathf.Lerp(-5.2f, -0.55f, sweep) - 4.4f * leave,
                                                         0.15f - 0.25f * EaseOut(snap), 0f);

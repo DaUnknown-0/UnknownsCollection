@@ -4,8 +4,9 @@
 
 /*
  * UCKillOverlayTOR - custom kill cutscenes for the TOR roles with a SPECIAL kill ability
- * (partial extension of UCKillOverlay; gated by the "TOR Kill Animations" toggle in the UC
- * options popup, per-player BepInEx config - pure cosmetics, so intentionally NOT host-synced).
+ * (partial extension of UCKillOverlay; gated by the HOST's "TOR Role Kill Animations" option and
+ * one option per role, see UCKillOverlay.CreateOptions - until 2026-10-07 this was a per-player
+ * BepInEx toggle).
  *
  * Detection needs no new network traffic: TOR's own RPCs already carry everything.
  *  - Field kills all funnel through RPCProcedure.uncheckedMurderPlayer(sourceId, targetId,
@@ -363,6 +364,7 @@ namespace UnknownsCollection {
 
             bool fired = t >= 0.46f;
             if (fired) Sound(1, () => TorSfx("pursuerBlank"));   // TOR's blank-shot bang
+            Impact(t, 0.46f, 0.12f, 0.14f);
             float bang = Seg(t, 0.46f, 0.56f);
             propB.transform.localPosition = new Vector3(kx + 2.05f, 0.02f, 0f);
             propB.transform.localScale = Vector3.one * (0.55f + 0.75f * EaseOut(bang));
@@ -401,6 +403,7 @@ namespace UnknownsCollection {
 
             float aim = Smooth(Seg(t, 0.2f, 0.4f));
             bool burst = t >= 0.5f;
+            Impact(t, 0.5f, 0.14f, 0.14f);
 
             propC.transform.localPosition = new Vector3(kx + 0.05f, 0.78f, 0f);
             SetAlpha(propC, ein * exit);
@@ -464,6 +467,7 @@ namespace UnknownsCollection {
             // fangs drop onto the victim and CHOMP
             float dropF = Smooth(Seg(t, 0.3f, 0.46f));
             float chomp = Seg(t, 0.46f, 0.54f);
+            Impact(t, 0.46f, 0.1f, 0.08f);
             if (t >= 0.44f) Sound(1, () => TorSfx("vampireBite"));
             propA.transform.localPosition = new Vector3(0.45f, Mathf.Lerp(3f, 0.55f, dropF) - 0.35f * EaseOut(chomp), 0f);
             propA.transform.localScale = Vector3.one * (1.05f - 0.12f * EaseOut(chomp));
@@ -528,6 +532,7 @@ namespace UnknownsCollection {
             }
 
             // the victim darkens to curse-violet, shudders, gets pulled DOWN by the circle
+            Impact(t, 0.45f, 0.14f, 0.06f);
             float grip = Smooth(Seg(t, 0.45f, 0.7f));
             victimFig.SetTint(Color.Lerp(victimFig.color, new Color(0.36f, 0.2f, 0.55f), 0.75f * grip), exit);
             float sink = Smooth(Seg(t, 0.68f, 0.95f));
@@ -540,17 +545,25 @@ namespace UnknownsCollection {
         private static void UpdateWitchKill(float t, float exit) {
             float ein = EaseOut(Seg(t, 0f, 0.18f));
             float kx = Mathf.Lerp(-4.2f, -2.3f, ein);
-            killerFig.SetPos(kx, -0.35f);
-            killerFig.SetAlpha(ein * exit);
+            // Anonymous spell death (WitchSpellDeath with "Ghosts See Roles" off): no witch and no hat
+            // on stage, the spell motes come out of the dark. Before 2026-10-07 this dereferenced
+            // the missing figure and the sequence died on its first frame.
+            if (killerFig != null) {
+                killerFig.SetPos(kx, -0.35f);
+                killerFig.SetAlpha(ein * exit);
+            }
             victimFig.SetPos(Mathf.Lerp(4.2f, 2.3f, ein), -0.35f);
             victimFig.SetAlpha(ein * exit);
 
             // hat rides on the witch's head, tipping forward with the cast
             float cast = Smooth(Seg(t, 0.3f, 0.42f));
-            propB.transform.localPosition = new Vector3(kx - 0.05f, 0.92f, 0f);
-            propB.transform.localRotation = Quaternion.Euler(0, 0, -18f * Mathf.Sin(cast * Mathf.PI));
-            SetAlpha(propB, ein * exit);
+            if (propB != null) {
+                propB.transform.localPosition = new Vector3(kx - 0.05f, 0.92f, 0f);
+                propB.transform.localRotation = Quaternion.Euler(0, 0, -18f * Mathf.Sin(cast * Mathf.PI));
+                SetAlpha(propB, ein * exit);
+            }
             if (t >= 0.3f) Sound(1, () => TorSfx("witchSpell"));
+            Impact(t, 0.6f, 0.1f, 0.08f);
 
             // spell stream: green motes arc from witch to victim
             for (int i = 0; i < particles.Length; i++) {
@@ -604,6 +617,8 @@ namespace UnknownsCollection {
 
             // the blade streak crosses the whole frame during the dash
             bool streak = t >= 0.32f && t < 0.5f;
+            Impact(t, 0.32f, 0.18f, 0.05f);
+            Impact(t, 0.72f, 0.1f, 0.08f);
             if (streak) {
                 float s = Seg(t, 0.32f, 0.5f);
                 propA.transform.localPosition = new Vector3(Mathf.Lerp(-5.5f, 5.5f, EaseOut(s)), 0.05f, 0f);
@@ -640,6 +655,7 @@ namespace UnknownsCollection {
         private static void UpdateBomberBomb(float t, float exit) {
             float ein = EaseOut(Seg(t, 0f, 0.16f));
             bool exploded = t >= 0.6f;
+            Impact(t, 0.6f, 0.2f, 0.2f);
             victimFig.SetAlpha(ein * (t < 0.92f ? 1f : exit));
 
             if (!exploded) {
@@ -703,6 +719,7 @@ namespace UnknownsCollection {
             propA.color = new Color(1f, blink < 1f ? 0.25f : 1f, blink < 1f ? 0.25f : 1f, ein * blink * (1f - Seg(t, 0.66f, 0.78f)));
 
             bool judged = t >= 0.64f;
+            Impact(t, 0.64f, 0.12f, 0.12f);
             if (judged) {
                 SetAlpha(flash, Mathf.Max(0f, 0.45f - 2.2f * (t - 0.64f)));
                 float fall = Smooth(Seg(t, 0.68f, 0.92f));
@@ -742,6 +759,7 @@ namespace UnknownsCollection {
             float rise = Smooth(Seg(t, 0.36f, 0.52f));
             float carry = Smooth(Seg(t, 0.52f, 0.72f));
             float absorb = Seg(t, 0.72f, 0.8f);
+            Impact(t, 0.72f, 0.08f, 0.05f);
             float cx = Mathf.Lerp(1.9f, kx + 0.3f, carry);
             float cy = Mathf.Lerp(0.1f, 1.35f, rise) + Mathf.Sin(carry * Mathf.PI) * 0.7f;   // arced hand-off
             propA.transform.localPosition = new Vector3(cx, cy - 1.2f * absorb, 0f);
@@ -777,6 +795,7 @@ namespace UnknownsCollection {
 
             float reach = Smooth(Seg(t, 0.18f, 0.34f));
             bool failed = t >= 0.46f;
+            Impact(t, 0.46f, 0.12f, 0.1f);
             float kx = -0.4f + 0.35f * reach;
             if (!failed) {
                 killerFig.SetPos(kx, -0.35f);
@@ -832,6 +851,8 @@ namespace UnknownsCollection {
             if (t >= 0.3f) Sound(1, () => UCAssets.PlayScoutWhoosh(PlayerControl.LocalPlayer.GetTruePosition(), 0.9f));
 
             // first rip, then the crossing second
+            Impact(t, 0.3f, 0.1f, 0.1f);
+            Impact(t, 0.44f, 0.1f, 0.1f);
             float rip1 = Seg(t, 0.3f, 0.42f);
             SetAlpha(propA, rip1 > 0f ? Mathf.Sin(Mathf.Min(rip1, 1f) * Mathf.PI) * 0.95f : 0f);
             propA.transform.localScale = Vector3.one * (0.85f + 0.25f * EaseOut(rip1));
@@ -885,6 +906,7 @@ namespace UnknownsCollection {
 
             // the claim: flash + the real victim goes down
             bool claimed = t >= 0.52f;
+            Impact(t, 0.52f, 0.12f, 0.1f);
             if (!claimed) {
                 victimFig.SetPos(Mathf.Lerp(4.2f, 1.7f, ein), -0.35f);
             } else {

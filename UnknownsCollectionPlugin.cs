@@ -39,7 +39,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.14.6";
+    public const string PluginVersion = "1.2.14.7";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -102,8 +102,6 @@ public class UnknownsCollectionPlugin : BasePlugin
     public static ConfigEntry<bool> MusicWerewolf { get; set; }
     public static ConfigEntry<bool> MusicPelican { get; set; }
     public static ConfigEntry<bool> MusicReactor { get; set; }
-    public static ConfigEntry<bool> KillAnimationsUC { get; set; }
-    public static ConfigEntry<bool> KillAnimationsTOR { get; set; }
     public static ConfigEntry<string> PreviousHatBeforeLock { get; set; }
 
     internal static Assembly TORAssembly;
@@ -139,6 +137,9 @@ public class UnknownsCollectionPlugin : BasePlugin
         // patches are attribute-based), so the registration happens here - and BEFORE the roles, so
         // a very early lobby broadcast can never find the channel unregistered.
         TeslaVersionHandshake.RegisterRpc();
+
+        // Kill cutscenes: host options (per family + per role), see UCKillOverlay.CreateOptions.
+        UCKillOverlay.CreateOptions();
 
         // The Tesla role. CreateOptions must run after TOR's CustomOptionHolder.Load() (guaranteed
         // by the hard dependency). Most patches are attribute-based and picked up by PatchAll below;
@@ -178,13 +179,9 @@ public class UnknownsCollectionPlugin : BasePlugin
             "Autotest only: starts a Freeplay on map (value - 1, e.g. 3 = Polus), probes wake-up spots once and photographs them into UCShots. 0 = off (default).");
         BugGlitchEnabled = Config.Bind("Bug", "Bug Win Glitch Effects", true,
             "Enable visual/sound glitch effects on the Bug win screen");
-        // Custom kill cutscenes (pure local cosmetics -> per-player config, NOT host-synced).
-        // UC roles keep their overlays by default; the TOR-role pack is opt-in.
-        KillAnimationsUC = Config.Bind("KillAnimations", "UC Role Kill Animations", true,
-            "Custom kill cutscenes for Unknown's Collection roles (Tesla, Saboteur task kills, Poisoner, Shade, Maniac bomb, Werewolf maul, Hunter silver bolt, Pelican). Off = vanilla kill overlay.");
-        KillAnimationsTOR = Config.Bind("KillAnimations", "TOR Role Kill Animations", false,
-            "Custom kill cutscenes for TOR roles with special kills (Sheriff, Vampire, Warlock, Witch, Ninja, Bomber, Guesser, Thief, Jackal/Sidekick, Bounty Hunter). Off = vanilla kill overlay.");
-        // Music beds (UCMusic channel). Purely local taste, like the kill cutscenes above - a player
+        // Custom kill cutscenes: HOST options since 2026-10-07 (UCKillOverlay.CreateOptions, one switch
+        // per family and per role); the former per-player "KillAnimations" config section is retired.
+        // Music beds (UCMusic channel). Purely local taste - a player
         // who mutes them still sees every gameplay effect, so these are NOT host-synced. The reactor
         // score additionally has a host option (1483) that decides whether it exists in the round at
         // all; this switch only decides whether THIS client hears it.

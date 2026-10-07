@@ -59,6 +59,9 @@ namespace UnknownsCollection {
         /// The colour the LOCAL player is being asked about, if any.
         public static bool HasPending { get; private set; }
         public static Color32 PendingColour { get; private set; }
+
+        /// <summary>Autotest (UTS UI gallery): a question as if the host had asked, without any RPC.</summary>
+        internal static void DiagPending(Color32 rgb, bool on) { PendingColour = rgb; HasPending = on; }
         /// What the host is waiting for, so his list can show it.
         public static readonly Dictionary<byte, Color32> Outstanding = new();
 
@@ -68,8 +71,14 @@ namespace UnknownsCollection {
         // Rules
         // ================================================================================
         public static bool InLobby() =>
-            AmongUsClient.Instance != null && !AmongUsClient.Instance.IsGameStarted
-            && ShipStatus.Instance == null;
+            DiagGallery() ||
+            (AmongUsClient.Instance != null && !AmongUsClient.Instance.IsGameStarted
+             && ShipStatus.Instance == null);
+
+        // UTS' UI gallery autotest photographs the screens in freeplay; it publishes this flag.
+        private static bool DiagGallery() {
+            try { return AppDomain.CurrentDomain.GetData("UTS.UIGallery.Active") is bool b && b; } catch { return false; }
+        }
 
         /// Does this player have the mod? Only such a player can be shown the question.
         public static bool HasMod(PlayerControl p) {
@@ -342,7 +351,10 @@ namespace UnknownsCollection {
 
     /*
      * The three screens: the host's player list, the hex entry, and the question the target gets.
-     * Plain screen-space canvases built on demand, the same shape UTS' NewcomerShieldUI uses.
+     * Screen-space canvases built on demand, drawn in the look of TOR - Forgotten Fixes' panels
+     * (deep-blue card with a thick pale outline and a hard shadow, slanted title tab, capsule
+     * buttons, the game's fonts). UC has no reference to UTS, so the few shapes it needs are
+     * generated here; the palette matches UTS' VanillaUI.
      */
     public class UCColorGrantUI : MonoBehaviour {
         public static UCColorGrantUI Instance { get; private set; }
@@ -376,6 +388,21 @@ namespace UnknownsCollection {
             Instance = this;
         }
 
+        // ---------------------------------------------------------------- theme (matches UTS VanillaUI)
+        private static readonly Color ColFrame = new Color(0.72f, 0.78f, 0.84f);
+        private static readonly Color ColBody = new Color(0.09f, 0.11f, 0.15f);
+        private static readonly Color ColField = new Color(0.14f, 0.17f, 0.22f);
+        private static readonly Color ColFieldLight = new Color(0.21f, 0.26f, 0.33f);
+        private static readonly Color ColMuted = new Color(0.66f, 0.72f, 0.80f);
+        private static readonly Color ColShadow = new Color(0f, 0f, 0f, 0.55f);
+        private static readonly Color ColBackdrop = new Color(0f, 0f, 0f, 0.72f);
+        private static readonly Color ColPurple = new Color(0.58f, 0.32f, 0.86f);   // this feature's accent
+        private static readonly Color ColGreen = new Color(0.30f, 0.74f, 0.42f);
+        private static readonly Color ColRed = new Color(0.86f, 0.28f, 0.32f);
+        private static readonly Color ColGrey = new Color(0.36f, 0.42f, 0.50f);
+        private static readonly Color ColWarn = new Color(1f, 0.6f, 0.5f);
+        private const int Outline = 5;
+
         // ---------------------------------------------------------------- tiny UGUI helpers
         [HideFromIl2Cpp]
         private static Sprite Solid(Color c) {
@@ -386,6 +413,97 @@ namespace UnknownsCollection {
             DontDestroyOnLoad(tex); DontDestroyOnLoad(sp);
             solids[c] = sp;
             return sp;
+        }
+
+        // Rounded rectangle (border 0) or ring (border > 0), white, sliced; tinted by Image.color.
+        private static readonly Dictionary<int, Sprite> roundCache = new();
+
+        [HideFromIl2Cpp]
+        private static Sprite Round(int radius, int border) {
+            int key = radius * 100 + border;
+            if (roundCache.TryGetValue(key, out var c) && c != null) return c;
+            int n = radius * 2 + 4;
+            var tex = new Texture2D(n, n, TextureFormat.RGBA32, false);
+            var px = new Color[n * n];
+            float half = n / 2f;
+            for (int y = 0; y < n; y++)
+                for (int x = 0; x < n; x++) {
+                    float qx = Mathf.Abs(x + 0.5f - half) - (half - radius);
+                    float qy = Mathf.Abs(y + 0.5f - half) - (half - radius);
+                    float outside = new Vector2(Mathf.Max(qx, 0), Mathf.Max(qy, 0)).magnitude + Mathf.Min(Mathf.Max(qx, qy), 0) - radius;
+                    float a = Mathf.Clamp01(0.5f - outside);
+                    if (border > 0) a *= Mathf.Clamp01(outside + border + 0.5f);
+                    px[y * n + x] = new Color(1f, 1f, 1f, a);
+                }
+            tex.SetPixels(px);
+            tex.filterMode = FilterMode.Bilinear;
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.Apply(false, true);
+            float b = radius + 2;
+            var sp = Sprite.Create(tex, new Rect(0, 0, n, n), new Vector2(0.5f, 0.5f), 100f, 0,
+                                   SpriteMeshType.FullRect, new Vector4(b, b, b, b));
+            tex.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            sp.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            roundCache[key] = sp;
+            return sp;
+        }
+
+        // The slanted title tab: square on the left, the right edge leaning; sliced.
+        private static Sprite slant;
+
+        [HideFromIl2Cpp]
+        private static Sprite Slant() {
+            if (slant != null) return slant;
+            const int h = 48, lean = 22, w = 70;
+            var tex = new Texture2D(w, h, TextureFormat.RGBA32, false);
+            var px = new Color[w * h];
+            for (int y = 0; y < h; y++)
+                for (int x = 0; x < w; x++) {
+                    float right = w - 1f - lean * (1f - (y + 0.5f) / h);
+                    px[y * w + x] = new Color(1f, 1f, 1f, Mathf.Clamp01(right - (x + 0.5f) + 0.5f));
+                }
+            tex.SetPixels(px);
+            tex.filterMode = FilterMode.Bilinear;
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.Apply(false, true);
+            slant = Sprite.Create(tex, new Rect(0, 0, w, h), new Vector2(0.5f, 0.5f), 100f, 0,
+                                  SpriteMeshType.FullRect, new Vector4(12, 2, lean + 8, 2));
+            tex.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            slant.hideFlags |= HideFlags.DontUnloadUnusedAsset;
+            return slant;
+        }
+
+        // The game's faces, picked by name: Brook for titles and buttons, upright Barlow Bold for text.
+        private static TMPro.TMP_FontAsset fontBody, fontHead;
+
+        [HideFromIl2Cpp]
+        private static void FindFonts() {
+            if (fontBody != null && fontHead != null) return;
+            try {
+                foreach (var o in Resources.FindObjectsOfTypeAll(Il2CppInterop.Runtime.Il2CppType.Of<TMPro.TMP_FontAsset>())) {
+                    var f = o.TryCast<TMPro.TMP_FontAsset>();
+                    if (f == null) continue;
+                    string n = f.name.ToLowerInvariant();
+                    if (n.Contains("italic") || n.Contains("outline") || n.Contains("masked")) continue;
+                    if (n.StartsWith("barlow-bold")) fontBody = f;
+                    else if (n.Contains("brook") && (fontHead == null || n.Contains("sdf"))) fontHead = f;
+                }
+            } catch { }
+        }
+
+        // Brook is a dynamic font asset: HasCharacters reports false for glyphs it has not baked yet,
+        // so plain ASCII headings skip that check (the first run kept TMP's default face, 2026-10-07).
+        [HideFromIl2Cpp]
+        private static void Face(TMPro.TextMeshProUGUI t, bool heading) {
+            FindFonts();
+            var f = heading ? fontHead : fontBody;
+            if (f == null) return;
+            bool ascii = true;
+            foreach (char ch in t.text) if (ch > 0x7E) { ascii = false; break; }
+            bool ok = ascii;
+            if (!ok) { try { ok = f.HasCharacters(t.text); } catch { } }
+            if (ok) t.font = f;
+            if (heading) t.fontStyle &= ~TMPro.FontStyles.Bold;
         }
 
         [HideFromIl2Cpp]
@@ -405,19 +523,33 @@ namespace UnknownsCollection {
 
         [HideFromIl2Cpp]
         private static GameObject Box(GameObject parent, Vector2 min, Vector2 max, Vector2 pivot,
-                                      Vector2 pos, Vector2 size, Color col) {
+                                      Vector2 pos, Vector2 size, Color col, int radius = 0) {
             var go = new GameObject("B");
             go.transform.SetParent(parent.transform, false);
             var rt = go.AddComponent<RectTransform>();
             rt.anchorMin = min; rt.anchorMax = max; rt.pivot = pivot;
             rt.anchoredPosition = pos; rt.sizeDelta = size;
-            go.AddComponent<Image>().sprite = Solid(col);
+            var img = go.AddComponent<Image>();
+            if (radius > 0) { img.sprite = Round(radius, 0); img.type = Image.Type.Sliced; img.color = col; }
+            else img.sprite = Solid(col);
+            return go;
+        }
+
+        [HideFromIl2Cpp]
+        private static GameObject Layer(GameObject parent, Sprite sp, Color col, Vector2 offset) {
+            var go = new GameObject("L");
+            go.transform.SetParent(parent.transform, false);
+            var rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = Vector2.zero; rt.anchorMax = Vector2.one; rt.sizeDelta = Vector2.zero;
+            rt.anchoredPosition = offset;
+            var img = go.AddComponent<Image>();
+            img.sprite = sp; img.type = Image.Type.Sliced; img.color = col; img.raycastTarget = false;
             return go;
         }
 
         [HideFromIl2Cpp]
         private static TMPro.TextMeshProUGUI Label(GameObject parent, string text, float size,
-                                                   Color col, TMPro.TextAlignmentOptions align) {
+                                                   Color col, TMPro.TextAlignmentOptions align, bool heading = false) {
             var go = new GameObject("T");
             go.transform.SetParent(parent.transform, false);
             var rt = go.AddComponent<RectTransform>();
@@ -425,12 +557,100 @@ namespace UnknownsCollection {
             var t = go.AddComponent<TMPro.TextMeshProUGUI>();
             t.text = text; t.fontSize = size; t.color = col; t.alignment = align;
             t.enableWordWrapping = true;
+            t.raycastTarget = false;
+            Face(t, heading);
             return t;
         }
 
         [HideFromIl2Cpp]
-        private static void OnClick(GameObject go, Action a) =>
-            go.AddComponent<Button>().onClick.AddListener((UnityEngine.Events.UnityAction)a);
+        private static void OnClick(GameObject go, Action a) {
+            // a veil for hover and press, like the panels of Forgotten Fixes
+            var veil = Layer(go, Round(16, 0), Color.white, Vector2.zero);
+            var img = veil.GetComponent<Image>();
+            img.raycastTarget = true;
+            var b = veil.AddComponent<Button>();
+            b.targetGraphic = img;
+            var c = b.colors;
+            c.normalColor = new Color(1f, 1f, 1f, 0f);
+            c.highlightedColor = new Color(1f, 1f, 1f, 0.2f);
+            c.pressedColor = new Color(0f, 0f, 0f, 0.25f);
+            c.selectedColor = new Color(1f, 1f, 1f, 0f);
+            c.fadeDuration = 0.06f;
+            b.colors = c;
+            img.CrossFadeColor(c.normalColor, 0f, true, true);
+            b.onClick.AddListener((UnityEngine.Events.UnityAction)a);
+        }
+
+        /// <summary>Dim backdrop and the card: hard shadow, dark body, thick pale outline.</summary>
+        [HideFromIl2Cpp]
+        private static GameObject Card(GameObject root, Vector2 size, bool dim = true) {
+            if (dim) Box(root, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero, ColBackdrop);
+            var card = new GameObject("Card");
+            card.transform.SetParent(root.transform, false);
+            var rt = card.AddComponent<RectTransform>();
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+            rt.sizeDelta = size;
+            Layer(card, Round(22, 0), ColShadow, new Vector2(8, -10));
+            Layer(card, Round(22, 0), ColBody, Vector2.zero).GetComponent<Image>().raycastTarget = true;
+            Layer(card, Round(22, Outline), ColFrame, Vector2.zero);
+            return card;
+        }
+
+        /// <summary>The slanted title tab in the top-left corner of a card.</summary>
+        [HideFromIl2Cpp]
+        private static void Title(GameObject card, string text, Color tab) {
+            float w = Mathf.Clamp(text.Length * 22f + 90f, 260f, 640f);
+            var go = new GameObject("TitleTab");
+            go.transform.SetParent(card.transform, false);
+            var rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0, 1);
+            rt.anchoredPosition = new Vector2(Outline + 18f, -Outline - 10f);
+            rt.sizeDelta = new Vector2(w, 54f);
+            var img = go.AddComponent<Image>();
+            img.sprite = Slant(); img.type = Image.Type.Sliced; img.color = tab; img.raycastTarget = false;
+            var t = Label(go, text.ToUpperInvariant(), 34, Color.white, TMPro.TextAlignmentOptions.Left, true);
+            t.rectTransform.offsetMin = new Vector2(22, 0); t.rectTransform.offsetMax = new Vector2(-40, 0);
+            t.enableWordWrapping = false; t.enableAutoSizing = true; t.fontSizeMin = 18; t.fontSizeMax = 34;
+        }
+
+        /// <summary>A capsule button: flat colour, darker edge, hard shadow, Brook label.</summary>
+        [HideFromIl2Cpp]
+        private static GameObject Btn(GameObject parent, Vector2 anchor, Vector2 pos, Vector2 size, string label,
+                                      Color col, Action onClick) {
+            var go = new GameObject("Btn");
+            go.transform.SetParent(parent.transform, false);
+            var rt = go.AddComponent<RectTransform>();
+            rt.anchorMin = rt.anchorMax = rt.pivot = anchor;
+            rt.anchoredPosition = pos; rt.sizeDelta = size;
+            int r = Mathf.Clamp(Mathf.RoundToInt(size.y / 2f) - 1, 4, 30);
+            Layer(go, Round(r, 0), ColShadow, new Vector2(3, -5));
+            Layer(go, Round(r, 0), col, Vector2.zero);
+            Layer(go, Round(r, 3), new Color(col.r * 0.55f, col.g * 0.55f, col.b * 0.55f), Vector2.zero);
+            var t = Label(go, label.ToUpperInvariant(), Mathf.Clamp(size.y * 0.6f, 15f, 30f), Color.white,
+                          TMPro.TextAlignmentOptions.Center, true);
+            t.rectTransform.offsetMin = new Vector2(10, 0); t.rectTransform.offsetMax = new Vector2(-10, 0);
+            t.enableWordWrapping = false; t.enableAutoSizing = true; t.fontSizeMin = 11; t.fontSizeMax = Mathf.Clamp(size.y * 0.6f, 15f, 30f);
+            OnClick(go, onClick);
+            return go;
+        }
+
+        /// <summary>The red X in the top-right corner of a card.</summary>
+        [HideFromIl2Cpp]
+        private static void CloseX(GameObject card, Action onClose) =>
+            Btn(card, new Vector2(1, 1), new Vector2(-Outline - 10f, -Outline - 10f), new Vector2(54, 54), "X", ColRed, onClose);
+
+        // ---------------------------------------------------------------- autotest (UTS UI gallery)
+        /// <summary>Opens screen 0 (player list), 1 (hex entry for the local player) or 2 (the question); -1 closes all.</summary>
+        public static void DiagShow(int screen) {
+            var ui = Instance;
+            if (ui == null) return;
+            ui.ClosePanel();
+            UCColorGrant.DiagPending(default, false);
+            ui.ClosePrompt();
+            if (screen == 0) ui.OpenPanel();
+            else if (screen == 1 && PlayerControl.LocalPlayer != null) { ui.OpenHex(PlayerControl.LocalPlayer.PlayerId); ui.hexBuffer = "3DDC97"; ui.RefreshHex(); }
+            else if (screen == 2) { UCColorGrant.DiagPending(new Color32(0xFF, 0xC1, 0x07, 0xFF), true); ui.BuildPrompt(); }
+        }
 
         // ---------------------------------------------------------------- the crewmate preview
         /*
@@ -614,12 +834,9 @@ namespace UnknownsCollection {
         [HideFromIl2Cpp]
         private void BuildLobbyButton() {
             lobbyButton = Canvas("UCColorGrantButton", 9000);
-            var b = Box(lobbyButton, Vector2.zero, Vector2.zero, Vector2.zero,
-                        LobbyButtonPos(), new Vector2(330, 46), new Color(0.35f, 0.1f, 0.5f, 0.95f));
+            var b = Btn(lobbyButton, Vector2.zero, LobbyButtonPos(), new Vector2(330, 46),
+                        UCLocalization.Tr("uc.colorgrant.lobby_button"), ColPurple, TogglePanel);
             lobbyButtonRect = b.GetComponent<RectTransform>();
-            Label(b, UCLocalization.Tr("uc.colorgrant.lobby_button"), 18, Color.white,
-                  TMPro.TextAlignmentOptions.Center).fontStyle = TMPro.FontStyles.Bold;
-            OnClick(b, TogglePanel);
         }
 
         [HideFromIl2Cpp] public void TogglePanel() { if (panel != null) ClosePanel(); else OpenPanel(); }
@@ -647,87 +864,70 @@ namespace UnknownsCollection {
         private void OpenPanel() {
             StopTyping();
             panel = Canvas("UCColorGrantPanel", 9010);
-            Box(panel, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero,
-                new Color(0, 0, 0, 0.85f));
             // Every player gets a row: the card grows with the lobby (audit 04.10.: it stopped at ten
-            // rows, a lobby holds fifteen). Rows tighten from 46 to 38 px once there are more than ten.
+            // rows, a lobby holds fifteen). Rows tighten from 54 to 42 px once there are more than ten.
             var rowPlayers = PlayerControl.AllPlayerControls.ToArray()
                 .Where(p => p != null && p.Data != null && !p.Data.Disconnected).ToList();
-            float step = rowPlayers.Count > 10 ? 38f : 46f;
-            float cardH = Mathf.Max(620f, 104f + rowPlayers.Count * step + 70f);
-            var card = Box(panel, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-                           Vector2.zero, new Vector2(760, cardH), new Color(0.1f, 0.09f, 0.14f, 0.98f));
-
-            var head = Box(card, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1),
-                           new Vector2(0, -14), new Vector2(-40, 34), new Color(0, 0, 0, 0));
-            Label(head, UCLocalization.Tr("uc.colorgrant.title"), 24, new Color(0.75f, 0.55f, 1f),
-                  TMPro.TextAlignmentOptions.Left).fontStyle = TMPro.FontStyles.Bold;
+            float step = rowPlayers.Count > 10 ? 42f : 54f;
+            float cardH = Mathf.Clamp(140f + rowPlayers.Count * step + 30f, 320f, 1010f);
+            var card = Card(panel, new Vector2(820, cardH));
+            Title(card, UCLocalization.Tr("uc.colorgrant.title"), ColPurple);
+            CloseX(card, ClosePanel);
 
             var sub = Box(card, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1),
-                          new Vector2(0, -52), new Vector2(-40, 44), new Color(0, 0, 0, 0));
+                          new Vector2(0, -78), new Vector2(-64, 44), new Color(0, 0, 0, 0));
             Label(sub, UCColors.Safe() ? UCLocalization.Tr("uc.colorgrant.subtitle")
                                        : UCLocalization.Tr("uc.colorgrant.blocked"),
-                  15, UCColors.Safe() ? new Color(0.7f, 0.7f, 0.76f) : new Color(1f, 0.6f, 0.5f),
-                  TMPro.TextAlignmentOptions.TopLeft);
+                  15, UCColors.Safe() ? ColMuted : ColWarn, TMPro.TextAlignmentOptions.Center);
 
-            float y = -104f;
+            float y = -130f;
             foreach (var p in rowPlayers) {
-                BuildRow(card, p, y);
+                BuildRow(card, p, y, step - 8f);
                 y -= step;
             }
-
-            var close = Box(card, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0),
-                            new Vector2(0, 16), new Vector2(150, 38), new Color(0.3f, 0.3f, 0.38f, 0.95f));
-            Label(close, UCLocalization.Tr("uc.colorgrant.close"), 17, Color.white,
-                  TMPro.TextAlignmentOptions.Center);
-            OnClick(close, ClosePanel);
         }
 
         [HideFromIl2Cpp]
-        private void BuildRow(GameObject card, PlayerControl p, float y) {
+        private void BuildRow(GameObject card, PlayerControl p, float y, float h) {
             var row = Box(card, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1),
-                          new Vector2(0, y), new Vector2(-40, 40), new Color(1, 1, 1, 0.05f));
+                          new Vector2(0, y), new Vector2(-60, h), ColField, 10);
 
             int cur = 0;
             try { cur = p.Data.DefaultOutfit.ColorId; } catch { }
             var swatch = Box(row, new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0.5f),
-                             new Vector2(10, 0), new Vector2(32, 32), new Color(0, 0, 0, 0));
-            PreviewOfIndex(swatch, cur, 30f, Vector2.zero);
+                             new Vector2(12, 0), new Vector2(h - 6f, h - 6f), new Color(0, 0, 0, 0));
+            PreviewOfIndex(swatch, cur, h - 8f, Vector2.zero);
 
             var name = Box(row, new Vector2(0, 0.5f), new Vector2(0, 0.5f), new Vector2(0, 0.5f),
-                           new Vector2(46, 0), new Vector2(300, 30), new Color(0, 0, 0, 0));
-            Label(name, p.Data.PlayerName ?? "?", 17, Color.white, TMPro.TextAlignmentOptions.Left);
+                           new Vector2(h + 14f, 0), new Vector2(300, 30), new Color(0, 0, 0, 0));
+            Label(name, p.Data.PlayerName ?? "?", 18, Color.white, TMPro.TextAlignmentOptions.Left).fontStyle = TMPro.FontStyles.Bold;
 
             bool waiting = UCColorGrant.HasMod(p) && UCColorGrant.IsWaiting(p.PlayerId);
             string state = !UCColorGrant.HasMod(p) ? UCLocalization.Tr("uc.colorgrant.no_mod")
                          : waiting ? UCLocalization.Tr("uc.colorgrant.waiting")
                          : !UCColors.Safe() ? UCLocalization.Tr("uc.colorgrant.blocked_short")
                          : "";
+            float bh = Mathf.Min(40f, h - 8f);
             if (waiting) {
                 // The question can be withdrawn (audit 04.10.): the row was blocked until an answer.
                 var st = Box(row, new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(1, 0.5f),
-                             new Vector2(-172, 0), new Vector2(230, 30), new Color(0, 0, 0, 0));
-                Label(st, state, 15, new Color(0.65f, 0.65f, 0.7f), TMPro.TextAlignmentOptions.Right);
-                var cancel = Box(row, new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(1, 0.5f),
-                                 new Vector2(-12, 0), new Vector2(150, 30), new Color(0.3f, 0.3f, 0.38f, 0.95f));
-                Label(cancel, UCLocalization.Tr("uc.colorgrant.cancel"), 15, Color.white, TMPro.TextAlignmentOptions.Center);
+                             new Vector2(-196, 0), new Vector2(230, 30), new Color(0, 0, 0, 0));
+                Label(st, state, 15, ColMuted, TMPro.TextAlignmentOptions.Right);
                 byte cid = p.PlayerId;
-                OnClick(cancel, () => { UCColorGrant.Cancel(cid); ClosePanel(); OpenPanel(); });
+                Btn(row, new Vector2(1, 0.5f), new Vector2(-10, 0), new Vector2(170, bh),
+                    UCLocalization.Tr("uc.colorgrant.cancel"), ColGrey, () => { UCColorGrant.Cancel(cid); ClosePanel(); OpenPanel(); });
                 return;
             }
             if (state != "") {
                 var st = Box(row, new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(1, 0.5f),
-                             new Vector2(-12, 0), new Vector2(280, 30), new Color(0, 0, 0, 0));
-                Label(st, state, 15, new Color(0.65f, 0.65f, 0.7f), TMPro.TextAlignmentOptions.Right);
+                             new Vector2(-16, 0), new Vector2(300, 30), new Color(0, 0, 0, 0));
+                Label(st, state, 15, ColMuted, TMPro.TextAlignmentOptions.Right);
                 return;
             }
 
-            var btn = Box(row, new Vector2(1, 0.5f), new Vector2(1, 0.5f), new Vector2(1, 0.5f),
-                          new Vector2(-12, 0), new Vector2(150, 30), new Color(0.35f, 0.15f, 0.5f, 0.95f));
-            Label(btn, UCLocalization.Tr("uc.colorgrant.pick"), 15, Color.white,
-                  TMPro.TextAlignmentOptions.Center);
             byte pid = p.PlayerId;
-            OnClick(btn, () => OpenHex(pid));
+            Btn(row, new Vector2(1, 0.5f), new Vector2(-10, 0), new Vector2(200, bh),
+                UCLocalization.Tr("uc.colorgrant.pick"), ColPurple, () => OpenHex(pid));
         }
 
         // ---------------------------------------------------------------- host: the hex entry
@@ -739,58 +939,43 @@ namespace UnknownsCollection {
             typing = true;
 
             panel = Canvas("UCColorGrantHex", 9010);
-            Box(panel, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero,
-                new Color(0, 0, 0, 0.85f));
-            var card = Box(panel, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-                           Vector2.zero, new Vector2(700, 520), new Color(0.1f, 0.09f, 0.14f, 0.98f));
+            var card = Card(panel, new Vector2(740, 450));
 
             var target = PlayerControl.AllPlayerControls.ToArray()
                                       .FirstOrDefault(x => x != null && x.PlayerId == targetId);
-            var head = Box(card, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1),
-                           new Vector2(0, -14), new Vector2(-40, 34), new Color(0, 0, 0, 0));
-            Label(head, UCLocalization.Tr("uc.colorgrant.pick_for", target?.Data?.PlayerName ?? "?"),
-                  22, new Color(0.75f, 0.55f, 1f), TMPro.TextAlignmentOptions.Left)
-                .fontStyle = TMPro.FontStyles.Bold;
+            Title(card, UCLocalization.Tr("uc.colorgrant.pick_for", target?.Data?.PlayerName ?? "?"), ColPurple);
+            CloseX(card, () => { StopTyping(); ClosePanel(); OpenPanel(); });
 
-            // The typed value, big, with a live crewmate beside it.
+            // The typed value, big, in a dark field, with a live crewmate beside it.
             var field = Box(card, new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1),
-                            new Vector2(26, -70), new Vector2(340, 60), new Color(1, 1, 1, 0.07f));
-            hexLabel = Label(field, "#", 30, Color.white, TMPro.TextAlignmentOptions.Center);
+                            new Vector2(36, -96), new Vector2(380, 70), ColField, 12);
+            hexLabel = Label(field, "#", 40, Color.white, TMPro.TextAlignmentOptions.Center);
             hexLabel.fontStyle = TMPro.FontStyles.Bold;
 
             hexPreview = Box(card, new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1),
-                             new Vector2(400, -70), new Vector2(120, 120), new Color(0, 0, 0, 0));
+                             new Vector2(470, -82), new Vector2(130, 130), new Color(0, 0, 0, 0));
 
-            var hint = Box(card, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1),
-                           new Vector2(0, -142), new Vector2(-52, 30), new Color(0, 0, 0, 0));
-            hexHint = Label(hint, UCLocalization.Tr("uc.colorgrant.hex_hint"), 14,
-                            new Color(0.65f, 0.65f, 0.72f), TMPro.TextAlignmentOptions.Left);
+            var hint = Box(card, new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1),
+                           new Vector2(36, -176), new Vector2(420, 30), new Color(0, 0, 0, 0));
+            hexHint = Label(hint, UCLocalization.Tr("uc.colorgrant.hex_hint"), 15, ColMuted, TMPro.TextAlignmentOptions.Left);
 
-            // Presets: one click instead of six keystrokes.
+            // Presets: one click instead of six keystrokes, each a small card with its crewmate.
             for (int i = 0; i < Presets.Length; i++) {
                 var pr = Presets[i];
                 var chip = Box(card, new Vector2(0, 1), new Vector2(0, 1), new Vector2(0, 1),
-                               new Vector2(26 + i * 106, -190), new Vector2(96, 96),
-                               new Color(1, 1, 1, 0.06f));
-                PreviewOf(chip, pr.col, 62f, new Vector2(0, 10));
+                               new Vector2(36 + i * 112, -228), new Vector2(100, 112), ColField, 12);
+                PreviewOf(chip, pr.col, 66f, new Vector2(0, 12));
                 var cap = Box(chip, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0),
-                              new Vector2(0, 4), new Vector2(92, 18), new Color(0, 0, 0, 0));
-                Label(cap, pr.name, 13, new Color(0.8f, 0.8f, 0.85f), TMPro.TextAlignmentOptions.Center);
+                              new Vector2(0, 6), new Vector2(96, 20), new Color(0, 0, 0, 0));
+                Label(cap, pr.name, 14, ColMuted, TMPro.TextAlignmentOptions.Center);
                 var col = pr.col;
                 OnClick(chip, () => { hexBuffer = $"{col.r:X2}{col.g:X2}{col.b:X2}"; RefreshHex(); });
             }
 
-            var send = Box(card, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0),
-                           new Vector2(-90, 18), new Vector2(170, 40), new Color(0.25f, 0.45f, 0.3f, 0.95f));
-            Label(send, UCLocalization.Tr("uc.colorgrant.send"), 17, Color.white,
-                  TMPro.TextAlignmentOptions.Center);
-            OnClick(send, SendHex);
-
-            var back = Box(card, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0),
-                           new Vector2(90, 18), new Vector2(170, 40), new Color(0.3f, 0.3f, 0.38f, 0.95f));
-            Label(back, UCLocalization.Tr("uc.colorgrant.back"), 17, Color.white,
-                  TMPro.TextAlignmentOptions.Center);
-            OnClick(back, () => { StopTyping(); ClosePanel(); OpenPanel(); });
+            Btn(card, new Vector2(0.5f, 0), new Vector2(-110, 30), new Vector2(200, 52),
+                UCLocalization.Tr("uc.colorgrant.send"), ColGreen, SendHex);
+            Btn(card, new Vector2(0.5f, 0), new Vector2(110, 30), new Vector2(200, 52),
+                UCLocalization.Tr("uc.colorgrant.back"), ColGrey, () => { StopTyping(); ClosePanel(); OpenPanel(); });
 
             RefreshHex();
         }
@@ -836,11 +1021,11 @@ namespace UnknownsCollection {
             var rgb = UCColorGrant.PendingColour;
 
             prompt = Canvas("UCColorGrantPrompt", 9020);
-            var card = Box(prompt, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-                           Vector2.zero, new Vector2(560, 280), new Color(0.1f, 0.09f, 0.14f, 0.98f));
+            var card = Card(prompt, new Vector2(600, 360), dim: false);
+            Title(card, UCLocalization.Tr("uc.colorgrant.lobby_button"), ColPurple);
 
             var head = Box(card, new Vector2(0, 1), new Vector2(1, 1), new Vector2(0.5f, 1),
-                           new Vector2(0, -14), new Vector2(-40, 64), new Color(0, 0, 0, 0));
+                           new Vector2(0, -80), new Vector2(-60, 56), new Color(0, 0, 0, 0));
             Label(head, UCLocalization.Tr("uc.colorgrant.prompt", UCColorGrant.ToHex(rgb)), 18,
                   Color.white, TMPro.TextAlignmentOptions.Top);
 
@@ -849,24 +1034,17 @@ namespace UnknownsCollection {
             int mine = 0;
             try { mine = PlayerControl.LocalPlayer.Data.DefaultOutfit.ColorId; } catch { }
             var stage = Box(card, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-                            new Vector2(0, 10), new Vector2(340, 100), new Color(0, 0, 0, 0));
-            PreviewOfIndex(stage, mine, 78f, new Vector2(-76, 0));
-            PreviewOf(stage, rgb, 78f, new Vector2(76, 0));
+                            new Vector2(0, -12), new Vector2(360, 108), ColField, 12);
+            PreviewOfIndex(stage, mine, 84f, new Vector2(-90, 0));
+            PreviewOf(stage, rgb, 84f, new Vector2(90, 0));
             var arrow = Box(stage, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f),
-                            Vector2.zero, new Vector2(60, 30), new Color(0, 0, 0, 0));
-            Label(arrow, "->", 24, new Color(0.7f, 0.7f, 0.76f), TMPro.TextAlignmentOptions.Center);
+                            Vector2.zero, new Vector2(60, 40), new Color(0, 0, 0, 0));
+            Label(arrow, ">", 40, ColMuted, TMPro.TextAlignmentOptions.Center, true);
 
-            var yes = Box(card, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0),
-                          new Vector2(-95, 20), new Vector2(170, 40), new Color(0.2f, 0.5f, 0.3f, 0.95f));
-            Label(yes, UCLocalization.Tr("uc.colorgrant.accept"), 17, Color.white,
-                  TMPro.TextAlignmentOptions.Center);
-            OnClick(yes, () => { UCColorGrant.Answer(true); ClosePrompt(); });
-
-            var no = Box(card, new Vector2(0.5f, 0), new Vector2(0.5f, 0), new Vector2(0.5f, 0),
-                         new Vector2(95, 20), new Vector2(170, 40), new Color(0.45f, 0.2f, 0.2f, 0.95f));
-            Label(no, UCLocalization.Tr("uc.colorgrant.decline"), 17, Color.white,
-                  TMPro.TextAlignmentOptions.Center);
-            OnClick(no, () => { UCColorGrant.Answer(false); ClosePrompt(); });
+            Btn(card, new Vector2(0.5f, 0), new Vector2(-110, 28), new Vector2(200, 52),
+                UCLocalization.Tr("uc.colorgrant.accept"), ColGreen, () => { UCColorGrant.Answer(true); ClosePrompt(); });
+            Btn(card, new Vector2(0.5f, 0), new Vector2(110, 28), new Vector2(200, 52),
+                UCLocalization.Tr("uc.colorgrant.decline"), ColRed, () => { UCColorGrant.Answer(false); ClosePrompt(); });
         }
     }
 }

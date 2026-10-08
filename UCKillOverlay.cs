@@ -322,7 +322,7 @@ namespace UnknownsCollection {
         private static int hudLayer;
 
         private static SpriteRenderer dim, flash;
-        // 2026-10-07 polish: the vanilla overlay's red slanted band under the actors (the Halloween
+        // 2026-10-07 polish: the vanilla overlay's red slanted band under the actors (the other
         // cutscenes have it too), lit up on every impact, and a stage shake driven by Impact().
         private static SpriteRenderer band;
         private static float shakeAmp;

@@ -105,7 +105,7 @@ namespace UnknownsCollection {
                      false, () => Siphoner.SpawnRate,    () => Siphoner.SpawnMinPlayers,    Siphoner.MarkFromDraft),
                 Make(WitnessDraftId,     "Witness",     Witness.Color,       "Be the sole witness of a kill and expose the killer",
                      false, () => Witness.SpawnRate,     () => Witness.SpawnMinPlayers,     Witness.MarkFromDraft),
-                Make(BugDraftId,         "Bug",         Bug.Color,           "Survive until the end and win with the winning team",
+                Make(BugDraftId,         "Bug",         Bug.Color,           "Survive until the end to win alone",
                      false, () => Bug.SpawnRate,         () => Bug.SpawnMinPlayers,         Bug.MarkFromDraft),
                 Make(ManiacDraftId,      "Maniac",      Palette.ImpostorRed, "Plant a bomb on a player that can be passed",
                      true,  () => Maniac.SpawnRate,      () => Maniac.SpawnMinPlayers,      Maniac.MarkFromDraft),

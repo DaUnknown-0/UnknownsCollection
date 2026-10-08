@@ -361,9 +361,10 @@ namespace UnknownsCollection {
             morphTargetId = targetId;
             isMorphed = true;
             morphEndTime = Time.time + MorphDuration;
-            copycat.setLook(target.Data.PlayerName, target.Data.DefaultOutfit.ColorId,
-                target.Data.DefaultOutfit.HatId, target.Data.DefaultOutfit.VisorId,
-                target.Data.DefaultOutfit.SkinId, target.Data.DefaultOutfit.PetId);
+            // Through RestoreLook: during the own camouflage the Copycat stays grey (morph shows
+            // when it ends), and under TOR's camouflage TOR owns the look (the edge detection in
+            // HudUpdatePatch re-applies the morph when it ends).
+            if (Camouflager.camouflageTimer <= 0f) RestoreLook();
             // The look swap itself is already visible to everyone, so a shimmer at the Copycat's own
             // position leaks no extra information - it just sells the transformation as an event.
             CopycatFx.SpawnMorphShimmer(copycat.GetTruePosition());

@@ -9,7 +9,7 @@
   "uc.ui.beacon.status_badge": "* BEACON ACTIVE *",
   "uc.role.bug.name": "Bug",
   "uc.role.bug.desc": "Survive until the end to win alone",
-  "uc.role.bug.draftdesc": "Survive until the end and win with the winning team",
+  "uc.role.bug.draftdesc": "Survive until the end to win alone",
   "uc.option.bug.rate": "Bug",
   "uc.option.bug.min_players": "Bug Minimum Players To Spawn",
   "uc.ui.bug.win_banner": "Bug Wins",

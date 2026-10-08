@@ -395,12 +395,15 @@ namespace UnknownsCollection {
             try {
                 var p = PlayerControl.LocalPlayer;
                 if (p == null) return;
+                // Only hand back what we took: a player already held by a trap, the Pelican belly or
+                // a LastWords box stays held (same rule as LastWords.pinnedByUs, audit 04.10.).
+                bool wasMovable = p.moveable;
                 p.moveable = false;
                 if (p.NetTransform != null) p.NetTransform.Halt();
                 var hud = HudManager.Instance;
-                if (hud == null) { p.moveable = true; return; }
+                if (hud == null) { p.moveable = wasMovable; return; }
                 hud.StartCoroutine(Effects.Lerp(duration, new Action<float>((t) => {
-                    if (t == 1f && p != null) p.moveable = true;
+                    if (t == 1f && p != null && wasMovable) p.moveable = true;
                 })));
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Maniac] FreezeLocal failed: {e.Message}");

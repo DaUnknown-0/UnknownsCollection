@@ -205,7 +205,10 @@ namespace UnknownsCollection {
             try {
                 var p = Helpers.playerById(victimId);
                 if (p == null || p.Data == null || !p.Data.IsDead) return;
-                if (InMeeting()) return;
+                // No local InMeeting() gate here (audit 08.10., as with the Necromancer's raise): the
+                // meeting decision is the host's alone (HostHandleRequest); checking it per client
+                // dropped the revive on clients whose meeting state differed at arrival time, so the
+                // same player was alive on some clients and dead on others.
                 // The partner of a revived Lover died of grief (TOR: MurderPlayer(partner, partner)).
                 // Reviving one without the other split the pair for good, so the partner comes back
                 // with him, at his own body, without costing a charge (audit 04.10.). Noted BEFORE

@@ -234,6 +234,10 @@ namespace UnknownsCollection {
             }
         }
 
+        // Throttle for the re-apply guard below: a hat that never shows up (custom hat missing)
+        // would otherwise rebuild the cosmetics every frame for the whole wolf form.
+        private static float nextWolfLookRetry;
+
         private static void TickLook() {
             if (lookPhase == LookPhase.None) return;
             if (lookOwner == null || lookOwner.Data == null
@@ -249,7 +253,10 @@ namespace UnknownsCollection {
                 case LookPhase.Wolf:
                     // Re-apply guard: a Camouflager end or night-vision pass rewrites the look via
                     // setDefaultLook behind our back - the hat probe is one string compare per frame.
-                    if (!GlobalCamoActive() && !WearsWolfHat()) ApplyWolfLook();
+                    if (!GlobalCamoActive() && !WearsWolfHat() && Time.time >= nextWolfLookRetry) {
+                        nextWolfLookRetry = Time.time + 0.5f;
+                        ApplyWolfLook();
+                    }
                     break;
                 case LookPhase.DarkToHuman:
                     if (Time.time >= lookPhaseEnd) {

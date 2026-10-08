@@ -378,6 +378,9 @@ namespace UnknownsCollection {
         static class MurderPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
+                    // Postfixes also run after a blocked or failed murder (shield, skipped original):
+                    // only a target that really died counts.
+                    if (target == null || target.Data == null || !target.Data.IsDead) return;
                     HandleFirstDeath(target);
                 } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Follower] death detection failed: {e}");

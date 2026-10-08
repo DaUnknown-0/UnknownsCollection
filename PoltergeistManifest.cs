@@ -239,7 +239,9 @@ namespace UnknownsCollection {
                 }
             }
 
-            if (Poltergeist.IsLocalPoltergeist()) SetPhysical(false);
+            // A revived player ends up solid again, a ghost spectral.
+            if (Poltergeist.IsLocalPoltergeist())
+                SetPhysical(ghost != null && ghost.Data != null && !ghost.Data.IsDead);
             // (The vent button is hidden by Tick's housekeeping the moment IsManifested is false.)
         }
 
@@ -427,6 +429,12 @@ namespace UnknownsCollection {
 
         public static void OnMeeting() {
             if (IsManifested) ApplyEnd(2); // runs on every client, no RPC needed
+        }
+
+        // Handover, withdrawal and revive (Poltergeist.ApplySetPoltergeist): Reset() alone only wipes
+        // the flags, the template's name and outfit (and the solid physics) stayed on the player.
+        internal static void EndNow() {
+            if (IsManifested) ApplyEnd(2);
         }
 
         // ---- Force-render the manifested ghost (vanilla re-hides dead players every FixedUpdate) ----

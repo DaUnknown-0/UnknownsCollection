@@ -261,7 +261,9 @@ namespace UnknownsCollection {
                     UCAssets.PlayTrapSnap(target, UCAssets.VolSoft);
                     if (nextExpected > WireCount) { // defused!
                         UCAssets.PlaySaboteurDefused();
-                        Saboteur.SendClearSabotage();
+                        // Only a really sabotaged console: a drunk scan can lie "sabotaged" at a clean
+                        // one, and the clear is global, it would wipe the real sabotage elsewhere.
+                        if (sabotaged) Saboteur.SendClearSabotage();
                         if (title != null) { title.text = UCLocalization.Tr("uc.ui.saboteur.wire_done"); title.color = new Color(0.4f, 1f, 0.5f); }
                         if (hint != null) hint.text = "";
                         RefreshWires();

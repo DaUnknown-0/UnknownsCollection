@@ -273,6 +273,7 @@ namespace UnknownsCollection {
             // aura FX would linger - none of them are cleared by the fields below, and the per-frame
             // driver that would end them only runs while a poltergeist is active. Matters on a
             // handover and on a withdrawal (id 255, which lands in the !active exit below).
+            try { PoltergeistManifest.EndNow(); } catch { }
             try { PoltergeistManifest.Reset(); } catch { }
             try { PoltergeistFx.Clear(); } catch { }
             hexes.Clear();
@@ -506,6 +507,23 @@ namespace UnknownsCollection {
             byte amount = (byte)(ReactorSystemType.AddUserOp | 0);
             ShipStatus.Instance.RpcUpdateSystem(sys, amount);
             SendHandStart();
+        }
+
+        // Host only. A ghost that disconnects while holding the pad leaves its (playerId, console 0)
+        // pair in the reactor's user list for good, so the crew can never fix that pad again. The
+        // normal release (RemoveUserOp) is keyed by the sender and cannot come from the host, but the
+        // host owns the system state, so it removes the pair itself and marks the system dirty so the
+        // change is synced to everyone. Not verified in a live session (no second client available).
+        private static void HostReleaseGhostConsole(byte ghostId) {
+            try {
+                var sys = ActiveReactorSystem();
+                if (sys == 0 || ShipStatus.Instance == null) return;
+                var reactor = ShipStatus.Instance.Systems[sys].TryCast<ReactorSystemType>();
+                if (reactor == null || reactor.UserConsolePairs == null) return;
+                reactor.UserConsolePairs.Remove(new Il2CppSystem.Tuple<byte, byte>(ghostId, 0));
+                reactor.IsDirty = true;
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Poltergeist] Freed the reactor pad of the vanished ghost ({ghostId}).");
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Poltergeist] freeing the reactor pad failed: {e.Message}"); }
         }
 
         private static void StopGhostHand(bool releaseConsole) {
@@ -841,8 +859,12 @@ namespace UnknownsCollection {
                             }
                         } else if (AmongUsClient.Instance != null && AmongUsClient.Instance.AmHost
                                    && (poltergeist.Data == null || poltergeist.Data.Disconnected)) {
-                            // Host fallback: the Poltergeist disconnected mid-channel.
-                            ApplyHandStop();
+                            // Host fallback: the Poltergeist disconnected mid-channel. The stop goes to
+                            // EVERYONE (audit 08.10.: ApplyHandStop() alone only ended the host's own copy
+                            // of the channel, the ring and drain FX kept running on the other clients) and
+                            // the host frees the reactor pad the vanished ghost was holding.
+                            HostReleaseGhostConsole(poltergeist.PlayerId);
+                            SendHandStop();
                         }
                     }
 

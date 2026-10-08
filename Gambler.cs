@@ -142,7 +142,9 @@ namespace UnknownsCollection {
 
         // Round observations (host keeps them, they drive the settlement).
         private static readonly List<float> killTimes = new List<float>();     // Time.time of each kill this round
-        private static readonly Dictionary<byte, int> tasksThisRound = new Dictionary<byte, int>();
+        // Time.time of each task a player finished this round: like kills, a task bet counts only the
+        // tasks done AFTER it was placed (a late bet on a busy player was a sure win).
+        private static readonly Dictionary<byte, List<float>> tasksThisRound = new Dictionary<byte, List<float>>();
         // Start times of every deadly sabotage this round: round bets count only what happened AFTER
         // the bet was placed (audit 04.10.: a reactor before the bet made "deadly sabotage" a sure win).
         private static readonly List<float> deadlySabotageStarts = new List<float>();
@@ -755,7 +757,8 @@ namespace UnknownsCollection {
                     }
                     if (__instance.hasFakeTasks()) return;
                     byte pid = __instance.PlayerId;
-                    tasksThisRound[pid] = (tasksThisRound.TryGetValue(pid, out int n) ? n : 0) + 1;
+                    if (!tasksThisRound.TryGetValue(pid, out var times)) tasksThisRound[pid] = times = new List<float>();
+                    times.Add(Time.time);
                 } catch { }
             }
         }
@@ -892,7 +895,7 @@ namespace UnknownsCollection {
                     return killTimes.Count(t => t >= b.Placed) > 2;
                 case BetKind.TargetDoesNTasks: {
                     int need = Mathf.RoundToInt(TaskThreshold?.getFloat() ?? 4f);
-                    return tasksThisRound.TryGetValue(b.Target, out int n) && n >= need;
+                    return tasksThisRound.TryGetValue(b.Target, out var times) && times.Count(t => t >= b.Placed) >= need;
                 }
                 case BetKind.TargetSurvives: {
                     var t = Helpers.playerById(b.Target);
@@ -1015,7 +1018,22 @@ namespace UnknownsCollection {
                             eligible--;
                         break;
                     }
-                    return candidateVotes >= eligible && candidateVotes > 0;
+                    // Unanimity is per voter: counts carries the Mayor's double vote, eligible counts heads,
+                    // so the weighted sum let one dissenter through. Count the voters for the candidate
+                    // (through the Swapper's swap, as in CountVotes) one by one instead.
+                    byte source = candidate;
+                    if (Swapper.swapper != null && Swapper.swapper.Data != null && !Swapper.swapper.Data.IsDead
+                        && Swapper.playerId1 != byte.MaxValue && Swapper.playerId2 != byte.MaxValue) {
+                        if (candidate == Swapper.playerId1) source = Swapper.playerId2;
+                        else if (candidate == Swapper.playerId2) source = Swapper.playerId1;
+                    }
+                    int agree = 0;
+                    foreach (var state in MeetingHud.Instance.playerStates) {
+                        if (state == null) continue;
+                        if (gambler != null && state.TargetPlayerId == gambler.PlayerId) continue;
+                        if (state.VotedFor == source) agree++;
+                    }
+                    return agree >= eligible && agree > 0;
                 }
             }
             push = true;

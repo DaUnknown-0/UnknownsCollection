@@ -327,7 +327,10 @@ namespace UnknownsCollection {
                     if (Time.time - lastSample >= SampleInterval) {
                         recordBuffer.Add(me.GetTruePosition());
                         ventBuffer.Add(me.inVent);
-                        lastSample = Time.time;
+                        // Fixed grid, like the clone's replay (interval = SampleInterval): Time.time would
+                        // drift to the frame raster and the clone ran faster than the recorded path. A
+                        // big gap (first sample, a frame hitch) restarts the grid instead of bursting.
+                        lastSample = Time.time - lastSample >= 2f * SampleInterval ? Time.time : lastSample + SampleInterval;
                     }
                     if (Time.time - recordStart >= RecordLengthValue()) recording = false; // auto-stop when full
                 } catch (Exception e) {
@@ -472,7 +475,8 @@ namespace UnknownsCollection {
                         if (owner == null || me == null || owner.PlayerId != me.PlayerId) return true;
                         if (!CloneInReach(me, kb.Target())) return true;
                         SendCloneFlash();
-                        __instance.Timer = __instance.MaxTimer;
+                        // Same option as the impostor path (1454): no penalty, no cooldown.
+                        if (BlockPenalty == null || BlockPenalty.getBool()) __instance.Timer = __instance.MaxTimer;
                         return false;
                     }
                 } catch (Exception e) {

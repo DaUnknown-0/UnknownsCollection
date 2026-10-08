@@ -68,6 +68,7 @@ namespace UnknownsCollection {
         public const byte SkinwalkerDraftId = 225;
         public const byte MixerDraftId = 226;
         public const byte CursedPirateDraftId = 227;
+        public const byte FakerDraftId = 229;      // 228 is taken by another mod, 230+ are modifier sentinels
         // NO Void entry: the Void is a MODIFIER (rides on top of a drafted role), like the Gambler.
         // NO Hunter entry, deliberately: the Hunter is not a rolled role at all. He is an EVENT inside
         // a Werewolf round - the living original Sheriff is promoted the moment the beast is the last
@@ -155,6 +156,8 @@ namespace UnknownsCollection {
                 Make(CursedPirateDraftId, "Cursed Pirate", Palette.ImpostorRed, "Even dead, your spyglass shows your crew their prey",
                      true,  () => CursedPirate.SpawnRate, () => CursedPirate.SpawnMinPlayers, CursedPirate.MarkFromDraft,
                      CursedPirate.EnoughImpostors),
+                Make(FakerDraftId,       "Faker",       Palette.ImpostorRed, "Lay a fake body and force a meeting",
+                     true,  () => Faker.SpawnRate,      () => Faker.SpawnMinPlayers,      Faker.MarkFromDraft),
             };
             return entries;
         }

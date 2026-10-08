@@ -119,6 +119,8 @@ namespace UnknownsCollection {
                 (UCAssets.HunterShootIcon,          "hunter_shoot",         115f),
                 (UCAssets.PelicanSwallowIcon,       "pelican_swallow",      115f),
                 (UCAssets.StalkerIcon,              "stalker_strike",       115f),
+                (UCAssets.FakerIcon,                "faker_fakebody",       115f),
+                (UCAssets.FakerSwapIcon,            "faker_swap",           115f),
             };
 
             var map = new Dictionary<int, AnimSet>();

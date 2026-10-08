@@ -215,6 +215,7 @@ namespace UnknownsCollection {
                 Uc("Manipulator", Team.Impostor, () => Manipulator.SpawnRate, () => Manipulator.manipulator, Manipulator.SendSetManipulator),
                 Uc("Hypnotist", Team.Impostor, () => Hypnotist.SpawnRate, () => Hypnotist.hypnotist, Hypnotist.SendSet),
                 Uc("Skinwalker", Team.Impostor, () => Skinwalker.SpawnRate, () => Skinwalker.skinwalker, Skinwalker.SendSet),
+                Uc("Faker", Team.Impostor, () => Faker.SpawnRate, () => Faker.faker, Faker.SendSet),
                 Uc("Auditor", Team.Impostor, () => Auditor.SpawnRate, () => Auditor.auditor, Auditor.SendSetAuditor),
                 Uc("Cursed Pirate", Team.Impostor, () => CursedPirate.SpawnRate, () => CursedPirate.pirate, CursedPirate.SendSet),
                 Uc("Maniac", Team.Impostor, () => Maniac.SpawnRate, () => Maniac.maniac, Maniac.SendSetManiac, Maniac.SendClear, inPool: false),

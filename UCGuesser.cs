@@ -146,6 +146,7 @@ namespace UnknownsCollection {
             Necromancer.NecromancerInfo(), Stalker.StalkerInfo(), King.KingInfo(), Paramedic.ParamedicInfo(),
             Surveyor.SurveyorInfo(), Mixer.MixerInfo(),
             CursedPirate.CursedPirateInfo(),
+            Faker.FakerInfo(),   // new roles go at the END only: the index travels over the wire
         };
 
         private static void Sync(bool add) {
@@ -163,6 +164,7 @@ namespace UnknownsCollection {
             SetEntry(Hypnotist.HypnotistInfo(),   add && Guessable(Hypnotist.SpawnRate),  RoleInfo.impostor);
             SetEntry(Skinwalker.SkinwalkerInfo(), add && Guessable(Skinwalker.SpawnRate), RoleInfo.impostor);
             SetEntry(CursedPirate.CursedPirateInfo(), add && Guessable(CursedPirate.SpawnRate), RoleInfo.impostor);
+            SetEntry(Faker.FakerInfo(),       add && Guessable(Faker.SpawnRate),       RoleInfo.impostor);
             // Crew / Neutral roles — insert after the base Crewmate entry
             SetEntry(Siphoner.SiphonerInfo(), add && SiphonerGuessable(),   RoleInfo.crewmate);
             SetEntry(Witness.WitnessInfo(),   add && WitnessGuessable(),    RoleInfo.crewmate);

@@ -88,6 +88,7 @@ namespace UnknownsCollection {
                 Add(table, "Giant",       Giant.Color,       Giant.SpawnRate);
                 Add(table, "Mixer",       Mixer.Color,       Mixer.SpawnRate);
                 Add(table, "Cursed Pirate", CursedPirate.Color, CursedPirate.SpawnRate);
+                Add(table, "Faker",       Faker.Color,       Faker.SpawnRate);
 
                 UnknownsCollectionPlugin.Logger?.LogInfo(
                     $"[UCOptionColors] published {table.Count} option colour entries.");

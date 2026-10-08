@@ -93,7 +93,7 @@ namespace UnknownsCollection {
                    On(Paramedic.SpawnRate) || On(Surveyor.SpawnRate) || On(Hypnotist.SpawnRate) || On(Skinwalker.SpawnRate) ||
                    On(Gambler.SpawnRate) || On(VoidModifier.SpawnRate) || On(Sleepwalker.SpawnRate) || On(LastWords.SpawnRate) ||
                    On(SixthSense.SpawnRate) || On(Colorblind.SpawnRate) || On(Giant.SpawnRate) || On(Mixer.SpawnRate) ||
-                   On(CursedPirate.SpawnRate);
+                   On(CursedPirate.SpawnRate) || On(Faker.SpawnRate);
         }
 
         private static bool On(TheOtherRoles.CustomOption o) => o != null && o.getSelection() > 0;

@@ -39,7 +39,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.2.14.8";
+    public const string PluginVersion = "1.2.14.9";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -96,6 +96,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte GuessPickRpcId = 233;    // the UC role a guesser picked in TOR's grid (guesserId, index; 255 = no UC role), see UCGuessNames
     public const byte SkinwalkerRpcId = 228;   // impostor; wears the victim's skin (Sub 0 set, 1 skin)
     public const byte GiantRpcId = 229;        // MODIFIER; bigger, slower, sees further (Sub 0 set)
+    public const byte FakerRpcId = 231;        // impostor; lays a fake body of a living player (Sub 0 set, 1 place)
 
     public static ManualLogSource Logger { get; private set; }
     public static ConfigEntry<bool> BugGlitchEnabled { get; set; }
@@ -327,6 +328,9 @@ public class UnknownsCollectionPlugin : BasePlugin
         Hypnotist.TryPatch(harmony);
         Skinwalker.CreateOptions();
         Skinwalker.TryPatch(harmony);
+        // Faker (impostor, 2026-10-08): a fake body of a living player. Options 1794-1798, RPC module 231.
+        Faker.CreateOptions();
+        Faker.TryPatch(harmony);
         Giant.CreateOptions();
         Giant.TryPatch(harmony);
 

@@ -34,7 +34,11 @@ namespace UnknownsCollection {
 
         private static readonly int DesatId = Shader.PropertyToID("_Desat");
 
-        private sealed class AnimSet { public Sprite[] frames; }
+        // Frames load on first use (09.10.): BuildMap only notes which static icon belongs to which loop; the 16
+        // frames of a set are read when a button with that icon is actually on screen. Before, all 25 sets
+        // (416 frames, 33,8 MB of pixels) were loaded in the first round whatever roles were in play, for a
+        // player who usually has none to two animated UC buttons.
+        private sealed class AnimSet { public Sprite[] frames; public string baseName; public float ppu; public bool failed; }
 
         // sprite instance-id -> animation set (static icon and all 16 frames map to the same set)
         private static Dictionary<int, AnimSet> frameMap;
@@ -71,6 +75,8 @@ namespace UnknownsCollection {
                 if (!frameMap.TryGetValue(btn.Sprite.GetInstanceID(), out var set)) continue;
                 var go = btn.actionButtonGameObject;
                 if (go == null || !go.activeSelf) continue; // hidden (meeting/dead/no role): skip
+                // only now: TOR creates the buttons of EVERY role and hides those the player does not have
+                if (set.frames == null && !EnsureFrames(set)) continue;
 
                 int id = btn.actionButton.GetInstanceID();
 
@@ -127,15 +133,29 @@ namespace UnknownsCollection {
             int sets = 0;
             foreach (var (statik, baseName, ppu) in sources) {
                 if (statik == null) continue;                 // static icon missing -> nothing to match
-                var frames = UCAssets.GetFrames(baseName, ppu);
-                if (frames == null) continue;                 // frames missing -> button keeps static icon
-                var set = new AnimSet { frames = frames };
-                map[statik.GetInstanceID()] = set;
-                foreach (var f in frames) map[f.GetInstanceID()] = set;
+                map[statik.GetInstanceID()] = new AnimSet { baseName = baseName, ppu = ppu };
                 sets++;
             }
             if (sets > 0) frameMap = map;
-            UnknownsCollectionPlugin.Logger?.LogInfo($"[UCButtonAnim] animated icon sets loaded: {sets}/{sources.Length}");
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[UCButtonAnim] animated icon sets registered: {sets}/{sources.Length} (frames load on first use)");
+        }
+
+        /// <summary>Load a set's 16 frames the first time its button shows. Missing frames: the button keeps its
+        /// static icon for the rest of the session (tried once, like the old eager load).</summary>
+        private static bool EnsureFrames(AnimSet set) {
+            if (set.frames != null) return true;
+            if (set.failed) return false;
+            var frames = UCAssets.GetFrames(set.baseName, set.ppu);
+            if (frames == null) {
+                set.failed = true;
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[UCButtonAnim] frames missing for {set.baseName}, static icon stays");
+                return false;
+            }
+            set.frames = frames;
+            // the button now cycles through these sprites: each must find its set again
+            foreach (var f in frames) if (f != null) frameMap[f.GetInstanceID()] = set;
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[UCButtonAnim] loaded frames for {set.baseName}");
+            return true;
         }
     }
 }

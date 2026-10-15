@@ -20,7 +20,7 @@
  * and in-game. The "?" button is anchored to the top-right screen edge via AspectPosition (the same
  * component TOR's draft uses), below the vanilla settings/mod buttons.
  *
- * Visibility follows hud.UseButton.isActiveAndEnabled - exactly the gate CustomButton uses - so the
+ * Visibility follows hud.UseButton or hud.PetButton being active - exactly the gate CustomButton uses - so the
  * button shows in the lobby and during rounds but not in meetings/intro; an open panel force-closes
  * when the gate drops.
  */
@@ -1932,7 +1932,10 @@ namespace UnknownsCollection {
                 try {
                     if (button == null) return;
 
-                    bool visible = __instance.UseButton != null && __instance.UseButton.isActiveAndEnabled
+                    // The game swaps the use button for the pet button whenever nothing usable is in reach
+                    // (players with a pet only), so both count, as in TOR's CustomButton.
+                    bool visible = ((__instance.UseButton != null && __instance.UseButton.isActiveAndEnabled)
+                                    || (__instance.PetButton != null && __instance.PetButton.isActiveAndEnabled))
                                    && !MeetingHud.Instance && !ExileController.Instance;
                     if (button.activeSelf != visible) button.SetActive(visible);
                     if (!visible) { if (panel != null) ClosePanel(); return; }

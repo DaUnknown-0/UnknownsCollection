@@ -239,7 +239,9 @@ namespace UnknownsCollection {
                     fadingSource = null;
                     fadingClipName = null;
                 }
-                var src = SoundManager.Instance.PlaySound(clip, loop, 0f);
+                // on the game's music channel, so its Music slider applies (it ran on the effects channel
+                // until 15.10.: user, "game music slider funktioniert mit der Musik nicht")
+                var src = SoundManager.Instance.PlaySound(clip, loop, 0f, SoundManager.Instance.MusicChannel);
                 if (src != null && resumePos > 0.01f && clip.length > 0.05f)
                     src.time = loop ? resumePos % clip.length : Mathf.Min(resumePos, clip.length - 0.01f);
                 return src;

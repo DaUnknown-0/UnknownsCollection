@@ -477,7 +477,19 @@ namespace UnknownsCollection {
 
         // Music-channel access (UCMusic manages its own AudioSources but must share this cache so
         // SoundManager.StopSound - which is CLIP-based - always refers to the one instance per name).
-        internal static AudioClip GetClipByName(string name) => GetClip(name);
+        // External clips: another plugin's AudioClip under a reserved "ext:" name, e.g. the reactor loop a
+        // player picked in the music panel of TOR - Forgotten Fixes (contract "Unknowns.Music.ReactorLoop",
+        // see ReactorMusic.StartCue). GetClipByName resolves them first, so UCMusic needs no second path.
+        private static readonly Dictionary<string, AudioClip> externalClips = new();
+
+        internal static void SetExternalClip(string name, AudioClip clip) {
+            if (string.IsNullOrEmpty(name)) return;
+            if (clip == null) externalClips.Remove(name);
+            else externalClips[name] = clip;
+        }
+
+        internal static AudioClip GetClipByName(string name) =>
+            name != null && externalClips.TryGetValue(name, out var ext) && ext != null ? ext : GetClip(name);
 
         // Ogg Vorbis (was: headerless 2-channel signed 32-bit PCM LE @ 48 kHz), decoded fully into the
         // same float[] via NVorbis (pure C#, ILRepack-merged into this assembly). Unity then loops over

@@ -89,6 +89,21 @@ namespace UnknownsCollection {
         private const int Priority = 100;      // highest in the mod: a meltdown outranks everything
         private const float Volume = 0.6f;     // same bed level the pelican hunt uses
 
+        // The local player's level for this music (TOR - Forgotten Fixes, music panel, Reactor tab): AppDomain data
+        // "Unknowns.Music.ReactorVolume" is a Func<object> returning a float 0..2 (above 1 is louder than the
+        // score's own 0.6, up to 1.0); without it the level is 1.
+        private static Func<object> volumeProvider;
+        private static bool volumeLooked;
+        private static float Vol {
+            get {
+                try {
+                    if (!volumeLooked) { volumeLooked = true; volumeProvider = AppDomain.CurrentDomain.GetData("Unknowns.Music.ReactorVolume") as Func<object>; }
+                    if (volumeProvider != null && volumeProvider() is float f) return Mathf.Min(1f, Volume * Mathf.Clamp(f, 0f, 2f));
+                } catch { }
+                return Volume;
+            }
+        }
+
         // ---- Clip geometry (seconds; measured from the Ogg granule positions of the assets) ----
         private const float IntroFileSecs = 3.2f;   // 2.0 s body + 1.2 s ring-out
         private const float LoopStartSecs = 2.0f;   // the loop ALWAYS starts here (see the header)
@@ -162,7 +177,27 @@ namespace UnknownsCollection {
         private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
 
         private static string LoopClipName() =>
-            variant <= 0 ? "reactor_music" : $"reactor_music{variant + 1}";
+            customLoop ?? (variant <= 0 ? "reactor_music" : $"reactor_music{variant + 1}");
+
+        // A track the local player picked elsewhere (TOR - Forgotten Fixes, music panel, Reactor tab). Contract:
+        // AppDomain data "Unknowns.Music.ReactorLoop" is a Func<object> that returns an AudioClip, or null for
+        // this mod's own score. Asked once per sabotage. A pick replaces the WHOLE score (user, 13.10.: intro and
+        // outro too): it loops from the alarm until the sabotage ends and then fades out - no intro, no finale on
+        // the blast, no all-clear. Local only: nobody else hears or needs it.
+        private const string ExternalLoopKey = "Unknowns.Music.ReactorLoop", ExternalLoopClip = "ext:reactor_loop";
+        private static string customLoop;
+
+        private static void AskExternalLoop() {
+            customLoop = null;
+            try {
+                if (AppDomain.CurrentDomain.GetData(ExternalLoopKey) is Func<object> provider && provider() is AudioClip clip) {
+                    UCAssets.SetExternalClip(ExternalLoopClip, clip);
+                    customLoop = ExternalLoopClip;
+                }
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[ReactorMusic] external loop: {e.Message}");
+            }
+        }
 
         // The active reactor/seismic system as ICriticalSabotage, or null. The system LOOKUP is
         // Poltergeist's (Reactor + Laboratory, IsActive checked there); the cast mirrors TOR's own
@@ -276,12 +311,15 @@ namespace UnknownsCollection {
 
             // The sabotage is over. Which finale keeps playing was decided by the last countdown we
             // saw while it was still live (see the header - afterwards both outcomes look alike).
-            if (phase == Phase.Live) EnterTail();
+            if (phase == Phase.Live) {
+                if (customLoop != null) { StopCue(); return; }    // own pick: no finale, just fade out
+                EnterTail();
+            }
             cueDone = false;
 
             if (phase == Phase.Tail) {
                 if (Time.time >= tailUntil) { StopCue(); return; }
-                UCMusic.Request(Cue, tailClip, Priority, Volume,
+                UCMusic.Request(Cue, tailClip, Priority, Vol,
                                 Mathf.Max(0f, tailUntil - Time.time), false);
             }
         }
@@ -290,6 +328,11 @@ namespace UnknownsCollection {
             float countdown;
             try { countdown = crit.Countdown; } catch { countdown = float.MaxValue; }
             lastCountdown = countdown;
+
+            if (customLoop != null) {                              // own pick: one track from alarm to the end
+                UCMusic.Request(Cue, customLoop, Priority, Vol, Mathf.Max(0f, countdown), true);
+                return;
+            }
 
             // The finale arms ONCE and never disarms: from here the music is on rails towards the
             // blast at +7.98 s. A countdown that jumps back up (a partial fix, another mod retuning
@@ -335,7 +378,7 @@ namespace UnknownsCollection {
             // secondsRemaining is what UCMusic arbitrates ties with - handing it the REAL countdown
             // (rather than the clip length) is what lets a reactor with a hard deadline win the
             // channel over an open-ended werewolf/pelican loop.
-            UCMusic.Request(Cue, clip, Priority, Volume, remaining, loop);
+            UCMusic.Request(Cue, clip, Priority, Vol, remaining, loop);
         }
 
         private static void StartCue() {
@@ -347,16 +390,20 @@ namespace UnknownsCollection {
             lastCountdown = float.MaxValue;
             variant = PickVariant(sabotageIndex);
             sabotageIndex++;
+            AskExternalLoop();
 
             // Warm the clips this sabotage can still need, one per frame (see warmQueue). The intro
             // is not in here: UCMusic decodes it in this very frame anyway.
             warmQueue.Clear();
             warmQueue.Add(LoopClipName());
-            warmQueue.Add("reactor_boom");
-            warmQueue.Add("reactor_fixed");
+            if (customLoop == null) {
+                warmQueue.Add("reactor_boom");
+                warmQueue.Add("reactor_fixed");
+            }
 
             UnknownsCollectionPlugin.Logger?.LogInfo(
-                $"[ReactorMusic] Reactor sabotage #{sabotageIndex} - music variant {variant + 1}/{Variants} (seed {roundSeed}).");
+                $"[ReactorMusic] Reactor sabotage #{sabotageIndex} - music variant {variant + 1}/{Variants} (seed {roundSeed})"
+                + (customLoop != null ? ", replaced by the player's own pick." : "."));
         }
 
         // The sabotage went inactive. Both outcomes leave the system looking identical, so the last

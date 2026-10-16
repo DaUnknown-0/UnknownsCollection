@@ -310,8 +310,9 @@ namespace UnknownsCollection {
             title.transform.localScale = Vector3.one;
             title.gameObject.SetActive(true);
 
-            for (int i = 0; i < AllOptions.Length; i++) {
-                var info = AllOptions[i];
+            var options = WithExternal();
+            for (int i = 0; i < options.Count; i++) {
+                var info = options[i];
                 var button = Object.Instantiate(src, ucPopUp.transform);
                 var pos = new Vector3(i % 2 == 0 ? -1.17f : 1.17f, 1.3f - i / 2 * 0.8f, -0.5f);
                 button.transform.localPosition = pos;
@@ -354,6 +355,25 @@ namespace UnknownsCollection {
                 foreach (var spr in button.GetComponentsInChildren<SpriteRenderer>())
                     spr.size = new Vector2(2.2f, 0.7f);
             }
+        }
+
+        // Switches other mods hang onto this page (UTS: the VIP scream). Contract, BCL types only:
+        // AppDomain data "Unknowns.Options.Toggles" = List<object> of object[] { Func<string> title,
+        // Func<bool> get, Action<bool> set }. Read on every open, so load order does not matter.
+        private static List<UCSelection> WithExternal() {
+            var all = new List<UCSelection>(AllOptions);
+            try {
+                if (AppDomain.CurrentDomain.GetData("Unknowns.Options.Toggles") is List<object> list) {
+                    foreach (var o in list) {
+                        if (o is not object[] e || e.Length < 3 || e[0] is not Func<string> title
+                            || e[1] is not Func<bool> get || e[2] is not Action<bool> set) continue;
+                        all.Add(new UCSelection(title, () => { set(!get()); return get(); }, get));
+                    }
+                }
+            } catch (Exception ex) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[UCOptions] external toggles: {ex.Message}");
+            }
+            return all;
         }
 
         private class UCSelection {

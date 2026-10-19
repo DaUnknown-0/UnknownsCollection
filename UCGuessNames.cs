@@ -19,6 +19,16 @@
  * everyone patching after us (UTS replay) find it; a finalizer puts the list back. Without a pick
  * (an older client) a correct guess still names the target's own role.
  *
+ * MADE ROBUST (User 2026-10-18: the ghosts still read "Crewmate"/"Impostor" for UC guesses)
+ *  - The pick used to be sent only while TeslaVersionHandshake.EveryoneHasMod() held, which demands the
+ *    same version AND the same build GUID on every client. One differing client and nobody sent a pick,
+ *    silently. The pick is plain information now and always goes out; clients without UC ignore module 233.
+ *  - It carries the role NAME next to the index, so a receiver finds the entry by name, whatever order its
+ *    own UCGuesser.AllInfos has. The index stays for older senders (no name in the message).
+ *  - Without a pick, a hit names the target's role from UCGuessTruth (TOR's raw result plus the replayed
+ *    postfix chain) instead of the live getRoleInfoForPlayer, whose UC postfixes tiering can drop.
+ *  - One info line per guess says what the ghosts' line names and where the name came from.
+ *
  * HIT CHECK SAFETY NET (review 2026-10-02). TOR decides hit or miss on the guesser's client with
  * getRoleInfoForPlayer(target).First() == button entry. A UC role only shows up there through UC's
  * postfixes on getRoleInfoForPlayer, a hot managed TOR method whose detour .NET tiering drops (see
@@ -50,8 +60,9 @@ namespace UnknownsCollection {
         private const byte VerdictNone = 0, VerdictHit = 1, VerdictMiss = 2;
 
         private struct Verdict { public byte Target; public byte Value; }
+        private struct Pick { public byte Idx; public string Name; }   // Name null: an older sender
 
-        private static readonly Dictionary<byte, byte> picks = new Dictionary<byte, byte>();   // guesserId -> index
+        private static readonly Dictionary<byte, Pick> picks = new Dictionary<byte, Pick>();    // guesserId -> pick
         private static readonly Dictionary<byte, Verdict> verdicts = new Dictionary<byte, Verdict>();
         private static int lastSent = -1;                                                        // local, per meeting
         private static FieldInfo guesserUiField;
@@ -82,7 +93,6 @@ namespace UnknownsCollection {
         // Postfix on guesserOnClick: one extra listener per role button of the grid just built.
         public static void AfterGrid() {
             try {
-                if (!TeslaVersionHandshake.EveryoneHasMod()) return;
                 var ui = guesserUiField?.GetValue(null) as GameObject;
                 if (ui == null) return;
                 var infos = UCGuesser.AllInfos();
@@ -91,12 +101,13 @@ namespace UnknownsCollection {
                     var label = pb.GetComponentInChildren<TMPro.TextMeshPro>(true);
                     string name = label != null ? Plain(label.text) : "";
                     if (name.Length == 0) continue;                       // the exit button
-                    int idx = Array.FindIndex(infos, ri => ri != null && ri.name == name);
+                    int idx = Array.FindIndex(infos, ri => ri != null && Plain(ri.name) == name);
                     byte pick = idx >= 0 ? (byte)idx : NoUcRole;
                     // the entry TOR compares by reference: UC's own, or the TOR entry of that name
                     RoleInfo entry = idx >= 0 ? infos[idx]
                         : RoleInfo.allRoleInfos.FirstOrDefault(ri => ri != null && ri.name == name && Array.IndexOf(infos, ri) < 0);
-                    pb.OnClick.AddListener((Action)(() => Pick(pick, entry)));
+                    string picked = name;
+                    pb.OnClick.AddListener((Action)(() => SendPick(pick, picked, entry)));
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[UCGuessNames] grid hook failed: {e.Message}");
@@ -129,7 +140,7 @@ namespace UnknownsCollection {
             }
         }
 
-        private static void Pick(byte idx, RoleInfo entry) {
+        private static void SendPick(byte idx, string name, RoleInfo entry) {
             try {
                 var me = PlayerControl.LocalPlayer;
                 if (me == null) return;
@@ -138,12 +149,13 @@ namespace UnknownsCollection {
                 int key = idx | (target << 8) | (verdict << 16);
                 if (lastSent == key) return;
                 lastSent = key;
-                picks[me.PlayerId] = idx;
+                picks[me.PlayerId] = new Pick { Idx = idx, Name = name };
                 verdicts[me.PlayerId] = new Verdict { Target = target, Value = verdict };
                 MessageWriter w = UCRpc.Begin(RpcId);
                 w.Write(idx);
                 w.Write(target);
                 w.Write(verdict);
+                w.Write(name ?? "");           // older receivers stop reading after the verdict
                 AmongUsClient.Instance.FinishRpcImmediately(w);
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[UCGuessNames] pick send failed: {e.Message}");
@@ -154,12 +166,35 @@ namespace UnknownsCollection {
             byte idx = reader.ReadByte();
             var sender = UCRpc.Sender;
             if (sender == null) return;
-            picks[sender.PlayerId] = idx;
-            if (reader.Length - reader.Position >= 2)
+            string name = null;
+            if (reader.Length - reader.Position >= 2) {
                 verdicts[sender.PlayerId] = new Verdict { Target = reader.ReadByte(), Value = reader.ReadByte() };
-            else
+                if (reader.Length - reader.Position > 0) name = reader.ReadString();
+            } else {
                 verdicts.Remove(sender.PlayerId);
+            }
+            picks[sender.PlayerId] = new Pick { Idx = idx, Name = string.IsNullOrEmpty(name) ? null : name };
         }
+
+        // The UC entry a pick names: by name when the sender sent one (independent of this client's
+        // AllInfos order), by index only for an older sender. A TOR role's name finds nothing here.
+        private static RoleInfo Resolve(Pick pick, RoleInfo[] infos) {
+            if (pick.Name != null) return infos.FirstOrDefault(ri => ri != null && Plain(ri.name) == pick.Name);
+            return pick.Idx < infos.Length ? infos[pick.Idx] : null;
+        }
+
+        // The target's main role on a hit without a usable pick: the replayed postfix chain first (it
+        // survives a dropped getRoleInfoForPlayer detour), the live call only when the replay is off.
+        private static RoleInfo TargetMain(byte targetId) {
+            var t = Helpers.playerById(targetId);
+            if (t == null) return null;
+            try {
+                if (UCGuessTruth.TryMain(t, out _, out RoleInfo truth) && truth != null) return truth;
+            } catch { }
+            return RoleInfo.getRoleInfoForPlayer(t, false)?.FirstOrDefault();
+        }
+
+        private static string NameOf(byte id) => Helpers.playerById(id)?.Data?.PlayerName ?? $"#{id}";
 
         private struct Moved { public RoleInfo Info; public int From; }   // From -1: not in the list before
 
@@ -187,15 +222,25 @@ namespace UnknownsCollection {
                 try {
                     var infos = UCGuesser.AllInfos();
                     RoleInfo ri = null;
-                    if (picks.TryGetValue(killerId, out var idx)) {
-                        if (idx < infos.Length) ri = infos[idx];
-                    } else if (dyingId == guessedId) {
-                        // no pick heard: a hit can only have named the target's own role
-                        var t = Helpers.playerById(guessedId);
-                        var main = t != null ? RoleInfo.getRoleInfoForPlayer(t, false)?.FirstOrDefault() : null;
-                        if (main != null && Array.IndexOf(infos, main) >= 0) ri = main;
+                    string how;
+                    bool heard = picks.TryGetValue(killerId, out var pick);
+                    if (heard) {
+                        ri = Resolve(pick, infos);
+                        how = pick.Name != null ? $"pick \"{pick.Name}\"" : $"pick #{pick.Idx} (older sender)";
+                    } else {
+                        how = "no pick heard";
                     }
-                    if (ri == null || (byte)ri.roleId != roleId) return;
+                    if (ri == null && dyingId == guessedId) {
+                        // a hit can only have named the target's own role
+                        var main = TargetMain(guessedId);
+                        if (main != null && Array.IndexOf(infos, main) >= 0) { ri = main; how += ", hit names the target's role"; }
+                    }
+                    if (ri != null && (byte)ri.roleId != roleId) { how += $", but {ri.name} has another role id"; ri = null; }
+                    string named = ri != null ? ri.name
+                        : RoleInfo.allRoleInfos.FirstOrDefault(x => x != null && (byte)x.roleId == roleId)?.name ?? "?";
+                    UnknownsCollectionPlugin.Logger?.LogInfo(
+                        $"[UCGuessNames] guess by {NameOf(killerId)} on {NameOf(guessedId)}: the ghosts' line names {Plain(named)} ({how}).");
+                    if (ri == null) return;
                     var list = RoleInfo.allRoleInfos;
                     int at = list.IndexOf(ri);
                     if (at == 0) return;

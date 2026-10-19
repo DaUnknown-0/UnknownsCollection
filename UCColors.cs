@@ -94,8 +94,8 @@ namespace UnknownsCollection {
          * A player who was granted a colour can leave and the next person to join takes his id, and
          * a record keyed on the id alone would then paint a stranger in a colour he never agreed to
          * - in a feature whose entire design is that a colour is only ever changed with consent.
-         * So a record only counts while the person behind the id is still the same one: the friend
-         * code where there is one, the name otherwise.
+         * So a record only counts while the person behind the id is still the same one: the account's
+         * PUID where there is one (User 2026-10-18: more reliable), else the friend code, else the name.
          */
         private struct Grant {
             public int Slot;
@@ -129,12 +129,14 @@ namespace UnknownsCollection {
             }
         }
 
-        /// Who a player is, for the record above. Friend code first: a name can be changed and can
-        /// repeat, a friend code is the player.
+        /// Who a player is, for the record above. PUID first, then the friend code: a name can be
+        /// changed and can repeat, the account is the player.
         private static string Ident(PlayerControl p) {
             try {
                 var d = p?.Data;
                 if (d == null) return "";
+                string puid = d.Puid;
+                if (!string.IsNullOrEmpty(puid)) return "puid:" + puid;
                 string fc = d.FriendCode;
                 if (!string.IsNullOrEmpty(fc)) return "fc:" + fc;
                 return "name:" + (d.PlayerName ?? "");

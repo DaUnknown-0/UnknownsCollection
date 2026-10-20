@@ -247,6 +247,8 @@ namespace UnknownsCollection {
                 }
 
                 // Step 1: put every PNG TOR itself reads next to the repository hats.
+                hatsDir = dir;
+                UCAssetStore.FileArrived += OnAssetArrived;
                 foreach (var def in Defs) {
                     def.DiskOk = ExtractIfNeeded(dir, ResourcePrefix + def.MainRes, def.MainFile);
                     def.BackOk = def.BackRes != null
@@ -343,8 +345,15 @@ namespace UnknownsCollection {
             try {
                 byte[] data = ReadResource(resourceName);
                 if (data == null) {
-                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] embedded resource missing: {resourceName}");
-                    return false;
+                    // Outsourced (UCAssetStore) and not downloaded yet: a copy from an earlier start keeps the hat
+                    // working; without one the hat sits out this session and is written when the file arrives.
+                    bool have = File.Exists(Path.Combine(dir, fileName));
+                    if (UCAssetStore.Owns(resourceName))
+                        UnknownsCollectionPlugin.Logger?.LogInfo(have
+                            ? $"[Hats] {fileName}: not downloaded yet, using the copy in {Path.GetFileName(dir)}."
+                            : $"[Hats] {fileName}: not downloaded yet, the hat is available after the next start.");
+                    else UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] embedded resource missing: {resourceName}");
+                    return have;
                 }
                 if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                 string path = Path.Combine(dir, fileName);
@@ -361,8 +370,23 @@ namespace UnknownsCollection {
             }
         }
 
+        // When a hat file TOR reads from disk arrives from the asset repository, write it to TheOtherHats so the next
+        // start registers the hat (TOR only reads the disk once, at registration).
+        private static void OnAssetArrived(string res) {
+            if (res == null || !res.StartsWith(ResourcePrefix, StringComparison.Ordinal) || hatsDir == null) return;
+            string file = res.Substring(ResourcePrefix.Length);
+            foreach (var def in Defs) {
+                if (def.MainRes == file) ExtractIfNeeded(hatsDir, res, def.MainFile);
+                if (def.BackRes == file && def.BackFile != null) ExtractIfNeeded(hatsDir, res, def.BackFile);
+                if (def.ClimbRes == file && def.ClimbFile != null) ExtractIfNeeded(hatsDir, res, def.ClimbFile);
+            }
+        }
+
+        private static string hatsDir;
+
         private static byte[] ReadResource(string logicalName) {
-            using Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(logicalName);
+            // embedded or from the asset folder (UCAssetStore; null while not downloaded)
+            using Stream stream = UCAssetStore.Open(logicalName);
             if (stream == null) return null;
             var data = new byte[stream.Length];
             int read = 0;
@@ -608,6 +632,9 @@ namespace UnknownsCollection {
         // that TOR already loaded from disk.
         private static Sprite[] GetFrames(HatDef def) {
             if (def.FramesTried) return def.Frames;
+            // frames outsourced and still downloading (UCAssetStore): static frame 1 for now, try again later
+            if (UCAssetStore.Waiting(ResourcePrefix + string.Format(def.AnimPattern, 1))
+                || (def.WalkPattern != null && UCAssetStore.Waiting(ResourcePrefix + string.Format(def.WalkPattern, 1)))) return null;
             def.FramesTried = true;
             var built = new Sprite[def.AnimFrames];
             for (int i = 0; i < built.Length; i++) {

@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net6.0</TargetFramework>
-        <Version>1.3.2.1</Version>
+        <Version>1.3.2.2</Version>
         <Description>Unknown's Collection - custom roles for The Other Roles. Roles: The Tesla, Saboteur, Silencer, Poisoner, Illusionist, Maniac, Shade, Manipulator, Werewolf, Auditor (Impostor); Siphoner, Witness, Scout, Beacon, Hunter, King (Crewmate); Bug, Follower, Copycat, Collector, Pelican, Necromancer, Stalker (Neutral); Poltergeist (ghost, keeps its team); Gambler, Void (crew modifiers).</Description>
         <Authors>DaUnknown-0</Authors>
         <LangVersion>latest</LangVersion>
@@ -13,15 +13,16 @@
         <AssemblyName>UnknownsCollection</AssemblyName>
     </PropertyGroup>
 
+    <!-- Outsourced (UCAssetStore, list in UCAssetCatalog.g.cs, made by tools/build_assets_repo.py): button animation
+         frames (Resources/anim), hats (Resources/hats), the Void eject pictures (task_eject_*), the music (werewolf
+         form, pelican hunt, reactor) and the longer sound effects. They are downloaded into BepInEx/uc-assets from
+         DaUnknown-0/UnknownsCollection-Assets and are NOT embedded; build_assets_repo.py refuses to run if one is. -->
     <!-- Embedded audio: logical names "UnknownsCollection.Resources.<file>" (RootNamespace = AssemblyName).
-         Ogg Vorbis, decoded via NVorbis in UCAssets.LoadRawClip. The lossless .raw masters stay on disk
+         Ogg Vorbis, decoded via NVorbis in UCAssets.LoadRawClip. The lossless .raw masters were removed on 2026-10-20
          next to them (deliberately NOT embedded any more - see tmp\OGG_MESSBERICHT.md). -->
     <ItemGroup>
-        <EmbeddedResource Include="Resources\tesla_warning.ogg" />
         <!-- Void-Rauswurfszene (EjectEngine): Regie + Grafik aus UnknownsAtlas/tools (eject_scenes.py, gen_eject.py) -->
         <EmbeddedResource Include="Resources\eject_void.json" />
-        <EmbeddedResource Include="Resources\task_eject_*.png" />
-        <EmbeddedResource Include="Resources\task_eject_*.jpg" />
         <EmbeddedResource Include="Resources\beacon_share.ogg" />
         <EmbeddedResource Include="Resources\collector_channel.ogg" />
         <EmbeddedResource Include="Resources\collector_ready.ogg" />
@@ -36,7 +37,6 @@
         <EmbeddedResource Include="Resources\poisoner_antidote.ogg" />
         <EmbeddedResource Include="Resources\poltergeist_handstop.ogg" />
         <EmbeddedResource Include="Resources\poltergeist_hexend.ogg" />
-        <EmbeddedResource Include="Resources\poltergeist_reveal.ogg" />
         <EmbeddedResource Include="Resources\saboteur_alarm.ogg" />
         <EmbeddedResource Include="Resources\saboteur_defused.ogg" />
         <EmbeddedResource Include="Resources\saboteur_mark.ogg" />
@@ -47,8 +47,6 @@
         <EmbeddedResource Include="Resources\shade_reveal.ogg" />
         <EmbeddedResource Include="Resources\silencer_mark.ogg" />
         <EmbeddedResource Include="Resources\siphoner_stop.ogg" />
-        <EmbeddedResource Include="Resources\tesla_discharge.ogg" />
-        <EmbeddedResource Include="Resources\tesla_promote.ogg" />
         <EmbeddedResource Include="Resources\tesla_pulse.ogg" />
         <EmbeddedResource Include="Resources\tesla_select.ogg" />
         <EmbeddedResource Include="Resources\uc_reveal.ogg" />
@@ -78,7 +76,6 @@
         <EmbeddedResource Include="Resources\necromancer_raise.png" />
         <EmbeddedResource Include="Resources\stalker_strike.png" />
         <EmbeddedResource Include="Resources\collector_pickup.ogg" />
-        <EmbeddedResource Include="Resources\collector_win.ogg" />
         <EmbeddedResource Include="Resources\manipulator_warp.ogg" />
         <EmbeddedResource Include="Resources\silencer_silence.png" />
         <EmbeddedResource Include="Resources\paramedic_revive.png" />
@@ -91,16 +88,11 @@
         <EmbeddedResource Include="Resources\hypnotist_vote.png" />
         <EmbeddedResource Include="Resources\scout_transparent.png" />
         <EmbeddedResource Include="Resources\siphoner_drain.png" />
-        <EmbeddedResource Include="Resources\poltergeist_manifest.ogg" />
-        <EmbeddedResource Include="Resources\poltergeist_poof.ogg" />
         <EmbeddedResource Include="Resources\poltergeist_door.ogg" />
         <EmbeddedResource Include="Resources\poltergeist_hex.ogg" />
         <EmbeddedResource Include="Resources\poltergeist_hand.ogg" />
         <EmbeddedResource Include="Resources\saboteur_zap.ogg" />
         <EmbeddedResource Include="Resources\saboteur_trap.ogg" />
-        <EmbeddedResource Include="Resources\maniac_fuse.ogg" />
-        <EmbeddedResource Include="Resources\maniac_explosion.ogg" />
-        <EmbeddedResource Include="Resources\silencer_silence.ogg" />
         <EmbeddedResource Include="Resources\illusionist_clone.ogg" />
         <EmbeddedResource Include="Resources\poisoner_poison.ogg" />
         <EmbeddedResource Include="Resources\scout_whoosh.ogg" />
@@ -119,20 +111,11 @@
         <EmbeddedResource Include="Resources\werewolf_form.png" />
         <EmbeddedResource Include="Resources\werewolf_bloodring.png" />
         <EmbeddedResource Include="Resources\overlay_wolfhead.png" />
-        <EmbeddedResource Include="Resources\werewolf_transform.ogg" />
         <EmbeddedResource Include="Resources\werewolf_revert.ogg" />
-        <EmbeddedResource Include="Resources\werewolf_howl.ogg" />
         <EmbeddedResource Include="Resources\werewolf_growl.ogg" />
         <EmbeddedResource Include="Resources\werewolf_kill.ogg" />
         <EmbeddedResource Include="Resources\werewolf_silver.ogg" />
         <EmbeddedResource Include="Resources\werewolf_heartbeat.ogg" />
-        <EmbeddedResource Include="Resources\werewolf_form_music.ogg" />
-        <EmbeddedResource Include="Resources\werewolf_form_music2.ogg" />
-        <EmbeddedResource Include="Resources\werewolf_form_music3.ogg" />
-        <EmbeddedResource Include="Resources\werewolf_form_music4.ogg" />
-        <EmbeddedResource Include="Resources\werewolf_form_music5.ogg" />
-        <EmbeddedResource Include="Resources\werewolf_form_music6.ogg" />
-        <EmbeddedResource Include="Resources\werewolf_form_music7.ogg" />
         <!-- Werewolf victory scene (Paket W4): the moon plus the STILL of the victory flipbook.
              The 24 werewolf_victory frames themselves live under Resources\anim\ and are already
              covered by the anim wildcard below. -->
@@ -158,30 +141,12 @@
         <EmbeddedResource Include="Resources\pelican_release.ogg" />
         <EmbeddedResource Include="Resources\pelican_call.ogg" />
         <EmbeddedResource Include="Resources\pelican_hunt.ogg" />
-        <EmbeddedResource Include="Resources\pelican_hunt_intro.ogg" />
-        <EmbeddedResource Include="Resources\pelican_hunt_music.ogg" />
-        <EmbeddedResource Include="Resources\pelican_hunt_music2.ogg" />
-        <EmbeddedResource Include="Resources\pelican_hunt_music3.ogg" />
-        <EmbeddedResource Include="Resources\pelican_hunt_music4.ogg" />
-        <EmbeddedResource Include="Resources\pelican_hunt_music5.ogg" />
-        <EmbeddedResource Include="Resources\pelican_hunt_music6.ogg" />
-        <EmbeddedResource Include="Resources\pelican_hunt_end.ogg" />
         <!-- Reactor score (Paket R): the reactor/seismic sabotage soundtrack. Intro (3.2 s), six
              16 s loop variants (all 120 BPM / F minor, so one intro and one finale fit all of
              them) and the two finales - boom (9.5 s, blast onset at 7.98 s) and fixed (4 s).
              Music-channel only: played through UCMusic (cue "reactor", priority 100). -->
-        <EmbeddedResource Include="Resources\reactor_intro.ogg" />
-        <EmbeddedResource Include="Resources\reactor_music.ogg" />
-        <EmbeddedResource Include="Resources\reactor_music2.ogg" />
-        <EmbeddedResource Include="Resources\reactor_music3.ogg" />
-        <EmbeddedResource Include="Resources\reactor_music4.ogg" />
-        <EmbeddedResource Include="Resources\reactor_music5.ogg" />
-        <EmbeddedResource Include="Resources\reactor_music6.ogg" />
-        <EmbeddedResource Include="Resources\reactor_boom.ogg" />
-        <EmbeddedResource Include="Resources\reactor_fixed.ogg" />
         <!-- Animated button icon frames (16 per icon, AssetGen anim/ output). Default logical
              names: UnknownsCollection.Resources.anim.<file> - matched by UCAssets.GetFrames(). -->
-        <EmbeddedResource Include="Resources\anim\*.png" />
         <!-- Kill-overlay sprite parts (UCKillOverlay). -->
         <EmbeddedResource Include="Resources\overlay_crew_body.png" />
         <EmbeddedResource Include="Resources\overlay_crew_visor.png" />
@@ -212,7 +177,6 @@
              never depends on the root-namespace default. UCHats extracts only the files TOR
              itself has to read (main/back/climb per hat) into <Among Us>\TheOtherHats; the
              remaining animation frames are only ever read from here. -->
-        <EmbeddedResource Include="Resources\hats\*.png" LogicalName="UnknownsCollection.Resources.hats.%(Filename)%(Extension)" />
         <!-- Localization tables (UCLocalization): one flat JSON map per language. Explicit
              LogicalName so the lookup never depends on the root-namespace default. -->
         <EmbeddedResource Include="Resources\Localization\*.json" LogicalName="UnknownsCollection.Resources.Localization.%(Filename)%(Extension)" />

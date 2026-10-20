@@ -73,6 +73,11 @@ namespace UnknownsCollection {
             }
         }
 
+        // Asset store (UCAssetStore): checks, downloads, arrival callbacks - every frame, in every scene.
+        public void Update() {
+            try { UCAssetStore.Tick(); } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[UC] asset tick: {e.Message}"); }
+        }
+
         private void Start() {
             if (_busy) return;
             this.StartCoroutine(CoCheckForUpdate());

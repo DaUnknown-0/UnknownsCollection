@@ -154,6 +154,7 @@ namespace UnknownsCollection {
         // null if ANY frame is missing, so callers (UCButtonAnim) cleanly fall back to the static
         // icon instead of playing a loop with holes. The ppu must match the static icon's.
         public static Sprite[] GetFrames(string baseName, float pixelsPerUnit = 115f) {
+            if (FramesWaiting(baseName)) return null;           // still downloading (UCAssetStore): no log, try later
             var frames = new Sprite[16];
             for (int i = 0; i < frames.Length; i++) {
                 frames[i] = GetSprite($"UnknownsCollection.Resources.anim.{baseName}_f{i:00}.png", pixelsPerUnit);
@@ -162,6 +163,14 @@ namespace UnknownsCollection {
             return frames;
         }
 
+
+        /// <summary>Frames of this loop are outsourced and may still arrive this session (UCAssetStore.Waiting):
+        /// callers keep their fallback for now instead of giving up on the loop for good.</summary>
+        public static bool FramesWaiting(string baseName) {
+            for (int i = 0; i < 16; i++)
+                if (UCAssetStore.Waiting($"UnknownsCollection.Resources.anim.{baseName}_f{i:00}.png")) return true;
+            return false;
+        }
 
         public static Sprite GetSprite(string path, float pixelsPerUnit) =>
             GetSprite(path, pixelsPerUnit, new Vector2(0.5f, 0.5f));
@@ -184,8 +193,8 @@ namespace UnknownsCollection {
         }
 
         private static Texture2D LoadTexture(string path) {
-            var asm = Assembly.GetExecutingAssembly();
-            using Stream stream = asm.GetManifestResourceStream(path);
+            // embedded, or from the asset folder (UCAssetStore: outsourced pictures; null while not downloaded)
+            using Stream stream = UCAssetStore.Open(path);
             if (stream == null) return null;
             var data = new byte[stream.Length];
             // AUDIT-2026-08-23, L-19: a single Read() call is not guaranteed to fill the buffer in one
@@ -469,9 +478,11 @@ namespace UnknownsCollection {
         private static AudioClip GetClip(string name) {
             if (clips.TryGetValue(name, out var cached) && cached != null) return cached;
             if (failedClips.Contains(name)) return null; // already known bad - don't hammer LoadRawClip again
-            var clip = LoadRawClip($"UnknownsCollection.Resources.{name}.ogg", name);
+            string res = $"UnknownsCollection.Resources.{name}.ogg";
+            var clip = LoadRawClip(res, name);
             clips[name] = clip;
-            if (clip == null) failedClips.Add(name);
+            // an outsourced clip that is still downloading is not "bad": it is tried again on the next call
+            if (clip == null && !UCAssetStore.Waiting(res)) failedClips.Add(name);
             return clip;
         }
 
@@ -499,8 +510,7 @@ namespace UnknownsCollection {
         // use it to "verify" these assets, only NVorbis).
         private static AudioClip LoadRawClip(string path, string clipName) {
             try {
-                Assembly assembly = Assembly.GetExecutingAssembly();
-                using Stream stream = assembly.GetManifestResourceStream(path);
+                using Stream stream = UCAssetStore.Open(path);   // embedded or downloaded (UCAssetStore)
                 if (stream == null) return null;
                 using var vorbis = new NVorbis.VorbisReader(stream, false);
                 int channels = vorbis.Channels;          // all UC assets: 2

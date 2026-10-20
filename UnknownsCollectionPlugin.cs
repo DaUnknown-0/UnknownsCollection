@@ -39,7 +39,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.3.2.1";
+    public const string PluginVersion = "1.3.2.2";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -104,6 +104,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public static ConfigEntry<bool> MusicPelican { get; set; }
     public static ConfigEntry<bool> MusicReactor { get; set; }
     public static ConfigEntry<string> PreviousHatBeforeLock { get; set; }
+    public static ConfigEntry<string> AssetSource { get; set; }
 
     internal static Assembly TORAssembly;
 
@@ -196,6 +197,10 @@ public class UnknownsCollectionPlugin : BasePlugin
         // wore that is NOT a role costume (Werewolf / Monster Hunter), so a lobby that locks one can
         // swap it back - even across a game restart. Written by the mod, not meant to be edited by
         // hand. The config KEY still says "Werewolf" so an existing entry keeps working.
+        AssetSource = Config.Bind("Assets", "Download source", "",
+            "Where the large pictures and sounds (hats, button animations, eject scene, music) are downloaded from. " +
+            "Empty = the UnknownsCollection-Assets repository at the tag of this build. Only that repository or a local " +
+            "test server (http://127.0.0.1:...) is accepted.");
         PreviousHatBeforeLock = Config.Bind("Cosmetics", "Last Hat Before Werewolf", "",
             "Internal: the hat worn before a role-costume hat, restored while that role is enabled.");
 
@@ -377,7 +382,11 @@ public class UnknownsCollectionPlugin : BasePlugin
 
         // Self-updater: checks GitHub releases and offers an in-game update (channel-aware: follows the
         // shared test-versions toggle). Must exist before registration so the repo fields resolve.
-        AddComponent<UnknownsCollectionUpdater>();
+        var updater = AddComponent<UnknownsCollectionUpdater>();
+        // Large pictures and sounds from the asset repository (UCAssetStore): checks the cache in the background
+        // and downloads what is missing. Started before UCHats, which reads its hat files during this Load().
+        try { UCAssetStore.Start(updater, AssetSource.Value); }
+        catch (Exception e) { Logger.LogWarning($"[UC/Assets] start failed: {e.Message}"); }
 
         // Host tooling: ask a player to change colour (they have to accept). The RPC receiver and
         // the two screens; the palette entry itself is an attribute patch picked up by PatchAll.

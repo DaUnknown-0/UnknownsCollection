@@ -400,7 +400,12 @@ namespace UnknownsCollection {
             var frames = new Sprite[DeathFrameCount];
             for (int i = 0; i < DeathFrameCount; i++) {
                 frames[i] = UCAssets.GetSprite($"UnknownsCollection.Resources.anim.werewolf_death_f{i:00}.png", DeathPpu);
-                if (frames[i] == null) { deathFrames = null; return; }
+                if (frames[i] == null) {
+                    deathFrames = null;
+                    // still downloading (UCAssetStore): try again next time
+                    if (UCAssetStore.Waiting($"UnknownsCollection.Resources.anim.werewolf_death_f{i:00}.png")) deathFramesTried = false;
+                    return;
+                }
             }
             deathFrames = frames;
         }
@@ -494,7 +499,11 @@ namespace UnknownsCollection {
             for (int i = 0; i < VictoryFrameCount; i++) {
                 frames[i] = UCAssets.GetSprite($"UnknownsCollection.Resources.anim.werewolf_victory_f{i:00}.png",
                                                VictoryPpu);
-                if (frames[i] == null) { victoryFrames = null; return; }
+                if (frames[i] == null) {
+                    victoryFrames = null;
+                    if (UCAssetStore.Waiting($"UnknownsCollection.Resources.anim.werewolf_victory_f{i:00}.png")) victoryFramesTried = false;
+                    return;
+                }
             }
             victoryFrames = frames;
         }

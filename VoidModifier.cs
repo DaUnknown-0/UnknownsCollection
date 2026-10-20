@@ -81,6 +81,7 @@ namespace UnknownsCollection {
         private const string VoidSceneKey = "UnknownsCollection.VoidScene";
         private const string AtlasMapKey = "UnknownsAtlas.ActiveMap";
         private static EjectEngine.Doc sceneDoc;
+        private static bool loggedScenePending;
 
         // ---- Runtime state ----
         public static PlayerControl voidPlayer;
@@ -368,6 +369,15 @@ namespace UnknownsCollection {
         private static void TryStartScene(ExileController ec, NetworkedPlayerInfo showAs, bool force = false) {
             try {
                 if (!force && !SceneWanted()) return;
+                // The scene's pictures come from the asset repository (UCAssetStore). Until they are all there the
+                // plain exile screen stays (one log line), instead of a scene with holes.
+                if (!UCAssetStore.AllReady("UnknownsCollection.Resources.task_eject_")) {
+                    if (!loggedScenePending) {
+                        loggedScenePending = true;
+                        UnknownsCollectionPlugin.Logger?.LogInfo("[Void] exile scene pictures not downloaded yet, plain screen stays.");
+                    }
+                    return;
+                }
                 if (sceneDoc == null) {
                     EjectEngine.Log = m => UnknownsCollectionPlugin.Logger?.LogInfo($"[Void] {m}");
                     EjectEngine.Warn = m => UnknownsCollectionPlugin.Logger?.LogWarning($"[Void] {m}");

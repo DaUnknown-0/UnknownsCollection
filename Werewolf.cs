@@ -1168,9 +1168,10 @@ namespace UnknownsCollection {
         private static bool IsFrameOf(Sprite current, bool revert) {
             if (current == null) return false;
             if (!frameSetsResolved) {
-                frameSetsResolved = true;
                 transformFrames = UCAssets.GetFrames("werewolf_transform", 115f);
                 revertFrames = UCAssets.GetFrames("werewolf_revert", 115f);
+                // outsourced frames still downloading: resolve again later (UCAssetStore)
+                frameSetsResolved = !UCAssets.FramesWaiting("werewolf_transform") && !UCAssets.FramesWaiting("werewolf_revert");
             }
             var frames = revert ? revertFrames : transformFrames;
             if (frames == null) return false;

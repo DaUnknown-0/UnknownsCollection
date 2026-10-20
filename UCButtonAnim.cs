@@ -147,6 +147,7 @@ namespace UnknownsCollection {
             if (set.failed) return false;
             var frames = UCAssets.GetFrames(set.baseName, set.ppu);
             if (frames == null) {
+                if (UCAssets.FramesWaiting(set.baseName)) return false;   // still downloading: static icon for now
                 set.failed = true;
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[UCButtonAnim] frames missing for {set.baseName}, static icon stays");
                 return false;

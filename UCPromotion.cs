@@ -99,8 +99,9 @@ namespace UnknownsCollection {
         }
 
         // Picks that depend on what the others handed out run last: the Poisoner needs to know
-        // whether a Paramedic is in play (Fable review 2026-10-04).
-        private static readonly System.Collections.Generic.HashSet<string> LatePickers = new() { "Poisoner" };
+        // whether a Paramedic is in play (Fable review 2026-10-04); the King picks his crew advisor, who must
+        // not be turned into a Bug, Follower or Copycat by a neutral pick that runs after him (audit 21.10.).
+        private static readonly System.Collections.Generic.HashSet<string> LatePickers = new() { "Poisoner", "King" };
 
         public static void RunPicks() {
             var order = picks.OrderBy(_ => pickRnd.Next())

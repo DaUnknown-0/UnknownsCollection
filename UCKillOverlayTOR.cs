@@ -119,6 +119,7 @@ namespace UnknownsCollection {
                     if (Hunter.active && !self && IsPlayer(Hunter.hunter, sourceId)) return;
                     // Sheriff (incl. a promoted Deputy - TOR repoints Sheriff.sheriff): hit or misfire.
                     if (IsPlayer(Sheriff.sheriff, sourceId)) {
+                        if (Werewolf.SilverShotHeld(sourceId, targetId)) return;   // armed when the verdict replays it
                         Arm(self ? Kind.SheriffMisfire : Kind.SheriffShot, targetId, sourceId);
                         return;
                     }

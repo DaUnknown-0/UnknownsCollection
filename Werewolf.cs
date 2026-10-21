@@ -1229,9 +1229,10 @@ namespace UnknownsCollection {
                     return true;
                 }
                 // The Lighter keeps whatever TOR computed for him (explicit carve-out) - TOR's own value,
-                // not one a Beacon or Scout grant raised first (audit 04.10.).
+                // not one a Beacon or Scout grant raised first (audit 04.10.). The Giant bonus and the
+                // Blind hex still apply (audit 21.10.: the raw value dropped both, a hex on him was wasted).
                 if (Lighter.lighter != null && p.PlayerId == Lighter.lighter.PlayerId) {
-                    if (torValue >= 0f) result = torValue;
+                    if (torValue >= 0f) result = torValue * Giant.VisionMult(p) * Poltergeist.VisionDamp(p);
                     return true;
                 }
                 // The night is the crew's: his fellow Impostors keep their own sight, in the howl night
@@ -1601,6 +1602,19 @@ namespace UnknownsCollection {
                 silverHitsTaken++;
                 ApplyWound();
             }
+        }
+
+        // A Sheriff shot at the werewolf that a non-host HOLDS for the host's verdict (SilverBulletPatch):
+        // the kill overlay must not arm on it, the replayed kill (silverPass) arms it (audit 21.10.).
+        internal static bool SilverShotHeld(byte sourceId, byte targetId) {
+            try {
+                if (!active || werewolf == null || silverPass || sourceId == targetId || targetId != werewolf.PlayerId) return false;
+                if (Sheriff.sheriff == null || sourceId != Sheriff.sheriff.PlayerId) return false;
+                if (Hunter.active && Hunter.hunter != null && sourceId == Hunter.hunter.PlayerId) return false;
+                if (SilverMode() != SilverWounds) return false;
+                var ac = AmongUsClient.Instance;
+                return ac != null && !ac.AmHost;
+            } catch { return false; }
         }
 
         private static void SendSilverVerdict(byte sourceId, bool kill, byte showAnimation) {

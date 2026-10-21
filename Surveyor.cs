@@ -115,6 +115,18 @@ namespace UnknownsCollection {
 
         public static void MarkFromDraft(byte playerId) => ApplySet(playerId);
 
+        // The HUD (and this button) is built once when the lobby loads, before the host changes options (and
+        // on a guest before they arrive). Refresh the cooldown at intro end like Siphoner (audit 21.10.).
+        [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
+        static class RefreshButtonPatch {
+            public static void Postfix() {
+                try {
+                    if (markButton == null) return;
+                    markButton.MaxTimer = MarkCooldown != null ? MarkCooldown.getFloat() : 15f;
+                } catch { }
+            }
+        }
+
         // ---- Pick (host, random path) ----
         [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
         static class IntroEndPickPatch {

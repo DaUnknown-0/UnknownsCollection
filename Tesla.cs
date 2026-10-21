@@ -265,6 +265,23 @@ namespace UnknownsCollection {
             }
         }
 
+        private static float keptKillTimer, keptAt;
+        private static readonly HashSet<byte> keepTimerFor = new HashSet<byte>();
+
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
+        static class DischargeKeepsTimerPatch {
+            public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
+                try {
+                    if (keepTimerFor.Count == 0 || target == null || !keepTimerFor.Remove(target.PlayerId)) return;
+                    var lp = PlayerControl.LocalPlayer;
+                    if (__instance == null || lp == null || __instance.PlayerId != lp.PlayerId) return;
+                    // only the murder RPCs right behind this FX (a spared or shielded pole must not
+                    // hand a later knife kill of the same player a free cooldown)
+                    if (Time.time - keptAt < 2f && lp.Data != null && !lp.Data.IsDead) lp.SetKillTimer(keptKillTimer);
+                } catch { }
+            }
+        }
+
         private static void ApplyKillFx(byte plusVictimId, byte minusVictimId) {
             try {
                 // Arm the custom kill overlay before the murder RPCs land (this FX RPC is sent
@@ -275,6 +292,17 @@ namespace UnknownsCollection {
                 var p = plusVictimId != byte.MaxValue ? Helpers.playerById(plusVictimId) : null;
                 var m = minusVictimId != byte.MaxValue ? Helpers.playerById(minusVictimId) : null;
                 if (p == null && m == null) return;
+                // The Tesla is the murderer of the discharge, and vanilla MurderPlayer sets the murderer's
+                // kill timer to the full cooldown on his own client: every discharge was a hidden cooldown
+                // penalty (audit 21.10.). Remember his timer now, the postfix below puts it back.
+                var lp = PlayerControl.LocalPlayer;
+                if (tesla != null && lp != null && lp.PlayerId == tesla.PlayerId && lp.Data != null && !lp.Data.IsDead) {
+                    keptKillTimer = lp.killTimer;
+                    keptAt = Time.time;
+                    keepTimerFor.Clear();
+                    if (p != null && p.PlayerId != lp.PlayerId) keepTimerFor.Add(p.PlayerId);
+                    if (m != null && m.PlayerId != lp.PlayerId) keepTimerFor.Add(m.PlayerId);
+                }
                 // Anchored at the victims' own current positions (never the Tesla's) - each client
                 // reads its own locally known position, same approach SaboteurKillFx.Play() uses.
                 TeslaKillFx.Play(p != null ? p.GetTruePosition() : (Vector2?)null,

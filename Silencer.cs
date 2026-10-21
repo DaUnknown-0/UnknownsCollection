@@ -279,6 +279,18 @@ namespace UnknownsCollection {
             public static void Postfix() => UCResetGuard.Run("Silencer", ClearState);
         }
 
+        // The HUD (and this button) is built once when the lobby loads, before the host changes options (and
+        // on a guest before they arrive). Refresh the cooldown at intro end like Siphoner (audit 21.10.).
+        [HarmonyPatch(typeof(IntroCutscene), nameof(IntroCutscene.OnDestroy))]
+        static class RefreshButtonPatch {
+            public static void Postfix() {
+                try {
+                    if (silenceButton == null) return;
+                    silenceButton.MaxTimer = MarkCooldown != null ? MarkCooldown.getFloat() : 25f;
+                } catch { }
+            }
+        }
+
         // ====================================================================
         // Game start: host picks the Silencer among plain Impostors and broadcasts it.
         // Low priority so Tesla (normal) / Saboteur claim first; UCPromotion prevents collisions.

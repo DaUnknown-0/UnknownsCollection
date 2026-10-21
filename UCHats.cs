@@ -555,7 +555,9 @@ namespace UnknownsCollection {
                 if (frame != null && renderer.sprite != frame) renderer.sprite = frame;
                 if (def.BackWalk != null && def.Target == AnimTarget.Front && __instance.BackLayer != null) {
                     var back = __instance.BackLayer;
-                    if (def.BackIdle == null && runIndex < 0) def.BackIdle = back.sprite;
+                    // captured before UC ever writes this layer, walking or not (audit 21.10.: taken on the
+                    // first stand-still it could be a walk frame UC had put there, frozen as "idle" for good)
+                    if (def.BackIdle == null) def.BackIdle = back.sprite;
                     var want = runIndex >= 0 ? def.BackWalk[runIndex] : def.BackIdle;
                     if (want != null && back.sprite != want) back.sprite = want;
                 }

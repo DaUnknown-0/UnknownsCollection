@@ -147,6 +147,13 @@ namespace UnknownsCollection {
             if (!active || skinwalker == null || InMeeting()) return;
             var victim = Helpers.playerById(victimId);
             if (victim == null || victim.Data == null || !victim.Data.IsDead) return;
+            // Every client tracks his last kill (MurderPatch), so every client checks the rules the sender
+            // checked: his own victim, inside the window (audit 21.10.: any body on the map could vanish).
+            // A little slack for the RPC arriving after the window closed on the sender's clock.
+            if (victimId != lastVictim || Time.time - lastKillAt > WindowSeconds + 2f) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Skinwalker] skin request for {victim.Data.PlayerName} refused (not his fresh victim).");
+                return;
+            }
             foreach (var body in UnityEngine.Object.FindObjectsOfType<DeadBody>())
                 if (body != null && body.ParentId == victimId) UnityEngine.Object.Destroy(body.gameObject);
             wornId = victimId;
@@ -205,7 +212,10 @@ namespace UnknownsCollection {
                     nextLookCheck = Time.time + 0.5f;
                     var v = Helpers.playerById(wornId);
                     if (v == null || v.Data == null || LookBlocked()) return;
-                    if (skinwalker.CurrentOutfit != null && skinwalker.CurrentOutfit.ColorId != v.Data.DefaultOutfit.ColorId) ApplyLook();
+                    // What he SHOWS (cosmetics), not CurrentOutfit: TOR's setLook only uses RawSet*, so the outfit
+                    // never changes and the old check re-applied the whole look every 0.5 s (audit 21.10.:
+                    // restarted skin animation, idle pose on ladders). Only a look someone else reset is redone.
+                    if (skinwalker.cosmetics != null && skinwalker.cosmetics.ColorId != v.Data.DefaultOutfit.ColorId) ApplyLook();
                 } catch { }
             }
         }

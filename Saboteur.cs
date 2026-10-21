@@ -124,6 +124,7 @@ namespace UnknownsCollection {
         private const byte SubPlaceTrap = 6;          // id, x, y
         private const byte SubTriggerTrap = 7;        // playerId, id
         private const byte SubSelfLimp = 8;           // on (0/1)
+        private const byte SubKillUsed = 9;           // (none) host: this round's sabotage kill is spent (armor took it)
         // Subtypes 9+ (defuse) are added with their features.
 
         // TOR's UncheckedMurderPlayer RPC byte, resolved from the internal CustomRPC enum (fallback 108).
@@ -340,6 +341,9 @@ namespace UnknownsCollection {
                     // defused the console in the scan UI. Host-only dropped every non-host defuse, so
                     // the console stayed armed for everyone else and killed the next crewmate (Opus
                     // audit round 2, 2026-10-02). A living non-impostor may clear it.
+                    case SubKillUsed:
+                        if (UCRpc.RequireHost("Saboteur.KillUsed")) killUsedThisRound = true;
+                        break;
                     case SubClearSabotage:
                         if (UCRpc.SenderIsHost || DefuserMayClear(UCRpc.Sender)) ApplyClearSabotage();
                         else UCRpc.RequireHost("Saboteur.ClearSabotage");   // logs the refusal
@@ -486,9 +490,13 @@ namespace UnknownsCollection {
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] SendSetSabotagedConsole failed: {e}"); }
         }
 
+        // ... and stands at the console (audit 21.10.: any living crewmate could clear it from anywhere).
+        // The defuser's position is the one this client knows, a little behind, hence the extra metres.
         private static bool DefuserMayClear(PlayerControl p) =>
             p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected
-            && p.Data.Role != null && !p.Data.Role.IsImpostor;
+            && p.Data.Role != null && !p.Data.Role.IsImpostor
+            && (!sabotagedActive
+                || Vector2.Distance(p.GetTruePosition(), new Vector2(sabotagedX, sabotagedY)) <= ScanAbortDistance + 2f);
 
         public static void SendClearSabotage() {
             try {
@@ -496,6 +504,13 @@ namespace UnknownsCollection {
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 ApplyClearSabotage();
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] SendClearSabotage failed: {e}"); }
+        }
+
+        private static void SendKillUsed() {
+            try {
+                var w = BeginRpc(SubKillUsed);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Saboteur] SendKillUsed failed: {e}"); }
         }
 
         // Victim -> host: "I just finished the sabotaged console." Host validates and arbitrates.
@@ -688,6 +703,9 @@ namespace UnknownsCollection {
             if (attempt == MurderAttemptResult.BlankKill) {
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Saboteur] kill request absorbed by {victim.Data?.PlayerName}'s armor; trap used up.");
                 killUsedThisRound = true;
+                // every client has to know, or the Saboteur's button stays lit and he buys tokens the host
+                // turns down (ApplyKillFx sets it on the success path; audit 21.10.)
+                SendKillUsed();
                 SendClearSabotage();
                 return;
             }

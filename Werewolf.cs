@@ -1582,11 +1582,14 @@ namespace UnknownsCollection {
         private static byte silverWaitSource, silverWaitAnim;
 
         private static void SilverWaitTick() {
-            if (silverWaitSince < 0f || Time.time - silverWaitSince < SilverVerdictWait) return;
+            // the wolf's own client waits longer: a death there sends his ghost role to everybody
+            var me = PlayerControl.LocalPlayer;
+            float wait = me != null && werewolf != null && me.PlayerId == werewolf.PlayerId ? SilverVerdictWait * 2.5f : SilverVerdictWait;
+            if (silverWaitSince < 0f || Time.time - silverWaitSince < wait) return;
             silverWaitSince = -1f;
             if (!active || werewolf == null || werewolf.Data == null || werewolf.Data.IsDead) return;
             UnknownsCollectionPlugin.Logger?.LogWarning(
-                $"[Werewolf] no silver verdict from the host within {SilverVerdictWait} s - applying TOR's default kill.");
+                $"[Werewolf] no silver verdict from the host within {wait:F0} s - applying TOR's default kill.");
             ApplySilverVerdict(silverWaitSource, true, silverWaitAnim);
         }
 
@@ -1599,9 +1602,31 @@ namespace UnknownsCollection {
                 try { RPCProcedure.uncheckedMurderPlayer(sourceId, werewolf.PlayerId, showAnimation); }
                 finally { silverPass = false; }
             } else {
+                // The host says "wound", but here the wolf already died: the 4 s fallback fired before a late
+                // verdict, or this client's own detour was lost and TOR killed him at once. The host is the
+                // truth, so he lives here as well (audit 21.10.: dead here, alive on the host, ghost walking
+                // there and the win conditions apart). Same revive as the Paramedic's.
+                if (werewolf.Data != null && werewolf.Data.IsDead) ReviveLocally();
                 silverHitsTaken++;
                 ApplyWound();
             }
+        }
+
+        private static void ReviveLocally() {
+            try {
+                byte id = werewolf.PlayerId;
+                werewolf.Revive();
+                RoleManager.Instance.SetRole(werewolf, RoleTypes.Impostor);
+                // His own client may have handed out a ghost role when he died here; that went over the
+                // network, so the owner takes it back the same way.
+                var lp = PlayerControl.LocalPlayer;
+                if (lp != null && lp.PlayerId == id) { try { werewolf.RpcSetRole(RoleTypes.Impostor, true); } catch { } }
+                foreach (var body in UnityEngine.Object.FindObjectsOfType<DeadBody>())
+                    if (body != null && body.ParentId == id) UnityEngine.Object.Destroy(body.gameObject);
+                try { GameData.Instance?.RecomputeTaskCounts(); } catch { }
+                Pelican.ForgetDeath(id);
+                UnknownsCollectionPlugin.Logger?.LogWarning("[Werewolf] the host's silver verdict was a wound, but he had died here - revived to match the host.");
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Werewolf] local revive failed: {e}"); }
         }
 
         // A Sheriff shot at the werewolf that a non-host HOLDS for the host's verdict (SilverBulletPatch):
@@ -1661,7 +1686,7 @@ namespace UnknownsCollection {
                     if (silverPass) return true;           // the host's kill verdict, replayed
                     var ac = AmongUsClient.Instance;
                     if (ac == null || !ac.AmHost) {               // wait for the host's verdict
-                        silverWaitSince = Time.time;
+                        if (silverWaitSince < 0f) silverWaitSince = Time.time;   // a second shot keeps the first deadline
                         silverWaitSource = sourceId;
                         silverWaitAnim = showAnimation;
                         return false;

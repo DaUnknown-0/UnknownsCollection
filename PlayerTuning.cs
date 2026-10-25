@@ -51,6 +51,7 @@ using HarmonyLib;
 using Hazel;
 using Il2CppInterop.Runtime.InteropTypes.Arrays;
 using TheOtherRoles;
+using static TheOtherRoles.TheOtherRoles;
 using UnityEngine;
 
 namespace UnknownsCollection {
@@ -63,6 +64,7 @@ namespace UnknownsCollection {
         private const byte SubSetFaction = 4; // [pid][impostor bool] - vanilla faction, applied locally everywhere
         private const byte SubRevive    = 5;  // [pid] - revive a dead player (outside meetings)
         private const byte SubArmKillFx = 6;  // [victimId][kind] - host tooling: pick the next cutscene
+        private const byte SubSetLook   = 7;  // [pid][part 0 hat, 1 skin, 2 visor, 3 pet][product id] - cosmetics (2026-10-26)
 
         public struct Tune {
             public float Speed;      // 1 = normal
@@ -418,6 +420,88 @@ namespace UnknownsCollection {
             catch { return new string[0]; }
         }
 
+        // ---- Cosmetics (Role Control "/hat", "/skin", "/visor", "/pet", 2026-10-26) ----
+        // Mid-round the vanilla RpcSetHat/RpcSetSkin is not an option (cosmetics are a lobby thing for the server), so the
+        // host sends the change over this module and every client applies it locally: the player's DefaultOutfit is
+        // rewritten (TOR's morph and camouflage resets go back to it) and, unless TOR currently shows someone else's
+        // look on that player, the look is set right away. In the lobby the same path just sets the cosmetic.
+
+        /// <summary>part: 0 hat, 1 skin, 2 visor, 3 pet. id = product id ("hat_..."), "" or "none" = nothing.</summary>
+        public static bool SendSetLook(byte pid, byte part, string id) {
+            try {
+                if (part > 3) return false;
+                if (!MaySend(out string reason)) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[PlayerTuning] SendSetLook refused: {reason}.");
+                    return false;
+                }
+                var w = BeginRpc(SubSetLook);
+                w.Write(pid);
+                w.Write(part);
+                w.Write(id ?? "");
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplySetLook(pid, part, id ?? "");
+                return true;
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[PlayerTuning] SendSetLook failed: {e}");
+                return false;
+            }
+        }
+
+        private static readonly string[] EmptyIds = { "hat_NoHat", "skin_None", "visor_EmptyVisor", "pet_EmptyPet" };
+
+        private static void ApplySetLook(byte pid, byte part, string id) {
+            try {
+                var p = Helpers.playerById(pid);
+                if (p == null || p.Data == null || part > 3) return;
+                if (string.IsNullOrEmpty(id) || id == "none") id = EmptyIds[part];
+                var o = p.Data.DefaultOutfit;
+                switch (part) {
+                    case 0: o.HatId = id; break;
+                    case 1: o.SkinId = id; break;
+                    case 2: o.VisorId = id; break;
+                    case 3: o.PetId = id; break;
+                }
+                bool foreignLook = (p == Morphling.morphling && Morphling.morphTimer > 0f)
+                                   || Camouflager.camouflageTimer > 0f;
+                if (foreignLook) return;                                   // the reset at the end shows the new look
+                int color = o.ColorId;
+                if (ShipStatus.Instance != null) {
+                    p.setLook(p.Data.PlayerName, color, o.HatId, o.VisorId, o.SkinId, o.PetId);
+                } else {
+                    switch (part) {
+                        case 0: p.RawSetHat(id, color); break;
+                        case 1: p.RawSetSkin(id, color); break;
+                        case 2: p.RawSetVisor(id, color); break;
+                        case 3: p.RawSetPet(id, color); break;
+                    }
+                }
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[PlayerTuning] look of {p.Data.PlayerName}: part {part} = {id}");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[PlayerTuning] ApplySetLook failed: {e.Message}");
+            }
+        }
+
+        /// <summary>All cosmetics the local client knows (vanilla + TOR/UC hats), as "productId|name" per part, for Role Control.</summary>
+        public static string[] LookCatalog(byte part) {
+            var list = new System.Collections.Generic.List<string>();
+            try {
+                var hm = HatManager.Instance;
+                if (hm == null) return list.ToArray();
+                switch (part) {
+                    case 0: foreach (var c in hm.allHats) list.Add(c.ProductId + "|" + SafeName(c)); break;
+                    case 1: foreach (var c in hm.allSkins) list.Add(c.ProductId + "|" + SafeName(c)); break;
+                    case 2: foreach (var c in hm.allVisors) list.Add(c.ProductId + "|" + SafeName(c)); break;
+                    case 3: foreach (var c in hm.allPets) list.Add(c.ProductId + "|" + SafeName(c)); break;
+                }
+            } catch { }
+            return list.ToArray();
+        }
+
+        private static string SafeName(CosmeticData c) {
+            try { string n = c.GetItemName(); if (!string.IsNullOrWhiteSpace(n)) return n; } catch { }
+            return c.ProductId;
+        }
+
         public static bool SendRevive(byte pid) {
             try {
                 if (!MaySend(out string reason)) {
@@ -546,6 +630,13 @@ namespace UnknownsCollection {
                         byte victimId = reader.ReadByte();
                         byte kind = reader.ReadByte();
                         ApplyArmKillFx(victimId, kind);
+                        break;
+                    }
+                    case SubSetLook: {
+                        byte pid = reader.ReadByte();
+                        byte part = reader.ReadByte();
+                        string id = reader.ReadString();
+                        ApplySetLook(pid, part, id);
                         break;
                     }
                     default:

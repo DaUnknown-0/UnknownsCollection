@@ -423,7 +423,7 @@ namespace UnknownsCollection {
         // ---- Cosmetics (Role Control "/hat", "/skin", "/visor", "/pet", 2026-10-26) ----
         // Mid-round the vanilla RpcSetHat/RpcSetSkin is not an option (cosmetics are a lobby thing for the server), so the
         // host sends the change over this module and every client applies it locally: the player's DefaultOutfit is
-        // rewritten (TOR's morph and camouflage resets go back to it) and, unless TOR currently shows someone else's
+        // rewritten (morph and camouflage resets go back to it) and, unless an ability currently shows someone else's
         // look on that player, the look is set right away. In the lobby the same path just sets the cosmetic.
 
         /// <summary>part: 0 hat, 1 skin, 2 visor, 3 pet. id = product id ("hat_..."), "" or "none" = nothing.</summary>
@@ -462,7 +462,8 @@ namespace UnknownsCollection {
                     case 3: o.PetId = id; break;
                 }
                 bool foreignLook = (p == Morphling.morphling && Morphling.morphTimer > 0f)
-                                   || Camouflager.camouflageTimer > 0f;
+                                   || Camouflager.camouflageTimer > 0f || Helpers.MushroomSabotageActive()
+                                   || Copycat.OverridesLook(p) || Skinwalker.IsDisguised(p);
                 if (foreignLook) return;                                   // the reset at the end shows the new look
                 int color = o.ColorId;
                 if (ShipStatus.Instance != null) {

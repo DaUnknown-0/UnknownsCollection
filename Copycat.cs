@@ -115,6 +115,10 @@ namespace UnknownsCollection {
         private static bool isMorphed;
         private static float morphEndTime;
 
+        // Cosmetic tooling may update DefaultOutfit, but must leave the displayed disguise alone.
+        internal static bool OverridesLook(PlayerControl player) =>
+            player != null && (camouflaged || (isMorphed && copycat != null && player.PlayerId == copycat.PlayerId));
+
         // Win snapshot: captured at game-end BEFORE TOR's resetVariables wipes copycat/usedAbilities.
         // Deliberately NOT reset in resetVariables (TOR's end-of-game reset would clear it first).
         private static byte winnerCopycatId = byte.MaxValue;

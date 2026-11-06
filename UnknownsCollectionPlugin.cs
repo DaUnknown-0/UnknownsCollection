@@ -39,7 +39,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.4.0";
+    public const string PluginVersion = "1.5.0";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -415,6 +415,9 @@ public class UnknownsCollectionPlugin : BasePlugin
         // TOR's TheOtherHats folder and registers them through reflection - TOR itself stays
         // untouched (see UCHats.cs). Purely cosmetic, deliberately NOT gated on the mod handshake.
         UCHats.TryPatch(harmony);
+        // Hats without a mod update (2026-11-05): list and pictures from the asset repository, live (UCOnlineHats.cs).
+        try { UCOnlineHats.Start(updater, UCHats.HatsDir); }
+        catch (Exception e) { Logger.LogWarning($"[UC/OnlineHats] start failed: {e.Message}"); }
 
         Logger.LogInfo($"{PluginName} v{PluginVersion} loaded.");
     }

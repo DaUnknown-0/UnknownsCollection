@@ -384,6 +384,9 @@ namespace UnknownsCollection {
 
         private static string hatsDir;
 
+        /// <summary>TOR's hat folder, once TryPatch resolved it (UCOnlineHats puts its pictures there too).</summary>
+        internal static string HatsDir => hatsDir ?? ResolveHatsDirectory();
+
         private static byte[] ReadResource(string logicalName) {
             // embedded or from the asset folder (UCAssetStore; null while not downloaded)
             using Stream stream = UCAssetStore.Open(logicalName);
@@ -451,7 +454,7 @@ namespace UnknownsCollection {
         // does not host them.
         private static void StripOwnFiles(List<string> __result) {
             try {
-                __result?.RemoveAll(f => OwnDiskFiles.Contains(f));
+                __result?.RemoveAll(f => OwnDiskFiles.Contains(f) || UCOnlineHats.DiskFiles.Contains(f));
             } catch (Exception ex) {
                 UnknownsCollectionPlugin.Logger?.LogWarning($"[Hats] download strip failed: {ex.Message}");
             }

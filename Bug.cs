@@ -30,6 +30,7 @@ namespace UnknownsCollection {
         public static byte bugPlayerId = byte.MaxValue;
 
         private const byte RpcId = 198;
+        internal const byte ModuleRpcId = RpcId;   // BugCrash sends its subtypes (1, 2) on the same module byte
         private const byte SubSetBug = 0;
 
         private static RoleInfo bugInfo;
@@ -44,6 +45,7 @@ namespace UnknownsCollection {
                     CustomOptionHolder.rates, null, true);
                 SpawnMinPlayers = CustomOption.Create(1481, Types.Neutral, "Bug Minimum Players To Spawn",
                     6f, 4f, 15f, 1f, SpawnRate);
+                BugCrash.CreateOptions(SpawnRate);   // 1484/1485 System Crash (06.11.)
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Bug] CreateOptions failed: {e}");
@@ -202,6 +204,8 @@ namespace UnknownsCollection {
                     // Host-authoritative role assignment (host pick in IntroCutscene.OnDestroy / UCRoleDraft) - a
                     // forged one would let any client declare any player this role (AUDIT H-3).
                     if (UCRpc.RequireHost("Bug.SetBug")) ApplySetBug(id);
+                } else if (subtype == BugCrash.SubCrashArm || subtype == BugCrash.SubCrashStart) {
+                    BugCrash.Handle(subtype, reader);
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Bug] HandleRpc failed: {e}");
@@ -219,6 +223,7 @@ namespace UnknownsCollection {
             bug = null;
             active = false;
             bugPlayerId = byte.MaxValue;
+            BugCrash.Reset();
             // NOTE: winnerBugId is intentionally NOT reset here (see its declaration).
         }
 

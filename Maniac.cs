@@ -27,6 +27,8 @@ namespace UnknownsCollection {
         public static CustomOption ExplosionHits;   // 1496 - who the blast kills (all / no impostors / no maniac)
         public static CustomOption ShieldPierce;     // 1497 - which shields the bomb ignores (none/medic/time/both)
         public static CustomOption ExcludeBomber;    // 1498 - Maniac and TOR's Bomber never share a game
+        public static CustomOption DefuseInMeetings; // 1499 - a carried bomb turns into a defuse minigame in a meeting
+        public static CustomOption DefuseTime;       // 1692 - seconds for that minigame
 
         public static PlayerControl maniac;
         public static bool active;
@@ -51,6 +53,9 @@ namespace UnknownsCollection {
         private const byte SubPassBomb = 3;    // oldCarrierId, newCarrierId
         private const byte SubExplode = 4;     // victimId
         private const byte SubClear = 5;
+        private const byte SubDefuseStart = 6;  // carrierId, seconds (host -> everyone, only the carrier plays)
+        private const byte SubDefuseResult = 7; // carrierId, ok (carrier -> host)
+        private const byte SubBombDeath = 8;    // carrierId (host, at the meeting's end)
 
         private static RoleInfo maniacInfo;
         public static RoleInfo ManiacInfo() => maniacInfo ??= new RoleInfo(
@@ -77,6 +82,12 @@ namespace UnknownsCollection {
                     new string[] { "None", "Medic Shield", "Time Master Shield", "Both Shields" }, SpawnRate);
                 ExcludeBomber = CustomOption.Create(1498, Types.Impostor, "Maniac And Bomber Exclude Each Other",
                     true, SpawnRate);
+                // User 2026-11-06: a bomb that is out when a meeting starts no longer simply vanishes; its carrier
+                // gets a defuse minigame (ManiacDefuse) and dies at the meeting's end if it fails. Off = the old rule.
+                DefuseInMeetings = CustomOption.Create(1499, Types.Impostor, "Maniac Bomb Defuse In Meetings",
+                    true, SpawnRate);
+                DefuseTime = CustomOption.Create(1692, Types.Impostor, "Maniac Defuse Time",
+                    30f, 15f, 60f, 5f, DefuseInMeetings);
                 UnknownsCollectionPlugin.Logger?.LogInfo("[Maniac] Options created.");
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] CreateOptions failed: {e}");
@@ -272,6 +283,188 @@ namespace UnknownsCollection {
                 AmongUsClient.Instance.FinishRpcImmediately(w);
                 ApplyClear();
             } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] SendClear failed: {e}"); }
+        }
+
+        // ====================================================================
+        // Defuse in meetings (User 2026-11-06, options 1499/1692). Host side; the minigame is ManiacDefuse.
+        //   - A meeting clears the bomb as before, but right before that the host remembers who carried it.
+        //   - DefuseDelay seconds later (the meeting screen has settled) the host sends SubDefuseStart with the
+        //     time: the option, cut to what is left of the voting time. Too little left: no minigame, old rule.
+        //   - The carrier sends SubDefuseResult. Anything but a success that reached the host by MeetingHud.Close
+        //     (failed, out of time, voting ended first) kills the carrier there: exiled, no body, "bombed" by the
+        //     Maniac, the way the Poisoner's meeting deaths work. Voted out anyway: nothing on top.
+        // ====================================================================
+        private const float DefuseDelay = 3f;
+        private const float DefuseMinSeconds = 10f;
+        private const float DefuseMeetingMargin = 3f;   // the minigame ends this long before the voting time runs out
+        private static byte defuseCarrier = byte.MaxValue;
+        private static float defuseStartAt;
+        private static bool defuseSent, defuseOk;
+        private static byte exiledThisMeeting = byte.MaxValue;
+
+        private static bool DefuseOn() => DefuseInMeetings == null || DefuseInMeetings.getBool();
+        private static float DefuseSeconds() => DefuseTime != null ? DefuseTime.getFloat() : 30f;
+
+        // Called right before a meeting clears the bomb (both clear sites run it, the first one wins).
+        private static void ArmDefuse() {
+            try {
+                if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                if (!active || bombCarrier == null || !IsAlive(bombCarrier) || !DefuseOn()) return;
+                if (defuseCarrier != byte.MaxValue) return;
+                defuseCarrier = bombCarrier.PlayerId;
+                defuseStartAt = Time.time + DefuseDelay;
+                defuseSent = defuseOk = false;
+                exiledThisMeeting = byte.MaxValue;
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] meeting with the bomb on {bombCarrier.Data?.PlayerName}: defuse armed.");
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] ArmDefuse failed: {e}");
+            }
+        }
+
+        private static float MeetingSecondsLeft(MeetingHud hud) {
+            try {
+                var o = GameOptionsManager.Instance?.currentNormalGameOptions;
+                if (o == null || o.VotingTime <= 0) return float.MaxValue;                 // 0 = no voting limit
+                return o.DiscussionTime + o.VotingTime - hud.discussionTimer;
+            } catch { return float.MaxValue; }
+        }
+
+        private static void HostDefuseTick() {
+            if (defuseCarrier == byte.MaxValue || defuseSent || Time.time < defuseStartAt) return;
+            var hud = MeetingHud.Instance;
+            if (hud == null) return;
+            defuseSent = true;
+            var carrier = Helpers.playerById(defuseCarrier);
+            if (!IsAlive(carrier) || hud.state == MeetingHud.VoteStates.Results || hud.state == MeetingHud.VoteStates.Proceeding) {
+                defuseCarrier = byte.MaxValue;
+                return;
+            }
+            float seconds = Mathf.Min(DefuseSeconds(), MeetingSecondsLeft(hud) - DefuseMeetingMargin);
+            if (seconds < DefuseMinSeconds) {
+                UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] defuse skipped: only {seconds + DefuseMeetingMargin:0} s of voting left.");
+                defuseCarrier = byte.MaxValue;
+                return;
+            }
+            SendDefuseStart(defuseCarrier, (byte)Mathf.Clamp(Mathf.RoundToInt(seconds), 1, 250));
+        }
+
+        private static void SendDefuseStart(byte carrierId, byte seconds) {
+            try {
+                var w = BeginRpc(SubDefuseStart);
+                w.Write(carrierId);
+                w.Write(seconds);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyDefuseStart(carrierId, seconds);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] SendDefuseStart failed: {e}"); }
+        }
+
+        internal static void SendDefuseResult(bool ok) {
+            try {
+                var me = PlayerControl.LocalPlayer;
+                if (me == null) return;
+                var w = BeginRpc(SubDefuseResult);
+                w.Write(me.PlayerId);
+                w.Write(ok);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyDefuseResult(me.PlayerId, ok);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] SendDefuseResult failed: {e}"); }
+        }
+
+        private static void SendBombDeath(byte carrierId) {
+            try {
+                var w = BeginRpc(SubBombDeath);
+                w.Write(carrierId);
+                AmongUsClient.Instance.FinishRpcImmediately(w);
+                ApplyBombDeath(carrierId);
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] SendBombDeath failed: {e}"); }
+        }
+
+        private static void ApplyDefuseStart(byte carrierId, byte seconds) {
+            var me = PlayerControl.LocalPlayer;
+            if (me != null && me.PlayerId == carrierId && me.Data != null && !me.Data.IsDead) ManiacDefuse.Open(seconds);
+        }
+
+        private static void ApplyDefuseResult(byte carrierId, bool ok) {
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] defuse result from player {carrierId}: {(ok ? "defused" : "failed")}.");
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+            if (carrierId == defuseCarrier) defuseOk = ok;
+        }
+
+        private static void ApplyBombDeath(byte carrierId) {
+            // Not gated on `active`: Role Control can start the minigame without a Maniac (UCEvents); the message
+            // itself is host-only (RequireHost).
+            var target = Helpers.playerById(carrierId);
+            if (target == null || target.Data == null || target.Data.IsDead) return;
+            // Exiled(), not a murder: no body that could be reported after the meeting (Poisoner, LoverRevenger).
+            // The Lawyer of a client who dies like this becomes a Pursuer, as for any kill.
+            try {
+                if (Lawyer.lawyer != null && target == Lawyer.target) RPCProcedure.lawyerPromotesToPursuer();
+            } catch (Exception e) {
+                UnknownsCollectionPlugin.Logger?.LogWarning($"[Maniac] lawyer promotion failed: {e.Message}");
+            }
+            target.Exiled();
+            // TOR booked an exile without a killer; it is the Maniac's bomb (end screen, kill count, TrackerExport).
+            try {
+                var ledger = Pelican.DeadPlayersLedger();
+                var entry = ledger?.LastOrDefault(d => d != null && d.player != null && d.player.PlayerId == carrierId);
+                if (entry != null) {
+                    entry.deathReason = DeadPlayer.CustomDeathReason.Bomb;
+                    if (maniac != null) entry.killerIfExisting = maniac;
+                }
+            } catch { }
+            // The blast overlay for the victim and the Maniac, anonymous like the blast itself (victim, victim).
+            var lp = PlayerControl.LocalPlayer;
+            if (lp != null && (lp.PlayerId == carrierId || (maniac != null && lp.PlayerId == maniac.PlayerId)))
+                UCKillOverlay.PlayFor(UCKillOverlay.Kind.ManiacBomb, target.Data, target.Data);
+            UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] {target.Data.PlayerName} did not defuse the bomb: dies at the meeting's end.");
+        }
+
+        // By hand (UCEvents, Role Control): the minigame for this player in the current meeting, starting right away.
+        internal static string ForceDefuse(byte playerId) {
+            if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return "Only the host can start the defuse minigame.";
+            var hud = MeetingHud.Instance;
+            if (hud == null) return "The defuse minigame only runs in a meeting.";
+            if (hud.state == MeetingHud.VoteStates.Results || hud.state == MeetingHud.VoteStates.Proceeding)
+                return "The voting is over, too late for this meeting.";
+            var p = Helpers.playerById(playerId);
+            if (!IsAlive(p)) return "That player is not alive.";
+            if (defuseCarrier != byte.MaxValue && defuseSent) return "A defuse minigame already ran in this meeting.";
+            defuseCarrier = playerId;
+            defuseStartAt = Time.time;
+            defuseSent = defuseOk = false;
+            exiledThisMeeting = byte.MaxValue;
+            return $"Defuse minigame starts for {p.Data.PlayerName} (fails = dies at the meeting's end).";
+        }
+
+        private static void ResetDefuse() {
+            defuseCarrier = byte.MaxValue;
+            defuseSent = defuseOk = false;
+            exiledThisMeeting = byte.MaxValue;
+        }
+
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.VotingComplete))]
+        static class DefuseVotingCompletePatch {
+            public static void Postfix([HarmonyArgument(1)] NetworkedPlayerInfo exiled) {
+                exiledThisMeeting = exiled != null ? exiled.PlayerId : byte.MaxValue;
+            }
+        }
+
+        [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Close))]
+        static class DefuseMeetingClosePatch {
+            public static void Postfix() {
+                try {
+                    byte id = defuseCarrier, exiled = exiledThisMeeting;
+                    bool sent = defuseSent, ok = defuseOk;
+                    ResetDefuse();
+                    ManiacDefuse.Close();   // every client: never leave the panel over the exile screen
+                    if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                    if (id == byte.MaxValue || !sent || ok || id == exiled) return;
+                    if (!IsAlive(Helpers.playerById(id))) return;
+                    SendBombDeath(id);
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] defuse meeting end failed: {e}");
+                }
+            }
         }
 
         private static void ApplySetManiac(byte id) {
@@ -511,6 +704,24 @@ namespace UnknownsCollection {
                     case SubClear:
                         if (UCRpc.RequireHost("Maniac.Clear")) ApplyClear();
                         break;
+                    // Defuse in meetings: start and death come from the host, the result from the carrier.
+                    case SubDefuseStart: {
+                        byte id = reader.ReadByte();
+                        byte secs = reader.ReadByte();
+                        if (UCRpc.RequireHost("Maniac.DefuseStart")) ApplyDefuseStart(id, secs);
+                        break;
+                    }
+                    case SubDefuseResult: {
+                        byte id = reader.ReadByte();
+                        bool ok = reader.ReadBoolean();
+                        if (UCRpc.RequireOwnerOrHost(Helpers.playerById(id), "Maniac.DefuseResult")) ApplyDefuseResult(id, ok);
+                        break;
+                    }
+                    case SubBombDeath: {
+                        byte id = reader.ReadByte();
+                        if (UCRpc.RequireHost("Maniac.BombDeath")) ApplyBombDeath(id);
+                        break;
+                    }
                 }
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Maniac] HandleRpc failed: {e}");
@@ -528,6 +739,8 @@ namespace UnknownsCollection {
             maniac = null;
             active = false;
             ClearBomb();
+            ResetDefuse();
+            ManiacDefuse.Close();
         }
 
         [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
@@ -572,12 +785,15 @@ namespace UnknownsCollection {
             public static void Postfix() {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
+                    HostDefuseTick();
                     if (!active || bombCarrier == null) return;
                     if (InMeeting()) {
                         // MeetingHud.Start's own postfix (MeetingStartPatch) runs on every client,
                         // including this host, and already clears the bomb locally the instant a
                         // meeting starts. A local clear here is enough; broadcasting an RPC too would
                         // just be a redundant no-op once every client has already cleared itself.
+                        // Whichever of the two runs first remembers the carrier for the defuse.
+                        ArmDefuse();
                         ClearBomb();
                         return;
                     }
@@ -709,11 +925,12 @@ namespace UnknownsCollection {
             }
         }
 
-        // Meeting: clear bomb, reset cooldown
+        // Meeting: clear bomb (the host remembers the carrier for the defuse first), reset cooldown
         [HarmonyPatch(typeof(MeetingHud), nameof(MeetingHud.Start))]
         static class MeetingStartPatch {
             public static void Postfix() {
                 if (active) {
+                    ArmDefuse();
                     ClearBomb();
                     if (bombButton != null) bombButton.Timer = bombButton.MaxTimer;
                 }

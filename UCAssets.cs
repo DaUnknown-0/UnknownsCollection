@@ -119,6 +119,8 @@ namespace UnknownsCollection {
         // Stalker (night indigo): the strike button, animated like every other UC button.
         public static Sprite StalkerIcon => GetSprite("UnknownsCollection.Resources.stalker_strike.png", 115f);
         public static Sprite ManipulatorIcon => GetSprite("UnknownsCollection.Resources.manipulator_fake.png", 115f);
+        // Bug: the System Crash button (06.11.). No own picture yet: null -> BugCrash falls back to TOR's Hacker icon.
+        public static Sprite BugCrashIcon => GetSprite("UnknownsCollection.Resources.bug_crash.png", 115f);
         // WORLD sprite (in-map object): 200 ppu -> the ~110 px crystal stands ~0.55 units tall.
         public static Sprite CollectorRelicSprite => GetSprite("UnknownsCollection.Resources.collector_relic.png", 200f);
 

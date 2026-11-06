@@ -4,18 +4,27 @@
 
 /*
  * BugCrashScreen - what every living player sees when the Bug's System Crash hits a meeting (BugCrash):
- *   1. GLITCH (GlitchSeconds): the real screen, captured at the end of the frame, is cut into horizontal bands that
- *      tear sideways, swap places and split into red/cyan, growing worse until it breaks.
+ *   1. GLITCH (GlitchSeconds): the real screen, captured at the end of the frame and shrunk to GlitchW pixels across,
+ *      shown pixelated and corrupted more and more (User 06.11., reference "digital glitch effect on pixels"): rows
+ *      smear sideways like pixel sorting, bands slip, streaks of orange/teal/pink, macroblocks with a grid pattern,
+ *      short vertical dashes, and everything sinks into blue until only blue streaks are left and the blue screen
+ *      takes over.
  *   2. BLUE SCREEN (BlueSeconds): a sad face, "collecting info", a percentage that jumps up.
  *   3. REBOOT: a BIOS screen with a six character recovery code that flickers (characters glitch and swap for a
  *      moment). Type it before the time runs out (letters and digits, Backspace deletes, a wrong code starts over).
  *   4. RESULT: rebooting, or "boot failed" -> BugCrash votes Skip for this player once the voting is open.
  * A screen-space canvas on top of everything; while it runs the game's buttons take no clicks and the chat is shut.
  * Only ASCII and Latin-1 text (TMP's default font).
+ *
+ * Music (User 2026-11-06: the meeting music shall go quiet for a moment as well): during the glitch and the blue screen
+ * every source on the game's music channel is muted (Forgotten Fixes' meeting music and any other mod's music, all of
+ * them play there) and comes back with the reboot screen. Only `mute` is touched, never the volume the owners set, and
+ * only the sources muted here are switched back on.
  */
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using BepInEx.Unity.IL2CPP.Utils.Collections;
 using HarmonyLib;
 using TMPro;
@@ -27,8 +36,8 @@ namespace UnknownsCollection {
         private enum Phase { Off, Capture, Glitch, Blue, Reboot, Result }
         private static Phase phase = Phase.Off;
 
-        private const float GlitchSeconds = 1.6f, BlueSeconds = 3f, ResultSeconds = 1.8f;
-        private const int Bands = 24, NoiseBlocks = 10, CodeLength = 6;
+        private const float GlitchSeconds = 1.8f, BlueSeconds = 3f, ResultSeconds = 1.8f;
+        private const int GlitchW = 480, CodeLength = 6;
         private const string CodeChars = "ACDEFGHJKLMNPQRTUVWXY34679";   // nothing that reads as 0/O or 1/I
         private const float RefW = 1920f, RefH = 1080f;
 
@@ -39,9 +48,9 @@ namespace UnknownsCollection {
         private static readonly Color Bad = new Color(1f, 0.35f, 0.3f, 1f);
 
         private static GameObject root, glitchLayer, blueLayer, biosLayer;
-        private static Texture2D shot;
-        private static RawImage[] bands;
-        private static Image[] noise;
+        private static Texture2D glitchTex;      // GlitchW wide, point filtered, rewritten every tick
+        private static Color32[] basePx, buf;    // the shrunk screenshot, and the corrupted frame
+        private static int gw, gh;
         private static TextMeshProUGUI blueProgress, biosCode, biosInput, biosStatus, biosTime;
 
         private static float phaseStart, rebootSeconds, rebootLeft, nextJitter, closeAt;
@@ -76,17 +85,16 @@ namespace UnknownsCollection {
         private static IEnumerator CaptureThenStart() {
             yield return new WaitForEndOfFrame();
             if (phase != Phase.Capture) yield break;
-            try { shot = ScreenCapture.CaptureScreenshotAsTexture(); }
-            catch (Exception e) { shot = null; UnknownsCollectionPlugin.Logger?.LogWarning($"[Bug] crash screenshot failed: {e.Message}"); }
-            if (shot != null) {
-                shot.wrapMode = TextureWrapMode.Clamp;
-                shot.hideFlags |= HideFlags.HideAndDontSave;
-            }
+            try { CaptureBase(); }
+            catch (Exception e) { basePx = null; UnknownsCollectionPlugin.Logger?.LogWarning($"[Bug] crash screenshot failed: {e.Message}"); }
             try {
+                if (basePx == null) FallbackBase();
                 Build();
+                Render(0f);
                 phase = Phase.Glitch;
                 phaseStart = Time.time;
                 nextJitter = 0f;
+                HushMusic();
                 UCAssets.PlayBugGlitch(UCAssets.VolStd);
             } catch (Exception e) {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Bug] crash screen build failed: {e}");
@@ -98,12 +106,78 @@ namespace UnknownsCollection {
             phase = Phase.Off;
             try { if (root != null) UnityEngine.Object.Destroy(root); } catch { }
             root = null;
-            FreeShot();
+            FreeGlitch();
+            UnhushMusic();
         }
 
-        private static void FreeShot() {
-            try { if (shot != null) UnityEngine.Object.Destroy(shot); } catch { }
-            shot = null;
+        // ---- music channel: muted during glitch and blue screen ----
+        private static readonly List<AudioSource> hushed = new List<AudioSource>();
+        private static float nextHush;
+
+        // SoundManager.instance (the field), never .Instance: the property creates an empty SoundManager when none exists.
+        private static void HushMusic() {
+            nextHush = Time.time + 0.4f;   // again every 0.4 s: music that starts meanwhile is caught too
+            try {
+                var sm = SoundManager.instance;
+                var music = sm != null ? sm.MusicChannel : null;
+                if (music == null) return;
+                foreach (var a in UnityEngine.Object.FindObjectsOfType<AudioSource>()) {
+                    try {
+                        if (a == null || a.mute || a.outputAudioMixerGroup != music) continue;
+                        a.mute = true;
+                        hushed.Add(a);
+                    } catch { }
+                }
+            } catch (Exception e) { UnknownsCollectionPlugin.Logger?.LogWarning($"[Bug] muting the music failed: {e.Message}"); }
+        }
+
+        private static void UnhushMusic() {
+            foreach (var a in hushed) {
+                try { if (a != null) a.mute = false; } catch { }
+            }
+            hushed.Clear();
+        }
+
+        private static void FreeGlitch() {
+            try { if (glitchTex != null) UnityEngine.Object.Destroy(glitchTex); } catch { }
+            glitchTex = null;
+            basePx = buf = null;
+        }
+
+        // The finished frame, shrunk on the GPU (Blit into a small render texture) and read back once.
+        private static void CaptureBase() {
+            var shot = ScreenCapture.CaptureScreenshotAsTexture();
+            if (shot == null) return;
+            RenderTexture rt = null, prev = RenderTexture.active;
+            try {
+                gw = GlitchW;
+                gh = Mathf.Clamp(Mathf.RoundToInt(GlitchW * (float)shot.height / Mathf.Max(1, shot.width)), 120, 480);
+                rt = RenderTexture.GetTemporary(gw, gh, 0);
+                Graphics.Blit(shot, rt);
+                RenderTexture.active = rt;
+                var small = new Texture2D(gw, gh, TextureFormat.RGBA32, false);
+                small.ReadPixels(new Rect(0, 0, gw, gh), 0, 0);
+                small.Apply(false);
+                var px = small.GetPixels32();
+                basePx = new Color32[gw * gh];
+                for (int i = 0; i < basePx.Length && i < px.Length; i++) basePx[i] = px[i];
+                UnityEngine.Object.Destroy(small);
+            } finally {
+                RenderTexture.active = prev;
+                if (rt != null) RenderTexture.ReleaseTemporary(rt);
+                UnityEngine.Object.Destroy(shot);
+            }
+        }
+
+        // No screenshot: a dark, noisy meeting-blue to corrupt instead.
+        private static void FallbackBase() {
+            gw = GlitchW;
+            gh = 270;
+            basePx = new Color32[gw * gh];
+            for (int i = 0; i < basePx.Length; i++) {
+                byte v = (byte)rng.Next(20, 60);
+                basePx[i] = new Color32(v, (byte)(v + 10), (byte)(v + 40), 255);
+            }
         }
 
         private static void CloseChat() {
@@ -131,6 +205,7 @@ namespace UnknownsCollection {
             var me = PlayerControl.LocalPlayer;
             if (root == null || MeetingHud.Instance == null || me == null || me.Data == null || me.Data.IsDead) { Close(); return; }
             if (Blocking) CloseChat();
+            if ((phase == Phase.Glitch || phase == Phase.Blue) && Time.time >= nextHush) HushMusic();
             switch (phase) {
                 case Phase.Glitch: TickGlitch(); break;
                 case Phase.Blue: TickBlue(); break;
@@ -144,37 +219,97 @@ namespace UnknownsCollection {
             if (p >= 1f) { StartBlue(); return; }
             if (Time.time < nextJitter) return;
             nextJitter = Time.time + Mathf.Lerp(0.09f, 0.03f, p);
-            float amp = Mathf.Lerp(0.01f, 0.16f, p * p) * RefW;
-            for (int i = 0; i < Bands; i++) {
-                var b = bands[i];
-                if (b == null) continue;
-                bool hit = rng.NextDouble() < Mathf.Lerp(0.15f, 0.8f, p);
-                b.rectTransform.anchoredPosition = new Vector2(hit ? ((float)rng.NextDouble() * 2f - 1f) * amp : 0f, 0f);
-                if (shot != null) {
-                    int src = hit && rng.NextDouble() < p * 0.5f ? rng.Next(Bands) : i;
-                    b.uvRect = new Rect(0f, src / (float)Bands, 1f, 1f / Bands);
-                    double r = rng.NextDouble();
-                    b.color = !hit ? Color.white
-                              : r < 0.25 ? new Color(1f, 0.35f, 0.35f) : r < 0.5 ? new Color(0.35f, 1f, 1f)
-                              : r < 0.6 ? new Color(0.45f, 1f, 0.5f) : Color.white;
-                } else {
-                    float g = (float)rng.NextDouble() * 0.35f;
-                    b.color = new Color(g, g + (hit ? 0.2f : 0f), g, 1f);
+            Render(p);
+            if (rng.NextDouble() < 0.3) UCAssets.PlayBugGlitch(0.2f);
+        }
+
+        // Colours of the reference: the streaks are mostly blue of every brightness with some orange and red, the blocks
+        // mostly teal and green. Repeated entries weight the pick.
+        private static readonly Color32[] Accents = {
+            new Color32(240, 110, 40, 255), new Color32(240, 110, 40, 255), new Color32(225, 70, 45, 255),
+            new Color32(120, 190, 255, 255), new Color32(230, 110, 190, 255), new Color32(240, 220, 120, 255),
+        };
+        private static readonly Color32[] BlockColors = {
+            new Color32(60, 210, 160, 255), new Color32(60, 210, 160, 255), new Color32(80, 230, 120, 255),
+            new Color32(230, 110, 190, 255), new Color32(240, 110, 40, 255),
+        };
+
+        private static Color32 Shade(Color32 c, float k) =>
+            new Color32((byte)Mathf.Min(255f, c.r * k), (byte)Mathf.Min(255f, c.g * k), (byte)Mathf.Min(255f, c.b * k), 255);
+
+        private static Color32 Blue(Color32 c, float t) {
+            // toward a blue of the same brightness: dark navy to light sky blue
+            float l = (c.r * 0.3f + c.g * 0.59f + c.b * 0.11f) / 255f;
+            byte r = (byte)Mathf.Lerp(c.r, 10f + 70f * l, t);
+            byte g = (byte)Mathf.Lerp(c.g, 60f + 120f * l, t);
+            byte b = (byte)Mathf.Lerp(c.b, 150f + 105f * l, t);
+            return new Color32(r, g, b, 255);
+        }
+
+        private static int Rand(int min, int max) => max <= min ? min : rng.Next(min, max);
+
+        // One corrupted frame for progress p (0..1): slipped rows, blue cast, smeared streaks, macroblocks, dashes.
+        private static void Render(float p) {
+            if (glitchTex == null || basePx == null) return;
+            int n = gw * gh;
+            if (buf == null || buf.Length != n) buf = new Color32[n];
+            float blue = 0.1f + 0.85f * p * p;
+
+            // rows slip sideways in bands of 1..14 rows
+            int bandLeft = 0, shift = 0, maxShift = Mathf.Max(1, (int)(gw * 0.3f * p * p));
+            for (int y = 0; y < gh; y++) {
+                if (bandLeft <= 0) {
+                    bandLeft = Rand(1, 15);
+                    shift = rng.NextDouble() < 0.1 + 0.6 * p ? Rand(-maxShift, maxShift + 1) : 0;
+                }
+                bandLeft--;
+                int row = y * gw;
+                for (int x = 0; x < gw; x++) {
+                    int sx = (x - shift) % gw;
+                    if (sx < 0) sx += gw;
+                    buf[row + x] = Blue(basePx[row + sx], blue);
                 }
             }
-            for (int i = 0; i < NoiseBlocks; i++) {
-                var n = noise[i];
-                if (n == null) continue;
-                bool on = rng.NextDouble() < p * 0.6f;
-                n.enabled = on;
-                if (!on) continue;
-                var rt = n.rectTransform;
-                rt.anchoredPosition = new Vector2((float)rng.NextDouble() * RefW, -(float)rng.NextDouble() * RefH);
-                rt.sizeDelta = new Vector2(40f + (float)rng.NextDouble() * 420f, 6f + (float)rng.NextDouble() * 60f);
-                double c = rng.NextDouble();
-                n.color = c < 0.3 ? Color.black : c < 0.55 ? Color.white : c < 0.8 ? new Color(0.2f, 1f, 0.35f) : new Color(1f, 0.2f, 0.9f);
+
+            // pixel-sort streaks: a pixel's colour dragged along its row, sometimes an accent colour
+            int streaks = (int)(20 + 1400 * p * p);
+            int maxLen = (int)(12 + gw * 0.7f * p);
+            for (int i = 0; i < streaks; i++) {
+                int y = rng.Next(gh), x0 = rng.Next(gw), len = Rand(4, maxLen);
+                Color32 c = rng.NextDouble() < 0.06 + 0.12 * p ? Accents[rng.Next(Accents.Length)]
+                            : Shade(buf[y * gw + x0], 0.75f + 0.55f * (float)rng.NextDouble());
+                int thick = rng.NextDouble() < 0.2 ? 2 : 1;
+                for (int t = 0; t < thick && y + t < gh; t++) {
+                    int row = (y + t) * gw;
+                    for (int x = x0; x < x0 + len && x < gw; x++) buf[row + x] = c;
+                }
             }
-            if (rng.NextDouble() < 0.3) UCAssets.PlayBugGlitch(0.2f);
+
+            // macroblocks: copied from elsewhere (datamosh) or filled with a grid pattern
+            int blocks = (int)(2 + 30 * p);
+            for (int i = 0; i < blocks; i++) {
+                int bw = Rand(6, 28), bh = Rand(4, 18), bx = rng.Next(gw), by = rng.Next(gh);
+                bool copy = rng.NextDouble() < 0.5;
+                int sx0 = rng.Next(gw), sy0 = rng.Next(gh);
+                Color32 c = BlockColors[rng.Next(BlockColors.Length)];
+                Color32 dark = new Color32((byte)(c.r / 2), (byte)(c.g / 2), (byte)(c.b / 2), 255);
+                for (int y = by; y < by + bh && y < gh; y++)
+                    for (int x = bx; x < bx + bw && x < gw; x++) {
+                        if (copy) buf[y * gw + x] = buf[((sy0 + y - by) % gh) * gw + (sx0 + x - bx) % gw];
+                        else buf[y * gw + x] = ((x - bx) % 3 == 0 || (y - by) % 3 == 0) ? dark : c;
+                    }
+            }
+
+            // short vertical dashes
+            int dashes = (int)(25 * p);
+            for (int i = 0; i < dashes; i++) {
+                int x = rng.Next(gw), y0 = rng.Next(gh), len = Rand(2, 10);
+                Color32 c = rng.NextDouble() < 0.5 ? new Color32(230, 240, 255, 255) : Accents[rng.Next(Accents.Length)];
+                for (int y = y0; y < y0 + len && y < gh; y++) buf[y * gw + x] = c;
+            }
+
+            glitchTex.SetPixels32(buf);
+            glitchTex.Apply(false);
         }
 
         private static void StartBlue() {
@@ -182,7 +317,7 @@ namespace UnknownsCollection {
             phaseStart = Time.time;
             glitchLayer.SetActive(false);
             blueLayer.SetActive(true);
-            FreeShot();
+            FreeGlitch();
             UCAssets.PlayBugGlitch(UCAssets.VolStd);
         }
 
@@ -199,6 +334,7 @@ namespace UnknownsCollection {
             phaseStart = Time.time;
             blueLayer.SetActive(false);
             biosLayer.SetActive(true);
+            UnhushMusic();
             var sb = new System.Text.StringBuilder(CodeLength);
             for (int i = 0; i < CodeLength; i++) sb.Append(CodeChars[rng.Next(CodeChars.Length)]);
             code = sb.ToString();
@@ -306,35 +442,22 @@ namespace UnknownsCollection {
             scaler.matchWidthOrHeight = 0.5f;
             root.AddComponent<GraphicRaycaster>();
 
-            // 1. the torn screen
+            // 1. the corrupted screen: one pixelated picture over the whole screen
             glitchLayer = Layer("glitch", Color.black);
-            bands = new RawImage[Bands];
-            for (int i = 0; i < Bands; i++) {
-                var go = new GameObject("band");
-                go.transform.SetParent(glitchLayer.transform, false);
-                var rt = go.AddComponent<RectTransform>();
-                rt.anchorMin = new Vector2(0f, i / (float)Bands);
-                rt.anchorMax = new Vector2(1f, (i + 1) / (float)Bands);
-                rt.offsetMin = rt.offsetMax = Vector2.zero;
-                var img = go.AddComponent<RawImage>();
-                img.raycastTarget = false;
-                if (shot != null) {
-                    img.texture = shot;
-                    img.uvRect = new Rect(0f, i / (float)Bands, 1f, 1f / Bands);
-                }
-                bands[i] = img;
-            }
-            noise = new Image[NoiseBlocks];
-            for (int i = 0; i < NoiseBlocks; i++) {
-                var go = new GameObject("noise");
-                go.transform.SetParent(glitchLayer.transform, false);
-                var rt = go.AddComponent<RectTransform>();
-                rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0f, 1f);
-                var img = go.AddComponent<Image>();
-                img.raycastTarget = false;
-                img.enabled = false;
-                noise[i] = img;
-            }
+            glitchTex = new Texture2D(gw, gh, TextureFormat.RGBA32, false) {
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp,
+            };
+            glitchTex.hideFlags |= HideFlags.HideAndDontSave;
+            var pic = new GameObject("pixels");
+            pic.transform.SetParent(glitchLayer.transform, false);
+            var prt = pic.AddComponent<RectTransform>();
+            prt.anchorMin = Vector2.zero;
+            prt.anchorMax = Vector2.one;
+            prt.offsetMin = prt.offsetMax = Vector2.zero;
+            var img = pic.AddComponent<RawImage>();
+            img.raycastTarget = false;
+            img.texture = glitchTex;
 
             // 2. the blue screen
             blueLayer = Layer("blue", BsodBlue);

@@ -10,6 +10,8 @@
  * SEARCH button). Clicking a role shows a detail card: team, a detailed explanation and a small
  * looping DEMO animation acting out the role's mechanic (stateless per-frame vignettes built from
  * the shared UCFx sprites, driven by the same HudManager.Update patch that does the camera fit).
+ * Roles with a pre-rendered 3D loop in the asset repository get that instead, streamed on first view
+ * (UCHelp3D.cs); the 2D vignette stays as the fallback while it loads or when there is no server.
  * The panel follows the active mod language; a per-session language row (dropdown) overrides it for
  * this window only and is never saved (see the "session language" block below).
  *
@@ -527,6 +529,15 @@ namespace UnknownsCollection {
         // ====================================================================
         /// <summary>Autotest (UTS UIGallery, via reflection): open or close the panel.</summary>
         public static void DiagToggle() => TogglePanel();
+        internal static bool DiagPanelOpen => panel != null;
+
+        /// <summary>Autotest (UCHelp3D): show a role's card by name, also roles the list currently filters out.</summary>
+        internal static bool DiagSelect(string name) {
+            var e = Entries().Find(x => x.name == name);
+            if (e == null || panel == null) return false;
+            Select(e);
+            return selected == e;
+        }
 
         private static void TogglePanel() {
             if (panel != null) ClosePanel();
@@ -946,6 +957,7 @@ namespace UnknownsCollection {
                 if (figs.Count == 0 && cast.Count == 0 && btns.Count == 0)
                     CreateGenericActors(e);
                 AnimateStage(); // first-frame pose (no visible pop-in)
+                UCHelp3D.Attach(stage, e.name, stageSize); // streamed 3D loop replaces the 2D demo once it is in memory
             } catch (Exception ex) {
                 stageRole = null;
                 UnknownsCollectionPlugin.Logger?.LogError($"[UCHelpMenu] stage build failed: {ex}");
@@ -1958,7 +1970,7 @@ namespace UnknownsCollection {
                     Vector3 local = Vector3.zero;
                     if (panel != null) {
                         ApplyCameraFit(panel); // keep centred + scaled even if the camera changes
-                        if (stage != null) { stageT += Time.deltaTime; AnimateStage(); }
+                        if (stage != null) { stageT += Time.deltaTime; if (!UCHelp3D.Tick(stage)) AnimateStage(); }
 
                         // live search: type to filter, backspace to delete - but ONLY while the
                         // field is focused (clicked); otherwise the keys stay with the game so

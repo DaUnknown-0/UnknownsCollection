@@ -532,8 +532,10 @@ namespace UnknownsCollection {
             if (hud == null) return;
             revengeButtons.Clear();
             var lp = PlayerControl.LocalPlayer;
-            // beside the Hypnotist's icons if this player happens to hold them (-0.95)
-            float x = Hypnotist.IsLocalHypnotist() ? -0.5f : -0.95f;
+            // beside the Hypnotist's icons or the Tesla's checkboxes if this player happens to hold
+            // them (both sit at -0.95)
+            bool localTesla = Tesla.active && Tesla.tesla != null && Tesla.tesla == lp;
+            float x = Hypnotist.IsLocalHypnotist() || localTesla ? -0.5f : -0.95f;
             var sprite = HandleGuesser.getTargetSprite();
             foreach (var pva in hud.playerStates) {
                 if (pva == null || pva.AmDead || pva.TargetPlayerId == lp.PlayerId) continue;

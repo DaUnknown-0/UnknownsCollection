@@ -584,12 +584,16 @@ namespace UnknownsCollection {
         /// <summary>Dim backdrop and the card: hard shadow, dark body, thick pale outline.</summary>
         [HideFromIl2Cpp]
         private static GameObject Card(GameObject root, Vector2 size, bool dim = true) {
-            if (dim) Box(root, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero, ColBackdrop);
+            if (dim) {
+                Box(root, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero, ColBackdrop);
+                ModalRegistry.Add(root);   // the game's buttons under it stop reacting while it is open (shared list)
+            }
             var card = new GameObject("Card");
             card.transform.SetParent(root.transform, false);
             var rt = card.AddComponent<RectTransform>();
             rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
             rt.sizeDelta = size;
+            if (UCGameSkin.Ready) { UCGameSkin.Window(card, size, new Color(0.71f, 0.71f, 0.71f)); return card; }
             Layer(card, Round(22, 0), ColShadow, new Vector2(8, -10));
             Layer(card, Round(22, 0), ColBody, Vector2.zero).GetComponent<Image>().raycastTarget = true;
             Layer(card, Round(22, Outline), ColFrame, Vector2.zero);
@@ -599,6 +603,7 @@ namespace UnknownsCollection {
         /// <summary>The slanted title tab in the top-left corner of a card.</summary>
         [HideFromIl2Cpp]
         private static void Title(GameObject card, string text, Color tab) {
+            if (UCGameSkin.Ready) { UCGameSkin.Title(card, text, Outline, 52f); return; }
             float w = Mathf.Clamp(text.Length * 22f + 90f, 260f, 640f);
             var go = new GameObject("TitleTab");
             go.transform.SetParent(card.transform, false);
@@ -622,11 +627,15 @@ namespace UnknownsCollection {
             var rt = go.AddComponent<RectTransform>();
             rt.anchorMin = rt.anchorMax = rt.pivot = anchor;
             rt.anchoredPosition = pos; rt.sizeDelta = size;
-            int r = Mathf.Clamp(Mathf.RoundToInt(size.y / 2f) - 1, 4, 30);
-            Layer(go, Round(r, 0), ColShadow, new Vector2(3, -5));
-            Layer(go, Round(r, 0), col, Vector2.zero);
-            Layer(go, Round(r, 3), new Color(col.r * 0.55f, col.g * 0.55f, col.b * 0.55f), Vector2.zero);
-            var t = Label(go, label.ToUpperInvariant(), Mathf.Clamp(size.y * 0.6f, 15f, 30f), Color.white,
+            Color ink = Color.white;
+            if (UCGameSkin.Ready) ink = UCGameSkin.Plate(go, col);
+            else {
+                int r = Mathf.Clamp(Mathf.RoundToInt(size.y / 2f) - 1, 4, 30);
+                Layer(go, Round(r, 0), ColShadow, new Vector2(3, -5));
+                Layer(go, Round(r, 0), col, Vector2.zero);
+                Layer(go, Round(r, 3), new Color(col.r * 0.55f, col.g * 0.55f, col.b * 0.55f), Vector2.zero);
+            }
+            var t = Label(go, label.ToUpperInvariant(), Mathf.Clamp(size.y * 0.6f, 15f, 30f), ink,
                           TMPro.TextAlignmentOptions.Center, true);
             t.rectTransform.offsetMin = new Vector2(10, 0); t.rectTransform.offsetMax = new Vector2(-10, 0);
             t.enableWordWrapping = false; t.enableAutoSizing = true; t.fontSizeMin = 11; t.fontSizeMax = Mathf.Clamp(size.y * 0.6f, 15f, 30f);
@@ -636,8 +645,10 @@ namespace UnknownsCollection {
 
         /// <summary>The red X in the top-right corner of a card.</summary>
         [HideFromIl2Cpp]
-        private static void CloseX(GameObject card, Action onClose) =>
+        private static void CloseX(GameObject card, Action onClose) {
+            if (UCGameSkin.Ready && UCGameSkin.Sprite("BUTTON-ExitStandard") != null) { UCGameSkin.Close(card, onClose); return; }
             Btn(card, new Vector2(1, 1), new Vector2(-Outline - 10f, -Outline - 10f), new Vector2(54, 54), "X", ColRed, onClose);
+        }
 
         // ---------------------------------------------------------------- autotest (UTS UI gallery)
         /// <summary>Opens screen 0 (player list), 1 (hex entry for the local player) or 2 (the question); -1 closes all.</summary>

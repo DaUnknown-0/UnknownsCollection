@@ -13,6 +13,13 @@
  *
  * A first-in-line prefix starts every pass with TOR's own exclusions; Subtract removes a player only
  * once per pass.
+ *
+ * Ordered re-completions: several host features rebuild a player's task list (RpcSetTasks) and let the
+ * player re-complete what was done before (Auditor revert, Gambler penalty, PlayerTuning callers in
+ * other mods). Each feature kept its own list, so one feature's re-completions looked like fresh crew
+ * progress to the other (a Gambler task bet won by an Auditor revert, an Auditor queue filled by a
+ * Gambler penalty). Every rebuild now also registers here; CompleteTask consumers skip registered ids,
+ * and a last-in-line postfix consumes them.
  */
 
 using System.Collections.Generic;
@@ -21,8 +28,48 @@ using TheOtherRoles;
 using static TheOtherRoles.TheOtherRoles;
 
 namespace UnknownsCollection {
-    internal static class UCTaskCount {
+    public static class UCTaskCount {
         private static readonly HashSet<byte> excluded = new HashSet<byte>();
+
+        // Host: player -> task ids whose next completion was ordered by a task-list rebuild.
+        private static readonly Dictionary<byte, HashSet<uint>> ordered = new Dictionary<byte, HashSet<uint>>();
+
+        /// <summary>
+        /// Host: the player will re-complete these task ids after a task-list rebuild. Their completions
+        /// are bookkeeping, not crew progress, for every CompleteTask consumer.
+        /// </summary>
+        public static void ExpectRecomplete(byte pid, IEnumerable<uint> ids) {
+            if (ids == null) return;
+            if (!ordered.TryGetValue(pid, out var set)) ordered[pid] = set = new HashSet<uint>();
+            foreach (uint id in ids) set.Add(id);
+        }
+
+        /// <summary>Host: this task stays open after a rebuild, its next completion is real again.</summary>
+        internal static void CancelRecomplete(byte pid, uint id) {
+            if (ordered.TryGetValue(pid, out var set) && set.Remove(id) && set.Count == 0) ordered.Remove(pid);
+        }
+
+        internal static bool IsOrderedRecomplete(byte pid, uint idx) =>
+            ordered.TryGetValue(pid, out var set) && set.Contains(idx);
+
+        // Runs after every consumer's postfix (they only look), then drops the id.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.CompleteTask))]
+        static class OrderedConsumePatch {
+            [HarmonyPriority(Priority.Last)]
+            public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] uint idx) {
+                if (__instance != null) CancelRecomplete(__instance.PlayerId, idx);
+            }
+        }
+
+        [HarmonyPatch(typeof(RPCProcedure), nameof(RPCProcedure.resetVariables))]
+        static class OrderedResetPatch {
+            public static void Postfix() => ordered.Clear();
+        }
+
+        [HarmonyPatch(typeof(AmongUsClient), nameof(AmongUsClient.OnGameJoined))]
+        static class OrderedLobbyResetPatch {
+            public static void Postfix() => ordered.Clear();
+        }
 
         [HarmonyPatch(typeof(GameData), nameof(GameData.RecomputeTaskCounts))]
         static class PassStartPatch {
@@ -57,6 +104,24 @@ namespace UnknownsCollection {
                 if (excluded.Contains(data.PlayerId)) return false;
                 return TasksHandler.taskInfo(data).Item2 > 0;
             } catch { return false; }
+        }
+
+        /// <summary>
+        /// Completed tasks of LIVING players whose tasks count toward the bar, with the same exclusions
+        /// as CountsTowardBar (one recount for all players instead of one per player).
+        /// </summary>
+        internal static int CompletedByLiving() {
+            try {
+                var gd = GameData.Instance;
+                if (gd == null) return 0;
+                gd.RecomputeTaskCounts();
+                int done = 0;
+                foreach (var pi in gd.AllPlayers) {
+                    if (pi == null || pi.Disconnected || pi.IsDead || excluded.Contains(pi.PlayerId)) continue;
+                    done += TasksHandler.taskInfo(pi).Item1;
+                }
+                return done;
+            } catch { return 0; }
         }
 
         /// <summary>Takes this player's tasks out of the totals, once per recount.</summary>

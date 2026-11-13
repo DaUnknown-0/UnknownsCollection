@@ -204,6 +204,22 @@ namespace UnknownsCollection {
             return p != null && p.Data != null && !p.Data.IsDead && p.Data.Role != null && p.Data.Role.IsImpostor;
         }
 
+        // A living owner of one of the wrapped TOR kill buttons (Sheriff, Jackal, Sidekick, Thief, ...):
+        // his blocked kill near the clone sends the flash from his own client (CloneCustomKillPatch).
+        private static bool KillButtonOwnerSender() {
+            var p = UCRpc.Sender;
+            if (p == null || p.Data == null || p.Data.IsDead) return false;
+            foreach (var kb in killButtons) {
+                var owner = kb.Owner();
+                if (owner != null && owner.PlayerId == p.PlayerId) return true;
+            }
+            return false;
+        }
+
+        // Upper bound for one reassembled path: RecordLength is at most 20 s at SampleInterval 0.1 s
+        // (200 samples); the margin leaves room for option changes without trusting any count.
+        private const int MaxRxPoints = 1000;
+
         private static void HandleModuleRpc(MessageReader reader) {
             try {
                 byte subtype = reader.ReadByte();
@@ -216,18 +232,26 @@ namespace UnknownsCollection {
                         // Owner-authored (AUDIT-2026-08-15): the payload is read in full regardless of the
                         // guard, since this arrives chunked across several messages and a forged packet must
                         // not desync the reader for the legitimate ones that follow it.
+                        // The sender is checked BEFORE anything touches the shared buffer: a foreign chunk
+                        // must neither mix points into the real Illusionist's path nor grow the buffer.
+                        bool fromOwner = UCRpc.SenderIsHost
+                            || (illusionist != null && UCRpc.Sender != null && UCRpc.Sender.PlayerId == illusionist.PlayerId);
                         bool first = reader.ReadBoolean();
                         bool last = reader.ReadBoolean();
                         int count = reader.ReadInt32();
-                        if (first) { rxPts.Clear(); rxVnt.Clear(); }
+                        if (first && fromOwner) { rxPts.Clear(); rxVnt.Clear(); }
                         for (int i = 0; i < count; i++) {
-                            rxPts.Add(new Vector2(reader.ReadSingle(), reader.ReadSingle()));
-                            rxVnt.Add(reader.ReadBoolean());
+                            var pt = new Vector2(reader.ReadSingle(), reader.ReadSingle());
+                            bool vent = reader.ReadBoolean();
+                            if (!fromOwner || rxPts.Count >= MaxRxPoints) continue;
+                            rxPts.Add(pt);
+                            rxVnt.Add(vent);
                         }
                         if (last) {
-                            if (UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.SpawnClone"))
+                            if (UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.SpawnClone")) {
                                 IllusionistClone.Spawn(new List<Vector2>(rxPts), new List<bool>(rxVnt), SampleInterval);
-                            rxPts.Clear(); rxVnt.Clear();
+                                rxPts.Clear(); rxVnt.Clear();
+                            }
                         }
                         break;
                     }
@@ -236,7 +260,9 @@ namespace UnknownsCollection {
                         // it stays gated to keep the module's threat model consistent with SpawnClone/Despawn.
                         // Also from a living impostor partner: his blocked kill near the clone sends the
                         // flash from HIS client, which owner-or-host dropped everywhere (Opus audit round 2).
-                        if (UCRpc.SenderIsHost || ImpostorSender() || UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.Flash")) {
+                        // Likewise from the owner of a wrapped TOR kill button (Sheriff, Jackal, Thief, ...).
+                        if (UCRpc.SenderIsHost || ImpostorSender() || KillButtonOwnerSender()
+                            || UCRpc.RequireOwnerOrHost(illusionist, "Illusionist.Flash")) {
                             IllusionistClone.Flash(0.4f);
                             // Sound is Illusionist-only: on non-Illusionist clients this is skipped, so the
                             // block ping no longer leaks the clone-hit to bystanders. Flash stays public.

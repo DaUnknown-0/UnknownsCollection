@@ -348,6 +348,7 @@ namespace UnknownsCollection {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || HasNote() || !IsAlive(witness) || target == null) return;
+                    if (target.Data == null || !target.Data.IsDead) return;   // blocked murder: nobody died
                     // A self-inflicted death (Lover suicide inside TOR's postfix, Sheriff misfire) is not
                     // a kill to witness - noting it spent the one note and hid the real killer (Opus audit round 2).
                     if (__instance == null || __instance.PlayerId == target.PlayerId) return;

@@ -263,7 +263,11 @@ namespace UnknownsCollection {
                         UCAssets.PlaySaboteurDefused();
                         // Only a really sabotaged console: a drunk scan can lie "sabotaged" at a clean
                         // one, and the clear is global, it would wipe the real sabotage elsewhere.
-                        if (sabotaged) Saboteur.SendClearSabotage();
+                        // Re-checked now, not only at Open(): the sabotage may have been cleared and set
+                        // again at another console while the wires were being cut.
+                        if (sabotaged && Saboteur.sabotagedActive
+                            && Vector2.Distance(target, new Vector2(Saboteur.sabotagedX, Saboteur.sabotagedY)) <= 1.0f)
+                            Saboteur.SendClearSabotage();
                         if (title != null) { title.text = UCLocalization.Tr("uc.ui.saboteur.wire_done"); title.color = new Color(0.4f, 1f, 0.5f); }
                         if (hint != null) hint.text = "";
                         RefreshWires();

@@ -139,6 +139,15 @@ namespace UnknownsCollection {
             byte plusTarget = hud.playerStates[plusSel].TargetPlayerId;
             byte minusTarget = hud.playerStates[minusSel].TargetPlayerId;
             if (plusTarget == minusTarget) return; // never the same person twice
+            // Either pick may have died since it was chosen (guessed mid-meeting): drop that pick
+            // instead of sending a dead target.
+            foreach (int sel in new[] { plusSel, minusSel }) {
+                var pc = Helpers.playerById(hud.playerStates[sel].TargetPlayerId);
+                if (pc != null && pc.Data != null && !pc.Data.IsDead) continue;
+                if (renderers[sel] != null) renderers[sel].color = Color.gray;
+                if (sel == plusSel) plusSel = -1; else minusSel = -1;
+                return;
+            }
 
             Tesla.SendSetCharges(plusTarget, minusTarget);
             locked = true;

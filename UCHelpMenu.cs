@@ -276,14 +276,16 @@ namespace UnknownsCollection {
         // ---- theme ----
         // The game's own lobby-pane look (see UTS VanillaUI): grey frame around a dark body, dark
         // fields for rows and cards, upper-case grey title. UC gold stays for the role accents only.
+        // Since 2026-11-13 the neutral greys of the settings window, and with its sprites loaded (UCGameSkin) the
+        // window picture, the title in Brook and the white X themselves.
         internal static readonly Color Accent = new Color(1f, 0.82f, 0.35f);          // UC gold
-        private static readonly Color FrameCol = new Color(0.72f, 0.78f, 0.84f);
-        private static readonly Color BodyCol = new Color(0.09f, 0.11f, 0.15f);
-        private static readonly Color CardBg = new Color(0.14f, 0.17f, 0.22f);
-        private static readonly Color FieldHover = new Color(0.21f, 0.26f, 0.33f);
+        private static readonly Color FrameCol = new Color(0.71f, 0.71f, 0.71f);
+        private static readonly Color BodyCol = new Color(0.07f, 0.07f, 0.07f);
+        private static readonly Color CardBg = new Color(0.17f, 0.17f, 0.17f);
+        private static readonly Color FieldHover = new Color(0.27f, 0.27f, 0.27f);
         private static readonly Color FieldSel = new Color(0.16f, 0.70f, 0.66f);
         private static readonly Color TitleCol = new Color(1f, 1f, 1f);
-        private static readonly Color MutedCol = new Color(0.66f, 0.72f, 0.80f);
+        private static readonly Color MutedCol = new Color(0.70f, 0.70f, 0.70f);
         private static readonly Color ShadowCol = new Color(0f, 0f, 0f, 0.45f);
         private const float FrameW = 0.05f;
         private const int SortBg = 500;
@@ -452,6 +454,20 @@ namespace UnknownsCollection {
 
         // The game's lobby pane: shadow, grey frame, dark body.
         private static void NewPanel(Transform parent, Vector3 center, Vector2 size, int sort = SortBg) {
+            var bg = UCGameSkin.Ready ? UCGameSkin.Sprite("IMAGE-PanelBG") : null;
+            if (bg != null) {
+                // the settings window picture, stretched to the panel (it is drawn for about 2:1, the panel is 1.76:1)
+                var go = new GameObject("UCHelpWindow");
+                go.layer = parent.gameObject.layer;
+                go.transform.SetParent(parent, false);
+                go.transform.localPosition = center + new Vector3(0f, 0f, 0.02f);
+                var sr = go.AddComponent<SpriteRenderer>();
+                sr.sprite = bg;
+                sr.sortingOrder = sort;
+                var b = bg.bounds.size;
+                go.transform.localScale = new Vector3(size.x / b.x, size.y / b.y, 1f);
+                return;
+            }
             NewRounded(parent, center + new Vector3(0f, -0.06f, 0.03f), size, ShadowCol, 18, sort);
             NewRounded(parent, center + new Vector3(0f, 0f, 0.02f), size, FrameCol, 18, sort);
             NewRounded(parent, center + new Vector3(0f, 0f, 0.01f), size - new Vector2(2 * FrameW, 2 * FrameW), BodyCol, 11, sort);
@@ -584,6 +600,8 @@ namespace UnknownsCollection {
                 panel.transform.SetParent(hud.transform, false);
                 panel.transform.localPosition = new Vector3(0f, 0f, -30f);
                 ApplyCameraFit(panel); // centre + scale immediately (also re-applied every frame)
+                // the game's buttons under the guide stop reacting to clicks; walking and hotkeys stay (shared list)
+                ModalRegistry.AddClickOnly(panel);
 
                 float topY = PanelH / 2f;
 
@@ -593,8 +611,9 @@ namespace UnknownsCollection {
 
                 float headY = topY - HeaderH / 2f - 0.04f;
                 var title = NewText(panel.transform, T("uc.helpui.title").ToUpperInvariant(), 1.45f, TitleCol);
-                title.fontStyle = FontStyles.Bold;
-                title.characterSpacing = 4f;
+                var brook = UCGameSkin.Ready ? UCGameSkin.Font("Brook SDF") : null;
+                if (brook != null) { title.font = brook; title.fontSize = 1.9f; }   // the settings window's title face
+                else { title.fontStyle = FontStyles.Bold; title.characterSpacing = 4f; }
                 title.transform.localPosition = new Vector3(-PanelW / 2f + 0.3f, headY, -0.1f);
 
                 // Language control: quick EN|<base> toggle when the game language is not
@@ -622,12 +641,27 @@ namespace UnknownsCollection {
                     Select(reopen);
                 } });
 
-                // close: a small red game-style button
-                NewRounded(panel.transform, new Vector3(PanelW / 2f - 0.4f, headY, -0.04f), new Vector2(0.44f, 0.34f), new Color(0.86f, 0.28f, 0.32f), 17, SortMid);
-                var close = NewText(panel.transform, "X", 1.3f, Color.white, TextAlignmentOptions.Center);
-                close.fontStyle = FontStyles.Bold;
-                close.transform.localPosition = new Vector3(PanelW / 2f - 0.4f, headY, -0.1f);
-                hits.Add(new HitBox { anchor = close.transform, w = 0.45f, h = 0.45f, onClick = ClosePanel });
+                // close: the settings menu's white X (game look), else a small red game-style button
+                var exit = UCGameSkin.Ready ? UCGameSkin.Sprite("BUTTON-ExitStandard") : null;
+                Transform closeAnchor;
+                if (exit != null) {
+                    var x = new GameObject("UCHelpClose");
+                    x.layer = panel.layer;
+                    x.transform.SetParent(panel.transform, false);
+                    x.transform.localPosition = new Vector3(PanelW / 2f - 0.4f, headY, -0.06f);
+                    var xr = x.AddComponent<SpriteRenderer>();
+                    xr.sprite = exit; xr.sortingOrder = SortText;
+                    float s = 0.46f / Mathf.Max(0.01f, exit.bounds.size.y);
+                    x.transform.localScale = new Vector3(s, s, 1f);
+                    closeAnchor = x.transform;
+                } else {
+                    NewRounded(panel.transform, new Vector3(PanelW / 2f - 0.4f, headY, -0.04f), new Vector2(0.44f, 0.34f), new Color(0.86f, 0.28f, 0.32f), 17, SortMid);
+                    var close = NewText(panel.transform, "X", 1.3f, Color.white, TextAlignmentOptions.Center);
+                    close.fontStyle = FontStyles.Bold;
+                    close.transform.localPosition = new Vector3(PanelW / 2f - 0.4f, headY, -0.1f);
+                    closeAnchor = close.transform;
+                }
+                hits.Add(new HitBox { anchor = closeAnchor, w = 0.45f, h = 0.45f, onClick = ClosePanel });
 
                 // Search row (live filter; typed input is captured in HudUpdatePatch)
                 float searchY = topY - HeaderH - 0.30f;
@@ -2012,6 +2046,8 @@ namespace UnknownsCollection {
                     }
 
                     if (!Input.GetMouseButtonDown(0)) return;
+                    // another mod's menu is open on top (shared list, User 13.11.: the "?" opened through it): not ours
+                    if (ModalRegistry.OtherOpen(panel)) return;
 
                     // any click drops the search focus; the search-field hitbox re-sets it
                     searchFocused = false;

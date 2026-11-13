@@ -1488,6 +1488,9 @@ namespace UnknownsCollection {
 
                 try {
                     if (!active || werewolf == null || target == null || __instance == null) return;
+                    // A blocked murder still runs the postfixes: no blood ring, no shortened cooldown,
+                    // and a wolf who survives an attack keeps his form.
+                    if (target.Data == null || !target.Data.IsDead) return;
 
                     // The beast itself dies -> the form dies with it, on every client.
                     if (target.PlayerId == werewolf.PlayerId) { EndFormSilent(); return; }

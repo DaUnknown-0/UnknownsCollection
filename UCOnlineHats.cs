@@ -43,7 +43,7 @@ namespace UnknownsCollection {
     internal static class UCOnlineHats {
         private const string LogPrefix = "[UC/OnlineHats]";
         private const string ManifestName = "hats.json";
-        internal const byte RpcModule = 245;
+        internal const byte RpcModule = UnknownsCollectionPlugin.OnlineHatsRpcId;
         private const string DiskPrefix = "UCX_";
         private const string Package = "Unknown's Collection";
         private const int MaxHats = 128;
@@ -402,13 +402,54 @@ namespace UnknownsCollection {
 
         // Autotest (UC_DIAG_ONLINEHATS=1): check the list again after 25 s, so a test server can swap a hat in between
         // (live update without a restart); logs what TOR has in its caches.
+        // UC_DIAG_ONLINEHATS=wear (2026-11-08): freeplay on the Skeld, every online hat put on the local player in turn and
+        // photographed standing (UCShots/onlinehats/<key>.png), to check how an outfit sits on the real crewmate.
         [HarmonyPatch(typeof(MainMenuManager), nameof(MainMenuManager.Start))]
         private static class DiagPatch {
             private static bool fired;
             private static void Postfix(MainMenuManager __instance) {
-                if (fired || Environment.GetEnvironmentVariable("UC_DIAG_ONLINEHATS") != "1") return;
+                string mode = Environment.GetEnvironmentVariable("UC_DIAG_ONLINEHATS");
+                if (fired || (mode != "1" && mode != "wear")) return;
                 fired = true;
-                BepInEx.Unity.IL2CPP.Utils.MonoBehaviourExtensions.StartCoroutine(__instance, Diag());
+                // "wear" leaves the main menu for freeplay: run on the plugin's own host, the menu object dies with the scene
+                BepInEx.Unity.IL2CPP.Utils.MonoBehaviourExtensions.StartCoroutine(mode == "wear" && _host != null ? _host : __instance,
+                    mode == "wear" ? DiagWear() : Diag());
+            }
+            private static IEnumerator DiagWear() {
+                for (float t0 = Time.realtimeSinceStartup; Time.realtimeSinceStartup - t0 < 25f;) yield return null;
+                try { DestroyableSingleton<HatManager>.Instance?.GetHatById("hat_none"); } catch { }
+                try {
+                    var popover = UnityEngine.Object.FindObjectOfType<FreeplayPopover>(true);
+                    for (var t = popover.transform; t != null; t = t.parent) if (!t.gameObject.activeSelf) t.gameObject.SetActive(true);
+                    popover.Show();
+                    popover.PlayMap(MapNames.Skeld);
+                    Log("diag: freeplay started");
+                } catch (Exception e) { Log($"diag: freeplay failed: {e.Message}"); yield break; }
+                for (float t0 = Time.realtimeSinceStartup; Time.realtimeSinceStartup - t0 < 60f && PlayerControl.LocalPlayer == null;) yield return null;
+                for (float t0 = Time.realtimeSinceStartup; Time.realtimeSinceStartup - t0 < 6f;) yield return null;
+                string dir = Path.Combine(BepInEx.Paths.GameRootPath, "UCShots", "onlinehats");
+                Directory.CreateDirectory(dir);
+                // pet, visor and skin off (a pet stands in front of the visor), then the bare crewmate as reference picture
+                try {
+                    var lp = PlayerControl.LocalPlayer;
+                    lp.RpcSetPet("pet_EmptyPet");
+                    lp.RpcSetVisor("visor_EmptyVisor");
+                    lp.RpcSetSkin("skin_None");
+                    lp.RpcSetHat("hat_NoHat");
+                } catch (Exception e) { Log($"diag: unequip failed: {e.Message}"); }
+                for (float t0 = Time.realtimeSinceStartup; Time.realtimeSinceStartup - t0 < 2f;) yield return null;
+                ScreenCapture.CaptureScreenshot(Path.Combine(dir, "bare.png"));
+                for (float t0 = Time.realtimeSinceStartup; Time.realtimeSinceStartup - t0 < 1f;) yield return null;
+                foreach (var r in Registered.ToList()) {
+                    string id = "hat_" + r.Value.Name.Replace(' ', '_');
+                    try { PlayerControl.LocalPlayer.SetHat(id, PlayerControl.LocalPlayer.Data.DefaultOutfit.ColorId); }
+                    catch (Exception e) { Log($"diag: {r.Key} not worn: {e.Message}"); continue; }
+                    for (float t0 = Time.realtimeSinceStartup; Time.realtimeSinceStartup - t0 < 2f;) yield return null;
+                    ScreenCapture.CaptureScreenshot(Path.Combine(dir, r.Key + ".png"));
+                    Log($"diag: wearing {r.Key} ({id})");
+                    for (float t0 = Time.realtimeSinceStartup; Time.realtimeSinceStartup - t0 < 1f;) yield return null;
+                }
+                Log("diag: all done");
             }
             private static IEnumerator Diag() {
                 for (float t0 = Time.realtimeSinceStartup; Time.realtimeSinceStartup - t0 < 25f;) yield return null;

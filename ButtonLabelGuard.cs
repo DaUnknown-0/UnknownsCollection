@@ -36,8 +36,13 @@ namespace UnknownsCollection {
         // IdeasPackDiag A/B run: UC_LABELGUARD_OFF=1 leaves the translators alone.
         private static readonly bool DiagOff = Environment.GetEnvironmentVariable("UC_LABELGUARD_OFF") == "1";
 
+        private static readonly Dictionary<CustomButton, long> nextCheck = new();
+
         private static IntPtr Key(CustomButton b) {
-            try { return b.actionButton != null ? b.actionButton.Pointer : IntPtr.Zero; } catch { return IntPtr.Zero; }
+            // Plain reference check, not Unity's "!= null": that operator goes through Il2CppInterop and boxes its bool
+            // result on the il2cpp heap, and this runs for every TOR button every frame (multi-client test 2026-11-12:
+            // ~8 MB of il2cpp garbage per round from this line). Only the native address is needed as a key here.
+            try { var ab = b.actionButton; return ReferenceEquals(ab, null) ? IntPtr.Zero : ab.Pointer; } catch { return IntPtr.Zero; }
         }
 
         // A new HUD builds new buttons. Within one HUD the keyed buttons all live at once, so their
@@ -79,6 +84,13 @@ namespace UnknownsCollection {
                 try {
                     var b = __instance;
                     if (b == null || !b.showButtonText || string.IsNullOrEmpty(b.buttonText)) return;
+                    // Each button at most four times a second: the checks below read Unity state back (boxed on the
+                    // il2cpp heap by Il2CppInterop) and ran for every labelled TOR button every frame (~8 MB per
+                    // round, multi-client test 2026-11-12). The translator that overwrote labels is off since Prepare.
+                    long now = Environment.TickCount64;
+                    if (nextCheck.TryGetValue(b, out long due) && now < due) return;
+                    if (nextCheck.Count > 512) nextCheck.Clear();
+                    nextCheck[b] = now + 250;
                     var label = b.actionButtonLabelText;
                     if (label == null || !label.isActiveAndEnabled || label.text == b.buttonText) return;
                     string was = label.text;

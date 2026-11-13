@@ -72,6 +72,10 @@ namespace UnknownsCollection {
         // rebuilds PlayerVoteArea.NameText every frame - see the comment on HudUpdatePatch above).
         // Cleared at meeting end (ApplyMuteMarkers below) and on round reset.
         private static readonly Dictionary<byte, float> markerRevealStart = new();
+        // The vote area's scale when its punch started: the punch scales THAT, not Vector3.one, so a card
+        // another mod has shrunk (large lobbies) keeps its size; and once the punch is over the scale is
+        // left alone. Cleared together with markerRevealStart.
+        private static readonly Dictionary<byte, Vector3> punchBase = new();
         private const float MarkerFadeIn = 0.35f;
 
         // ---- Custom RPC subtypes: module byte 194 in the shared UC channel (UCRpc.CallId = 230) ----
@@ -268,6 +272,7 @@ namespace UnknownsCollection {
             currentTarget = null;
             wasInMeeting = false;
             markerRevealStart.Clear();
+            punchBase.Clear();
         }
 
         // silencedIds and markerRevealStart are keyed by PlayerId, and PlayerIds are handed out per
@@ -337,6 +342,7 @@ namespace UnknownsCollection {
                         marksLeftThisRound = TargetsPerRoundValue();
                         marksAppliedThisRound = 0;
                         markerRevealStart.Clear();         // next meeting's reveals start fresh
+                        punchBase.Clear();
                     }
                     // The mute becomes visible at meeting start - a "shh" tells the victim right away.
                     if (!wasInMeeting && nowMeeting && LocalIsSilenced()) UCAssets.PlayShh();
@@ -397,8 +403,17 @@ namespace UnknownsCollection {
                 byte alpha = (byte)Mathf.RoundToInt(255f * t);
                 pva.NameText.text += MarkerWithAlpha(alpha);
 
-                if (pva.transform != null)
-                    pva.transform.localScale = Vector3.one * (1f + 0.10f * (1f - t) * Mathf.Sin(t * Mathf.PI));
+                if (pva.transform != null && t < 1f) {
+                    if (!punchBase.TryGetValue(pva.TargetPlayerId, out var baseScale)) {
+                        baseScale = pva.transform.localScale;
+                        punchBase[pva.TargetPlayerId] = baseScale;
+                    }
+                    pva.transform.localScale = baseScale * (1f + 0.10f * (1f - t) * Mathf.Sin(t * Mathf.PI));
+                } else if (pva.transform != null && punchBase.TryGetValue(pva.TargetPlayerId, out var endScale)) {
+                    // Punch over: put the starting scale back once, then leave the card to its owner.
+                    pva.transform.localScale = endScale;
+                    punchBase.Remove(pva.TargetPlayerId);
+                }
             }
         }
 

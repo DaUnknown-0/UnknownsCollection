@@ -163,6 +163,7 @@ namespace UnknownsCollection {
         }
 
         private static void Handle(MessageReader reader) {
+            if (reader.Length - reader.Position < 1) return;   // empty or cut-off packet: nothing to show
             byte idx = reader.ReadByte();
             var sender = UCRpc.Sender;
             if (sender == null) return;

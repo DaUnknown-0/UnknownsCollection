@@ -331,6 +331,20 @@ namespace UnknownsCollection {
             if (newMinusId != byte.MaxValue) chargedHistory.Add(newMinusId);
         }
 
+        // Receiver-side copy of the meeting UI's row filter (TeslaMeetingUI.Build): living, not charged
+        // before, not the Tesla unless self-charging is on. The owner's UI already enforces this; the
+        // check only keeps a modified client from arming a pair the real UI could never pick.
+        private static bool ValidPair(byte p, byte m) {
+            if (p == m) return false;
+            bool canSelf = CanChargeSelf != null && CanChargeSelf.getBool();
+            foreach (byte id in new[] { p, m }) {
+                var pc = Helpers.playerById(id);
+                if (pc == null || pc.Data == null || pc.Data.IsDead || chargedHistory.Contains(id)) return false;
+                if (!canSelf && tesla != null && id == tesla.PlayerId) return false;
+            }
+            return true;
+        }
+
         private static void ApplyClear() {
             plusId = minusId = byte.MaxValue;
             countdown = CountdownSeconds != null ? CountdownSeconds.getFloat() : 5f;
@@ -371,7 +385,7 @@ namespace UnknownsCollection {
                         byte m = reader.ReadByte();
                         // Owner-authored (TeslaMeetingUI.Confirm) - a forged pair would let any client
                         // arm HostCountdown() against a pair the real Tesla never charged (AUDIT-2026-08-15).
-                        if (UCRpc.RequireOwnerOrHost(tesla, "Tesla.SetCharges")) ApplySetCharges(p, m);
+                        if (UCRpc.RequireOwnerOrHost(tesla, "Tesla.SetCharges") && ValidPair(p, m)) ApplySetCharges(p, m);
                         break;
                     }
                     case SubClear:

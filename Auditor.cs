@@ -685,6 +685,8 @@ namespace UnknownsCollection {
                         if (expected.Count == 0) pendingRecomplete.Remove(__instance.PlayerId);
                         return;
                     }
+                    // ... and neither must re-completions another feature ordered (Gambler penalty, ...).
+                    if (UCTaskCount.IsOrderedRecomplete(__instance.PlayerId, idx)) return;
 
                     if (!IsAlive(auditor)) return;
                     if (__instance.PlayerId == auditor.PlayerId) return;
@@ -857,6 +859,8 @@ namespace UnknownsCollection {
                 }
                 expected.Remove(e.victimTaskId);   // this one stays open now
                 foreach (uint id in keepComplete) expected.Add(id);
+                UCTaskCount.CancelRecomplete(e.victim, e.victimTaskId);
+                UCTaskCount.ExpectRecomplete(e.victim, keepComplete);
 
                 victim.Data.RpcSetTasks(typeIds);   // the reset the SERVER also sees
                 SendReverted(entryId, e.victim, keepComplete);

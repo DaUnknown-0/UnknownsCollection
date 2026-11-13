@@ -526,7 +526,7 @@ namespace UnknownsCollection {
                 }
                 AudioClip clip = AudioClip.Create(clipName, samples.Length / channels, channels, sampleRate, false);
                 clip.hideFlags |= HideFlags.HideAndDontSave | HideFlags.DontSaveInEditor;
-                clip.SetData(samples, 0);
+                ClipFill.SetData(clip, samples, channels);   // not SetData(float[]): one il2cpp array per clip (ClipFill)
                 return clip;
             } catch {
                 return null;

@@ -114,6 +114,7 @@ namespace UnknownsCollection {
             feed.SetUrl(ReleaseFeed.Url(RepositoryOwner, RepositoryName));
             feed.SetRequestHeader("User-Agent", $"UnknownsCollection/{UnknownsCollectionPlugin.PluginVersion}");
             feed.downloadHandler = new DownloadHandlerBuffer();
+            feed.timeout = UnknownsNet.RequestTimeout; // without a deadline a hanging request would leave _busy true for the session
             var feedOp = feed.SendWebRequest();
             while (!feedOp.isDone) yield return new WaitForEndOfFrame();
             bool fromFeed = false;
@@ -151,6 +152,7 @@ namespace UnknownsCollection {
             www.SetUrl($"https://api.github.com/repos/{RepositoryOwner}/{RepositoryName}/releases");
             www.SetRequestHeader("User-Agent", $"UnknownsCollection/{UnknownsCollectionPlugin.PluginVersion}");
             www.downloadHandler = new DownloadHandlerBuffer();
+            www.timeout = UnknownsNet.RequestTimeout;
             var operation = www.SendWebRequest();
             while (!operation.isDone) yield return new WaitForEndOfFrame();
 
@@ -208,6 +210,7 @@ namespace UnknownsCollection {
             www.SetMethod(UnityWebRequest.UnityWebRequestMethod.Get);
             www.SetUrl(asset.DownloadUrl);
             www.downloadHandler = new DownloadHandlerBuffer();
+            www.timeout = UnknownsNet.DownloadTimeout; // whole download; a stalled connection must not keep _busy set forever
             var operation = www.SendWebRequest();
             while (!operation.isDone) {
                 _updateProgress = www.downloadProgress;
@@ -220,6 +223,20 @@ namespace UnknownsCollection {
             }
 
             if (www.isNetworkError || www.isHttpError) {
+                www.downloadHandler.Dispose(); www.Dispose();
+                _updateState = 3;
+                if (!managerMode && popup != null) {
+                    popup.TextAreaTMP.text = UCLocalization.Tr("uc.updater.failed");
+                    if (button != null) button.SetActive(true);
+                }
+                _busy = false; yield break;
+            }
+            // Only a PE image may replace the plugin: an error page or a truncated body that still came
+            // back as HTTP 200 would otherwise be written over the working DLL.
+            byte[] payload = www.downloadHandler.data;
+            if (!UnknownsNet.IsPluginImage(payload)) {
+                UnknownsCollectionPlugin.Logger?.LogError(
+                    $"Update failed: the download is not a plugin DLL ({payload?.Length ?? 0} bytes).");
                 www.downloadHandler.Dispose(); www.Dispose();
                 _updateState = 3;
                 if (!managerMode && popup != null) {
@@ -257,7 +274,7 @@ namespace UnknownsCollection {
             var hasError = false;
             System.Threading.Tasks.Task persistTask = null;
             try {
-                persistTask = File.WriteAllBytesAsync(filePath, www.downloadHandler.data);
+                persistTask = File.WriteAllBytesAsync(filePath, payload);
             } catch (Exception e) {
                 // File.WriteAllBytesAsync can throw synchronously (e.g. path/IO errors) before ever
                 // returning a Task - treat that exactly like a failed write instead of letting the

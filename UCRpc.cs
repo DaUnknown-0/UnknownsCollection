@@ -89,9 +89,7 @@ namespace UnknownsCollection {
         // True while dispatching a message that arrived FROM THE HOST. Valid only inside a handler
         // call (Sender is null outside one). Same rule ChanceMod applies to its own host-only RPCs,
         // see Chance.cs:666-673.
-        public static bool SenderIsHost =>
-            Sender != null && AmongUsClient.Instance != null
-            && Sender.OwnerId == AmongUsClient.Instance.HostId;
+        public static bool SenderIsHost => UnknownsNet.SenderIsHost(Sender);
 
         // Guard for HOST-AUTHORITATIVE messages: returns false (and logs) when the message did not come
         // from the host, so the handler can drop it. Without this, any client running a modified UC

@@ -97,6 +97,10 @@ namespace UnknownsCollection {
         private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
         private static bool Alive(PlayerControl p) => p != null && p.Data != null && !p.Data.IsDead && !p.Data.Disconnected;
         private static bool IsImpostor(PlayerControl p) => p != null && p.Data != null && p.Data.Role != null && p.Data.Role.IsImpostor;
+        // Players TOR shows to the Impostors as one of their own (Helpers.cs: Spy, red Sidekick/Jackal).
+        // A mark on one of them would tell the living Impostors he is no teammate, so they are no target.
+        private static bool LooksLikeTeammate(PlayerControl p) =>
+            p != null && (p == Spy.spy || (p == Sidekick.sidekick && Sidekick.wasTeamRed) || (p == Jackal.jackal && Jackal.wasTeamRed));
         private static int LobbyPlayerCount() =>
             PlayerControl.AllPlayerControls.ToArray().Count(p => p != null && p.Data != null && !p.Data.Disconnected);
         private static int ImpostorCount() => PlayerControl.AllPlayerControls.ToArray().Count(IsImpostor);
@@ -161,7 +165,7 @@ namespace UnknownsCollection {
         private static void ApplyMark(byte targetId) {
             if (!active || pirate == null || pirate.Data == null || !pirate.Data.IsDead || InMeeting()) return;
             var target = Helpers.playerById(targetId);
-            if (!Alive(target) || IsImpostor(target)) return;
+            if (!Alive(target) || IsImpostor(target) || LooksLikeTeammate(target)) return;
             var me = PlayerControl.LocalPlayer;
             if (me == null) return;
             if (Alive(me) && IsImpostor(me) && me.PlayerId != pirate.PlayerId) {
@@ -262,7 +266,7 @@ namespace UnknownsCollection {
             PlayerControl best = null;
             float bestD = Range;
             foreach (var p in PlayerControl.AllPlayerControls.ToArray()) {
-                if (!Alive(p) || IsImpostor(p) || p.PlayerId == lp.PlayerId) continue;
+                if (!Alive(p) || IsImpostor(p) || LooksLikeTeammate(p) || p.PlayerId == lp.PlayerId) continue;
                 float d = Vector2.Distance(pos, p.GetTruePosition());
                 if (d < bestD) { bestD = d; best = p; }
             }

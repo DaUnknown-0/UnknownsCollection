@@ -386,6 +386,8 @@ namespace UnknownsCollection {
         static class MurderPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
+                    // A blocked murder still runs the postfixes: no body, nothing to mark or count.
+                    if (target == null || target.Data == null || !target.Data.IsDead) return;
                     if (IsLocalPoisoner() && __instance != null && target != null && __instance.PlayerId == poisoner.PlayerId
                         && target.PlayerId != poisoner.PlayerId && bodiesPoisonedThisRound.Count >= MaxPoisonedValue())
                         Tell(UCLocalization.Tr("uc.ui.poisoner.limit", MaxPoisonedValue()));

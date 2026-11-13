@@ -20,10 +20,11 @@
  *  option. Buttons without frames simply stay static.
  *
  * Round-start safety (see the resetVariables lesson): this class keeps NO references to buttons
- * across rounds - per-button state is keyed by ActionButton instance-id and cleared on reset;
+ * across rounds - per-button state is keyed by the CustomButton object and cleared on reset;
  * every tick null-checks before touching anything. Nothing gameplay-relevant is gated on it.
  */
 
+using System;
 using System.Collections.Generic;
 using TheOtherRoles.Objects;
 using UnityEngine;
@@ -46,11 +47,13 @@ namespace UnknownsCollection {
 
         // Per-ActionButton cosmetic state, keyed by instance-id. Buttons are re-instantiated every
         // round (HudManager.Start), so stale ids are simply dropped on reset.
-        private static readonly Dictionary<int, float> readySince = new();  // Time.time of the not-ready -> ready flip
+        private static readonly Dictionary<CustomButton, long> readySince = new();  // TickCount64 of the not-ready -> ready flip
+        // CustomButton -> its animation set, null = not animated (decided once per button object)
+        private static readonly Dictionary<CustomButton, AnimSet> perButton = new();
 
         static UCButtonAnim() {
             UCFx.RegisterTick(Tick);
-            UCFx.RegisterReset(() => readySince.Clear());
+            UCFx.RegisterReset(() => { readySince.Clear(); perButton.Clear(); });
         }
 
         // Touched once from the plugin's Load() purely to force the static constructor (and thus
@@ -69,31 +72,48 @@ namespace UnknownsCollection {
             var buttons = CustomButton.buttons;
             if (buttons == null) return;
 
+            // Which button is animated is decided once per button object (TOR builds new ones every HUD). Before,
+            // every frame read actionButton/Sprite back from Unity for all ~110 TOR buttons, and each of those
+            // calls boxes on the il2cpp heap through Il2CppInterop: 26 MB of garbage per round (multi-client
+            // test 2026-11-12) for the one or two animated UC buttons a player has.
+            if (perButton.Count > buttons.Count * 2 + 16) perButton.Clear();
             for (int i = 0; i < buttons.Count; i++) {
                 var btn = buttons[i];
-                if (btn == null || btn.actionButton == null || btn.Sprite == null) continue;
-                if (!frameMap.TryGetValue(btn.Sprite.GetInstanceID(), out var set)) continue;
+                if (btn == null) continue;
+                if (!perButton.TryGetValue(btn, out var set)) {
+                    set = null;
+                    var spr = btn.Sprite;
+                    if (ReferenceEquals(spr, null)) continue;                  // icon not set yet: decide later
+                    if (frameMap.TryGetValue(spr.GetInstanceID(), out var found)) set = found;
+                    perButton[btn] = set;
+                }
+                if (set == null) continue;
+                // Unity reads below are the cheap kind only: ReferenceEquals + the native pointer instead of
+                // Unity's == (a boxed bool per call through Il2CppInterop), the clock from TickCount64 instead of
+                // Time.time (a boxed float), see memory il2cpp-gc-pitfalls.
+                var ab = btn.actionButton;
+                if (ReferenceEquals(ab, null) || ab.m_CachedPtr == IntPtr.Zero || ReferenceEquals(btn.Sprite, null)) continue;
                 var go = btn.actionButtonGameObject;
-                if (go == null || !go.activeSelf) continue; // hidden (meeting/dead/no role): skip
+                if (ReferenceEquals(go, null) || go.m_CachedPtr == IntPtr.Zero || !go.activeSelf) continue; // hidden: skip
                 // only now: TOR creates the buttons of EVERY role and hides those the player does not have
                 if (set.frames == null && !EnsureFrames(set)) continue;
-
-                int id = btn.actionButton.GetInstanceID();
 
                 // "Usable" = cooldown elapsed, no active effect, and TOR did not desaturate it
                 // (reusing TOR's own CouldUse verdict from its material instead of re-running the
                 // role lambdas; worst case this lags one frame behind).
                 bool ready = btn.Timer <= 0f && !btn.isEffectActive;
-                if (ready && btn.actionButtonMat != null && btn.actionButtonMat.HasProperty(DesatId))
-                    ready = btn.actionButtonMat.GetFloat(DesatId) < 0.5f;
+                var mat = btn.actionButtonMat;
+                if (ready && !ReferenceEquals(mat, null) && mat.m_CachedPtr != IntPtr.Zero && mat.HasProperty(DesatId))
+                    ready = mat.GetFloat(DesatId) < 0.5f;
 
                 // 1. Flipbook - only while usable; otherwise hold the static frame 0. Playback is
                 // clocked from the moment this button became ready, so it always starts at frame 0.
                 if (ready) {
-                    if (!readySince.TryGetValue(id, out float since)) { since = Time.time; readySince[id] = since; }
-                    btn.Sprite = set.frames[(int)((Time.time - since) * Fps) % set.frames.Length];
+                    long now = Environment.TickCount64;
+                    if (!readySince.TryGetValue(btn, out long since)) { since = now; readySince[btn] = since; }
+                    btn.Sprite = set.frames[(int)((now - since) * 0.001f * Fps) % set.frames.Length];
                 } else {
-                    readySince.Remove(id);
+                    readySince.Remove(btn);
                     btn.Sprite = set.frames[0];
                 }
             }

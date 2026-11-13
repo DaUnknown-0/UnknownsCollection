@@ -731,12 +731,29 @@ namespace UnknownsCollection {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
                 try {
                     if (!AmHost() || !active || target == null) return;
+                    // A blocked murder (shield, a prefix returning false) still runs the postfixes.
+                    if (target.Data == null || !target.Data.IsDead) return;
                     killTimes.Add(Time.time);
-                    bool alreadyRecorded = false;
-                    for (int i = 0; i < deathOrderThisRound.Count; i++)
-                        if (deathOrderThisRound[i].Key == target.PlayerId) { alreadyRecorded = true; break; }
-                    if (!alreadyRecorded)
-                        deathOrderThisRound.Add(new KeyValuePair<byte, float>(target.PlayerId, Time.time));
+                    RecordDeath(target.PlayerId);
+                } catch { }
+            }
+        }
+
+        private static void RecordDeath(byte pid) {
+            for (int i = 0; i < deathOrderThisRound.Count; i++)
+                if (deathOrderThisRound[i].Key == pid) return;
+            deathOrderThisRound.Add(new KeyValuePair<byte, float>(pid, Time.time));
+        }
+
+        // Deaths without a MurderPlayer during the round (Poisoner, other Exiled() deaths) count for
+        // "who dies next" too. Vote-outs and meeting deaths are not round deaths: skipped.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.Exiled))]
+        static class ExiledPatch {
+            public static void Postfix(PlayerControl __instance) {
+                try {
+                    if (!AmHost() || !active || __instance == null || __instance.Data == null || !__instance.Data.IsDead) return;
+                    if (MeetingHud.Instance != null || ExileController.Instance != null) return;
+                    RecordDeath(__instance.PlayerId);
                 } catch { }
             }
         }
@@ -755,6 +772,8 @@ namespace UnknownsCollection {
                         if (expected.Count == 0) pendingRecomplete.Remove(__instance.PlayerId);
                         return;
                     }
+                    // Re-completions another feature ordered (Auditor revert, ...) are no progress either.
+                    if (UCTaskCount.IsOrderedRecomplete(__instance.PlayerId, idx)) return;
                     if (__instance.hasFakeTasks()) return;
                     byte pid = __instance.PlayerId;
                     if (!tasksThisRound.TryGetValue(pid, out var times)) tasksThisRound[pid] = times = new List<float>();
@@ -1044,6 +1063,9 @@ namespace UnknownsCollection {
         // Host: payout
         // ====================================================================
         private static void SettleAndPay(Bet b, bool won, bool push) {
+            // A Gambler who died without a MurderPlayer (guessed, poisoned) keeps his open bets in the
+            // list; they settle as undecided, a dead man's bet moves nothing.
+            if (gambler == null || gambler.Data == null || gambler.Data.IsDead) push = true;
             SendSettle(b.Id, won, push);
             if (push) return;
             var def = Def(b.Kind);
@@ -1138,6 +1160,7 @@ namespace UnknownsCollection {
                     pendingRecomplete[gambler.PlayerId] = expected;
                 }
                 foreach (uint id in keepComplete) expected.Add(id);
+                UCTaskCount.ExpectRecomplete(gambler.PlayerId, keepComplete);
 
                 gambler.Data.RpcSetTasks(typeIds);
                 SendRevertTasks(keepComplete);
@@ -1243,6 +1266,7 @@ namespace UnknownsCollection {
                 try {
                     if (!active || gambler == null || target == null) return;
                     if (target.PlayerId != gambler.PlayerId) return;
+                    if (target.Data == null || !target.Data.IsDead) return;   // blocked murder: he lives on
                     bets.RemoveAll(b => !b.Settled);
                 } catch { }
             }

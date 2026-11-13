@@ -678,6 +678,9 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
         static class MurderPatch {
             public static void Postfix(PlayerControl __instance, [HarmonyArgument(0)] PlayerControl target) {
+                // A blocked murder (shield, a prefix returning false) still runs the postfixes: only a
+                // real death may promote anyone.
+                if (target == null || target.Data == null || !target.Data.IsDead) return;
                 try { HandleDeath(target, byExile: false, killer: __instance); } catch (Exception e) {
                     UnknownsCollectionPlugin.Logger?.LogError($"[Poltergeist] murder hook failed: {e}");
                 }

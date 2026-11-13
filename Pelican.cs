@@ -926,6 +926,8 @@ namespace UnknownsCollection {
                 try {
                     if (!active || pelican == null || target == null || __instance == null) return;
                     outer = __instance.PlayerId == pelican.PlayerId;
+                    // A blocked murder still runs the postfixes: nobody died, nothing to swallow or release.
+                    if (target.Data == null || !target.Data.IsDead) return;
 
                     // The Pelican falls -> everything he carries reappears on his body.
                     if (target.PlayerId == pelican.PlayerId) { ReleaseAll(target.GetTruePosition()); return; }

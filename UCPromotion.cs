@@ -102,10 +102,21 @@ namespace UnknownsCollection {
         // whether a Paramedic is in play (Fable review 2026-10-04); the King picks his crew advisor, who must
         // not be turned into a Bug, Follower or Copycat by a neutral pick that runs after him (audit 21.10.).
         private static readonly System.Collections.Generic.HashSet<string> LatePickers = new() { "Poisoner", "King" };
+        // Modifiers go after every role pick: their candidate checks skip neutrals and role holders, so a
+        // role handed out AFTER a modifier (a neutral over a plain Crewmate) would keep a crew modifier.
+        private static readonly System.Collections.Generic.HashSet<string> ModifierPickers = new() {
+            "Gambler", "VoidModifier", "Sleepwalker", "SixthSense", "Giant", "LastWords", "Colorblind",
+        };
+
+        private static int PickStage(System.Reflection.MethodInfo m) {
+            string role = m.DeclaringType?.DeclaringType?.Name ?? "";
+            if (ModifierPickers.Contains(role)) return 2;
+            return LatePickers.Contains(role) ? 1 : 0;
+        }
 
         public static void RunPicks() {
             var order = picks.OrderBy(_ => pickRnd.Next())
-                             .OrderBy(m => LatePickers.Contains(m.DeclaringType?.DeclaringType?.Name ?? "") ? 1 : 0)
+                             .OrderBy(PickStage)
                              .ToList();
             foreach (var m in order) {
                 try {

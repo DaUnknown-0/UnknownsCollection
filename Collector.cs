@@ -459,23 +459,13 @@ namespace UnknownsCollection {
         // The task count feeding the relic counter. Default: GameData.CompletedTasks (kept current by
         // RecomputeTaskCounts, already adjusted by TaskPatch below - collector excluded, TOR's Lawyer/
         // Thief/killing-Lover exclusions applied). With "Only Count Living Crews Tasks" ON the count is
-        // recomputed over LIVING players only, using TOR's own per-player rules (TasksHandler.taskInfo
-        // already drops impostors/fake-task roles) plus the same extra exclusions RecomputeTaskCounts
-        // and TaskPatch apply. Note this count can DROP when a crewmate dies - already-granted relics
-        // stay, the counter simply needs to catch up again before the next one spawns.
+        // recomputed over LIVING players only, with the shared exclusion list of UCTaskCount (TOR's own
+        // rules plus every UC role that takes itself out of the bar: Bug, Copycat, Collector, ...), so it
+        // drops the same players as the default path. Note this count can DROP when a crewmate dies -
+        // already-granted relics stay, the counter simply needs to catch up again before the next one spawns.
         private static int RelicTaskCount(GameData gd) {
             if (OnlyLivingTasks == null || !OnlyLivingTasks.getBool()) return gd.CompletedTasks;
-            int done = 0;
-            foreach (var pi in gd.AllPlayers.GetFastEnumerator()) {
-                if (pi == null || pi.Disconnected || pi.IsDead) continue;
-                if (pi.Object && pi.Object.hasAliveKillingLover()) continue;               // TasksHandler rule
-                if (Lawyer.lawyer != null && pi.PlayerId == Lawyer.lawyer.PlayerId) continue; // TasksHandler rule
-                if (Thief.thief != null && pi.PlayerId == Thief.thief.PlayerId) continue;     // TasksHandler rule
-                if (collector != null && pi.PlayerId == collector.PlayerId
-                    && !(HasTasks?.getBool() ?? false)) continue;                          // TaskPatch rule
-                done += TasksHandler.taskInfo(pi).Item1;
-            }
-            return done;
+            return UCTaskCount.CompletedByLiving();
         }
 
         // Host: spawn one extra relic per X completed crew tasks (option, 0 = off).

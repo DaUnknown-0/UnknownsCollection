@@ -33,7 +33,7 @@
  * the scan task under its own names, so the cure works there.
  *
  * ARCHITECTURE: modifier over any role (the Gambler pattern), host-authoritative pick, custom RPC
- * module 224 on UCRpc.CallId = 230, gated on "everyone has the mod". Options 1685-1689, display
+ * module 224 on UCRpc.CallId = 230, gated on "everyone has the mod". Options 1685-1691, display
  * RoleId sentinel 235, no draft entry. See ID-Registry.md.
  */
 
@@ -55,7 +55,7 @@ namespace UnknownsCollection {
         // A cool slate: the one grey that is not the Follower's neutral grey.
         public static readonly Color Color = new Color(0.55f, 0.58f, 0.64f);
 
-        // ---- Options (IDs 1685-1689) ----
+        // ---- Options (IDs 1685-1691) ----
         public static CustomOption SpawnRate;
         public static CustomOption SpawnMinPlayers;
         public static CustomOption WhoCanBe;            // 0 crew only, 1 anyone

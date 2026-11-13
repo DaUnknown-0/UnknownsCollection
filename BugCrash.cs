@@ -37,9 +37,14 @@ namespace UnknownsCollection {
         private const byte SkipVote = 253;
 
         private static bool usedLocal;            // the local Bug pressed it this game
+        private static bool armUsedHost;          // host: the Bug's one arm this game was spent (usedLocal is only local)
         private static bool armed;                // host: the next meeting crashes
         private static bool pending;              // host: this meeting crashes at crashAt
         private static float crashAt;
+        private static float showUntil = -1f;     // host: the crash show (glitch, blue screen, reboot) runs until then
+
+        /// Host: a system crash is on screen in this meeting right now.
+        internal static bool ShowRunning => Time.time < showUntil && MeetingHud.Instance != null;
         private static bool skipOwed;             // local: failed the reboot, vote Skip once voting is open
 
         private static TheOtherRoles.Objects.CustomButton button;
@@ -55,7 +60,7 @@ namespace UnknownsCollection {
         private static bool InMeeting() => MeetingHud.Instance != null || ExileController.Instance != null;
 
         internal static void Reset() {
-            usedLocal = armed = pending = skipOwed = false;
+            usedLocal = armed = pending = skipOwed = armUsedHost = false;
             BugCrashScreen.Close();
         }
 
@@ -80,6 +85,7 @@ namespace UnknownsCollection {
 
         private static void SendStart(byte seconds) {
             try {
+                showUntil = Time.time + seconds + ShowSeconds + 1f;
                 var w = UCRpc.Begin(Bug.ModuleRpcId);
                 w.Write(SubCrashStart);
                 w.Write(seconds);
@@ -90,6 +96,14 @@ namespace UnknownsCollection {
 
         private static void ApplyArm() {
             if (!AmHost() || !On()) return;
+            // Once per game and only from a living Bug, checked here too: the button enforces it only
+            // on the Bug's own client.
+            var bug = Bug.bug;
+            if (armUsedHost || bug == null || bug.Data == null || bug.Data.IsDead) {
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] system crash arm ignored (already used or the Bug is dead).");
+                return;
+            }
+            armUsedHost = true;
             armed = true;
             UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] system crash armed for the next meeting.");
         }
@@ -114,7 +128,11 @@ namespace UnknownsCollection {
             }
             if (hud.state == MeetingHud.VoteStates.Results || hud.state == MeetingHud.VoteStates.Proceeding)
                 return "The voting is over, too late for this meeting.";
-            if (BugCrashScreen.Active) return "A system crash is already running.";
+            if (BugCrashScreen.Active || ShowRunning) return "A system crash is already running.";
+            if (Maniac.DefuseThisMeeting) {
+                armed = true;
+                return "A bomb defuse runs in this meeting: the system crash hits the next meeting.";
+            }
             pending = false;
             SendStart((byte)Mathf.Clamp(Mathf.RoundToInt(Reboot()), 1, 60));
             return $"System crash started for every living player (reboot {Reboot():0} s).";
@@ -152,8 +170,13 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class TickPatch {
             public static void Postfix() {
+                // The button placement has its own guard: a failure there must not disarm a pending crash.
                 try {
                     if (button != null && Bug.IsLocalBug()) UCButtonSlots.Place(button);   // a modifier may hold a slot
+                } catch (Exception e) {
+                    UnknownsCollectionPlugin.Logger?.LogError($"[Bug] crash button placement failed: {e}");
+                }
+                try {
                     HostTick();
                     PayOwedSkip();
                 } catch (Exception e) {
@@ -169,6 +192,13 @@ namespace UnknownsCollection {
             if (hud == null) return;
             if (hud.state == MeetingHud.VoteStates.Results || hud.state == MeetingHud.VoteStates.Proceeding) return;
             pending = false;
+            // The bomb defuse goes first: it decides about a life and belongs to this meeting, the crash can wait for
+            // the next one (User 2026-11-13: the two must not run at the same time).
+            if (Maniac.DefuseThisMeeting) {
+                armed = true;
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] system crash postponed: a bomb defuse runs in this meeting.");
+                return;
+            }
             float reboot = Reboot();
             if (MeetingSecondsLeft(hud) < reboot + ShowSeconds + 3f) {
                 armed = true;   // not enough voting time for the whole show: the next meeting
@@ -176,6 +206,25 @@ namespace UnknownsCollection {
                 return;
             }
             SendStart((byte)Mathf.Clamp(Mathf.RoundToInt(reboot), 1, 60));
+        }
+
+        // TORMapOptions and MeetingHudPatch are internal to TOR: read the two values by reflection.
+        private static System.Reflection.FieldInfo blockSkipField, meetingTargetField;
+        private static bool skipFieldsResolved;
+        private static bool SkipBlocked() {
+            try {
+                if (!skipFieldsResolved) {
+                    skipFieldsResolved = true;
+                    var asm = typeof(CustomOption).Assembly;
+                    blockSkipField = asm.GetType("TheOtherRoles.TORMapOptions")?.GetField("blockSkippingInEmergencyMeetings",
+                        System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                    meetingTargetField = asm.GetType("TheOtherRoles.Patches.MeetingHudPatch")?.GetField("target",
+                        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                }
+                if (!(blockSkipField?.GetValue(null) is bool block) || !block) return false;
+                // TOR's rule applies to emergency meetings only (no reported body).
+                return meetingTargetField == null || meetingTargetField.GetValue(null) == null;
+            } catch { return false; }
         }
 
         // A failed reboot votes Skip once the voting is open, unless this player has voted already.
@@ -189,6 +238,12 @@ namespace UnknownsCollection {
                 return;   // still in the discussion: wait
             }
             skipOwed = false;
+            // TOR hides the Skip button in emergency meetings when "Block Skipping In Emergency Meetings"
+            // is on; the forced vote must not get around that, so the player simply stays unvoted.
+            if (SkipBlocked()) {
+                UnknownsCollectionPlugin.Logger?.LogInfo("[Bug] reboot failed, but skipping is blocked in this meeting: no vote cast.");
+                return;
+            }
             foreach (var pva in hud.playerStates) {
                 if (pva == null || pva.TargetPlayerId != me.PlayerId) continue;
                 if (pva.DidVote || pva.AmDead) return;

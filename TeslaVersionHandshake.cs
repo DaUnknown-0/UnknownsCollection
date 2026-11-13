@@ -132,9 +132,14 @@ namespace UnknownsCollection {
             byte major = reader.ReadByte();
             byte minor = reader.ReadByte();
             byte build = reader.ReadByte();
-            int clientId = reader.ReadPackedInt32();
+            reader.ReadPackedInt32(); // payload clientId: still read (wire format), but not trusted
             Guid guid = new Guid(reader.ReadBytes(16));
-            Receive(major, minor, build, guid, clientId);
+            // The entry belongs to the client that actually sent the message (transport identity),
+            // not to whatever clientId the payload claims; otherwise any client could register a
+            // version for someone else and fake "everyone has the mod".
+            var sender = UCRpc.Sender;
+            if (sender == null) return;
+            Receive(major, minor, build, guid, sender.OwnerId);
         }
 
         private static void Receive(int major, int minor, int build, Guid guid, int clientId) {

@@ -323,6 +323,7 @@ namespace UnknownsCollection {
                 try {
                     if (AmongUsClient.Instance == null || !AmongUsClient.Instance.AmHost) return;
                     if (!active || shade == null || target == null) return;
+                    if (target.Data == null || !target.Data.IsDead) return; // blocked murder: no body to hide
                     if (__instance.PlayerId != shade.PlayerId) return; // only Shade's kills
                     if (!IsAlive(shade)) return;
 

@@ -22,7 +22,7 @@
  * from GameManager.DeadBodyPrefab, can be reported, and the meeting starts cleanly (no exception). Dead bodies
  * are no network objects, so the host-checked RPC creates the body on every client identically.
  *
- * Network: Sub 0 set (host -> everyone), Sub 1 place (owner-authored: victimId, x, y). Options 1794-1798,
+ * Network: Sub 0 set (host -> everyone), Sub 1 place (owner-authored: victimId, x, y). Options 1794-1799,
  * RPC module 231, draft sentinel 229. See ID-Registry.md.
  */
 
@@ -43,7 +43,7 @@ namespace UnknownsCollection {
     public static class Faker {
         public static readonly Color Color = Palette.ImpostorRed;
 
-        // ---- Options (IDs 1794-1798) ----
+        // ---- Options (IDs 1794-1799) ----
         public static CustomOption SpawnRate;
         public static CustomOption SpawnMinPlayers;
         public static CustomOption Cooldown;    // seconds
@@ -160,6 +160,13 @@ namespace UnknownsCollection {
         private static void ApplyPlace(byte victimId, Vector2 at) {
             try {
                 if (!active || faker == null || InMeeting()) return;
+                // Every client keeps the uses counter, so the limit costs nothing to check here. The body
+                // goes where the Faker stands (SendPlace); a remote placement far from him is dropped.
+                if (usesLeft <= 0) return;
+                if (faker != PlayerControl.LocalPlayer && Vector2.Distance(at, faker.GetTruePosition()) > MaxPlaceOffset) {
+                    UnknownsCollectionPlugin.Logger?.LogWarning($"[Faker] placement {Vector2.Distance(at, faker.GetTruePosition()):F1}u away from the Faker ignored.");
+                    return;
+                }
                 var victim = Helpers.playerById(victimId);
                 if (!Alive(victim)) return;                       // a fake body needs a living victim
                 DestroyFake(victimId);                            // at most one per victim
@@ -184,6 +191,9 @@ namespace UnknownsCollection {
                 UnknownsCollectionPlugin.Logger?.LogError($"[Faker] ApplyPlace failed: {e}");
             }
         }
+
+        // Network lag tolerance for the placement check in ApplyPlace (the Faker walks on meanwhile).
+        private const float MaxPlaceOffset = 4f;
 
         private static void DestroyFake(byte victimId) {
             if (!fakes.TryGetValue(victimId, out var f)) return;
@@ -227,6 +237,23 @@ namespace UnknownsCollection {
                         var victim = Helpers.playerById(kv.Key);
                         if (kv.Value.body == null || Time.time >= kv.Value.expiresAt || !Alive(victim)) DestroyFake(kv.Key);
                     }
+                } catch { }
+            }
+        }
+
+        // A victim who really dies loses his decoy at once, not up to 0.25 s later in TickPatch: the roles
+        // that look a body up by ParentId (Pelican, Shade, Paramedic, Necromancer) take the first DeadBody
+        // they find and would otherwise grab the decoy instead of the real body. SetActive(false) because
+        // Destroy only lands at the end of the frame; FindObjectsOfType skips inactive objects.
+        [HarmonyPatch(typeof(PlayerControl), nameof(PlayerControl.MurderPlayer))]
+        static class RealDeathPatch {
+            [HarmonyPriority(Priority.First)]
+            public static void Postfix([HarmonyArgument(0)] PlayerControl target) {
+                try {
+                    if (fakes.Count == 0 || target == null || target.Data == null || !target.Data.IsDead) return;
+                    if (!fakes.TryGetValue(target.PlayerId, out var f)) return;
+                    if (f.body != null) f.body.gameObject.SetActive(false);
+                    DestroyFake(target.PlayerId);
                 } catch { }
             }
         }

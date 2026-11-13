@@ -517,11 +517,27 @@ namespace UnknownsCollection {
         // Runs AFTER TOR's LateUpdatePrefix, which returns false for cached custom hats. HarmonyX
         // still executes postfixes when a prefix skips the original, so this is the last writer of
         // the sprite in the frame and cannot be overwritten by TOR's flip handling.
+        // hat.name crosses into Il2Cpp and allocates a new managed string on every read; this postfix
+        // runs for every hat every frame. HatData objects live for the session, so their name is cached
+        // by object pointer.
+        private static readonly Dictionary<IntPtr, string> hatNameCache = new Dictionary<IntPtr, string>();
+        private static string HatNameOf(HatData hat) {
+            IntPtr key = hat.Pointer;
+            if (!hatNameCache.TryGetValue(key, out var name)) {
+                if (hatNameCache.Count > 4096) hatNameCache.Clear();
+                name = hat.name;
+                hatNameCache[key] = name;
+            }
+            return name;
+        }
+
         private static void LateUpdatePostfix(HatParent __instance) {
             try {
                 if (__instance == null) return;
                 var hat = __instance.Hat;
-                if (hat == null || !AnimByName.TryGetValue(hat.name, out var def)) return;
+                if (hat == null) return;
+                string hatName = HatNameOf(hat);
+                if (!AnimByName.TryGetValue(hatName, out var def)) return;
 
                 if (def.FollowBody) SetBounceNode(__instance);
 
@@ -540,7 +556,7 @@ namespace UnknownsCollection {
 
                 // Pose guard 2 (exact): never write over the climb sprite. SetClimbAnim fires only
                 // on pose CHANGES - overwrite it once and the pose is gone until SetIdleAnim.
-                if (TryGetViewData(hat.name, out var view) && view != null &&
+                if (TryGetViewData(hatName, out var view) && view != null &&
                     (renderer.sprite == view.ClimbImage || renderer.sprite == view.LeftClimbImage)) return;
 
                 // Never mirror pure-text hats. Cosmetics follow the player's facing, which turned
@@ -783,8 +799,13 @@ namespace UnknownsCollection {
             } catch { }
         }
 
+        private static float nextHatLockTick;
         private static void TickHatLock() {
             try {
+                // customization.Hat allocates a string per read; four checks a second are plenty for a
+                // lock that already waits a second between fixes.
+                if (Time.time < nextHatLockTick) return;
+                nextHatLockTick = Time.time + 0.25f;
                 var customization = DataManager.Player?.Customization;
                 if (customization == null) return;
                 string saved = customization.Hat;

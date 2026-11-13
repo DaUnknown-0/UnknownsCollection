@@ -303,6 +303,11 @@ namespace UnknownsCollection {
         private static byte exiledThisMeeting = byte.MaxValue;
 
         private static bool DefuseOn() => DefuseInMeetings == null || DefuseInMeetings.getBool();
+
+        /// Host: this meeting has (or had) a defuse. The Bug's system crash then waits for the next meeting:
+        /// the defuse decides about a life and belongs to this meeting, the crash can move (User 2026-11-13:
+        /// both must not run at the same time).
+        internal static bool DefuseThisMeeting => defuseCarrier != byte.MaxValue;
         private static float DefuseSeconds() => DefuseTime != null ? DefuseTime.getFloat() : 30f;
 
         // Called right before a meeting clears the bomb (both clear sites run it, the first one wins).
@@ -331,6 +336,8 @@ namespace UnknownsCollection {
 
         private static void HostDefuseTick() {
             if (defuseCarrier == byte.MaxValue || defuseSent || Time.time < defuseStartAt) return;
+            // a system crash already on screen (only possible when the host started it by hand): defuse after it
+            if (BugCrash.ShowRunning) return;
             var hud = MeetingHud.Instance;
             if (hud == null) return;
             defuseSent = true;
@@ -429,6 +436,7 @@ namespace UnknownsCollection {
             var p = Helpers.playerById(playerId);
             if (!IsAlive(p)) return "That player is not alive.";
             if (defuseCarrier != byte.MaxValue && defuseSent) return "A defuse minigame already ran in this meeting.";
+            if (BugCrash.ShowRunning) return "A system crash is on screen: start the defuse after it.";
             defuseCarrier = playerId;
             defuseStartAt = Time.time;
             defuseSent = defuseOk = false;
@@ -1005,7 +1013,9 @@ namespace UnknownsCollection {
         private static readonly Vector3 PassButtonNudgedPos = PassButtonDefaultPos + new Vector3(0f, 0.6f, 0f);
 
         private static void UpdatePassButtonPosition() {
-            if (passButton == null) return;
+            // The PASS button only shows to the bomb carrier (HasButton: active && LocalHasBomb()); everyone
+            // else would scan every TOR button each frame for nothing.
+            if (passButton == null || !active || !LocalHasBomb()) return;
             bool collides = false;
             foreach (var b in TheOtherRoles.Objects.CustomButton.buttons) {
                 if (b == null || b == passButton || b == bombButton) continue;

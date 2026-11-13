@@ -272,6 +272,9 @@ namespace UnknownsCollection {
         // Appliers (run on every client)
         // ====================================================================
         private static void ApplySetCopycat(byte id) {
+            // The role moves away from a promoted player (Mixer, Role Control): hand his AU role back
+            // first, while `copycat` still points at him. RevokeVentPromotion is host-only by itself.
+            if (ventPromotionActive && copycat != null && copycat.PlayerId != id) RevokeVentPromotion();
             copycat = Helpers.playerById(id);
             active = copycat != null;
             if (active) UCPromotion.Claim(id);
@@ -984,12 +987,20 @@ namespace UnknownsCollection {
 
         private static readonly Dictionary<Ability, Sprite> abilitySpriteCache = new();
         private static Sprite GetAbilitySprite(Ability ability) {
-            if (abilitySpriteCache.TryGetValue(ability, out var cached)) return cached;
+            if (abilitySpriteCache.TryGetValue(ability, out var cached) && cached != null) return cached;
+            // TOR has no own Sheriff icon: the Sheriff uses the vanilla kill button's sprite, so the copied shot does too.
+            // "TheOtherRoles.Resources.SheriffKillButton.png" never existed and failed (with a log line) on every HUD build.
+            if (ability == Ability.Shoot) {
+                try {
+                    var kill = HudManager.InstanceExists ? HudManager.Instance.KillButton?.graphic?.sprite : null;
+                    if (kill != null) { abilitySpriteCache[ability] = kill; return kill; }
+                } catch { }
+                return cachedButtonSprite;
+            }
             string resource = ability switch {
                 Ability.Camouflage => "TheOtherRoles.Resources.CamoButton.png",
                 Ability.Morphling => "TheOtherRoles.Resources.MorphButton.png",
                 Ability.Shield => "TheOtherRoles.Resources.TimeShieldButton.png",
-                Ability.Shoot => "TheOtherRoles.Resources.SheriffKillButton.png",
                 _ => null
             };
             if (resource != null) {

@@ -39,7 +39,7 @@ public class UnknownsCollectionPlugin : BasePlugin
 {
     public const string PluginGuid = "com.tormod.unknownscollection";
     public const string PluginName = "Unknown's Collection";
-    public const string PluginVersion = "1.5.1.2";
+    public const string PluginVersion = "1.5.1.3";
     public static readonly System.Version Version = System.Version.Parse(PluginVersion);
 
     // MODULE BYTES, not callIds (since the RPC consolidation).
@@ -50,7 +50,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     // so logs, comments and ID-Registry.md still line up; they no longer occupy anything in TOR's
     // callId space, they only have to be unique WITHIN this mod.
     //
-    // The bytes in use run from 190 to 234 (see the constants below and ID-Registry.md).
+    // The bytes in use run from 190 to 234, plus 245 (UCOnlineHats); see the constants below and ID-Registry.md.
     //
     // Consequence: only ONE byte (230) has to stay free globally instead of 18. TOR's CustomRPC enum
     // currently runs 100-183 and keeps growing; the watchdog in Load() below shouts if it ever gets
@@ -93,6 +93,7 @@ public class UnknownsCollectionPlugin : BasePlugin
     public const byte HypnotistRpcId = 227;    // impostor; steers a victim's vote (Sub 0 set, 1 hypnotize, 2 pick)
     public const byte MixerRpcId = 232;        // crew; mixes a player's role (Sub 0 set, 1 mix, 2 notify, 3 revenge, 4 shoot, 5 tor-swap, 6 result)
     public const byte CursedPirateRpcId = 234; // impostor; dead, marks prey for his teammates (Sub 0 set, 1 mark)
+    public const byte OnlineHatsRpcId = 245;   // online hat catalogue: which streamed hats a player wears, see UCOnlineHats
     public const byte GuessPickRpcId = 233;    // the UC role a guesser picked in TOR's grid (guesserId, index; 255 = no UC role), see UCGuessNames
     public const byte SkinwalkerRpcId = 228;   // impostor; wears the victim's skin (Sub 0 set, 1 skin)
     public const byte GiantRpcId = 229;        // MODIFIER; bigger, slower, sees further (Sub 0 set)
@@ -112,6 +113,10 @@ public class UnknownsCollectionPlugin : BasePlugin
     {
         Logger = Log;
         Logger.LogInfo($"{PluginName} v{PluginVersion} loading...");
+        // Before any patch: patches on game methods are built once after all plugins loaded (start time, HarmonyBatch).
+        HarmonyBatch.Install(Config.Bind("Performance", "Batch Harmony Patches At Start", true,
+            "Build every patched game method once after all plugins have loaded instead of once per patch (faster start).").Value,
+            s => Logger.LogInfo("[HarmonyBatch] " + s));
 
         var enabled = Config.Bind("General", "Enabled", true, "Enable this mod");
         if (!enabled.Value) {
@@ -513,7 +518,7 @@ public class UnknownsCollectionPlugin : BasePlugin
         [HarmonyPriority(Priority.Low)]  // after TOR's own PingTracker postfix
         public static void Postfix(PingTracker __instance)
         {
-            if (__instance == null || __instance.text == null) return;
+            if (ReferenceEquals(__instance, null) || ReferenceEquals(__instance.text, null) || __instance.text.m_CachedPtr == System.IntPtr.Zero) return;   // no Unity ==: it boxes a bool per call (il2cpp heap), every frame in every mod
             string text = __instance.text.text;
             if (string.IsNullOrEmpty(text)) return;
 

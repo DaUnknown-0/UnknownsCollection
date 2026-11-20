@@ -145,6 +145,7 @@ namespace UnknownsCollection {
 
         private static void ApplySet(byte id) {
             ClearFakes("role reassigned");
+            pending.Clear();
             faker = id == byte.MaxValue ? null : Helpers.playerById(id);
             active = faker != null;
             usesLeft = Mathf.RoundToInt(Uses?.getFloat() ?? 2f);
@@ -157,13 +158,17 @@ namespace UnknownsCollection {
         public static void MarkFromDraft(byte playerId) => ApplySet(playerId);
 
         // ---- The fake body (every client) ----
-        private static void ApplyPlace(byte victimId, Vector2 at) {
+        private static void ApplyPlace(byte victimId, Vector2 at, bool retry = false) {
             try {
                 if (!active || faker == null || InMeeting()) return;
                 // Every client keeps the uses counter, so the limit costs nothing to check here. The body
                 // goes where the Faker stands (SendPlace); a remote placement far from him is dropped.
                 if (usesLeft <= 0) return;
                 if (faker != PlayerControl.LocalPlayer && Vector2.Distance(at, faker.GetTruePosition()) > MaxPlaceOffset) {
+                    // A jump right before the placement (portal, stairs, RpcSnapTo) can reach this client after the
+                    // placement: give his position PendingWindow seconds to catch up before dropping it, otherwise
+                    // the body would lie on some clients only and the uses counters would drift apart.
+                    if (!retry) { pending.Add((victimId, at, Time.time + PendingWindow)); return; }
                     UnknownsCollectionPlugin.Logger?.LogWarning($"[Faker] placement {Vector2.Distance(at, faker.GetTruePosition()):F1}u away from the Faker ignored.");
                     return;
                 }
@@ -194,6 +199,20 @@ namespace UnknownsCollection {
 
         // Network lag tolerance for the placement check in ApplyPlace (the Faker walks on meanwhile).
         private const float MaxPlaceOffset = 4f;
+        private const float PendingWindow = 1f;
+        private static readonly List<(byte victim, Vector2 at, float until)> pending = new();
+
+        // Remote placements that failed the distance check: tried again while the Faker's position catches up,
+        // dropped for good (with the warning) once the window is over.
+        private static void RetryPending() {
+            for (int i = pending.Count - 1; i >= 0; i--) {
+                var p = pending[i];
+                bool last = Time.time >= p.until;
+                if (!last && (faker == null || Vector2.Distance(p.at, faker.GetTruePosition()) > MaxPlaceOffset)) continue;
+                pending.RemoveAt(i);
+                ApplyPlace(p.victim, p.at, retry: true);
+            }
+        }
 
         private static void DestroyFake(byte victimId) {
             if (!fakes.TryGetValue(victimId, out var f)) return;
@@ -230,6 +249,7 @@ namespace UnknownsCollection {
         [HarmonyPatch(typeof(HudManager), nameof(HudManager.Update))]
         static class TickPatch {
             public static void Postfix() {
+                try { if (pending.Count > 0) RetryPending(); } catch { pending.Clear(); }
                 try {
                     if (fakes.Count == 0 || Time.time < nextTick) return;
                     nextTick = Time.time + 0.25f;
@@ -451,6 +471,7 @@ namespace UnknownsCollection {
         // ---- Resets ----
         private static void FullReset() {
             ClearFakes("reset");
+            pending.Clear();
             faker = null;
             active = false;
             usesLeft = 0;

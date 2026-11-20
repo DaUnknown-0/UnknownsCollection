@@ -347,6 +347,10 @@ namespace UnknownsCollection {
             if (w < 16 || w > 2048 || h < 16 || h > 1024 || fps < 1 || fps > 60 || frames < 1 || frames > 600
                 || tile < 4 || slot < tile + 2 || cols < 1 || aw < slot || ah < slot || aw > 4096 || ah > 4096 || fade.Length != frames)
                 throw new InvalidDataException("anim header");
+            // The tile sequence is checked in full before anything is created: a sequence that does not match the
+            // header used to throw in the middle of the mesh loop and leave plate, atlas, material, sprite and the
+            // meshes built so far behind (all HideAndDontSave), once more on every retry.
+            if (!SeqValid(seq, frames, w, h, tile, cols, aw / slot, ah / slot)) throw new InvalidDataException("anim tiles");
 
             var plate = new Texture2D(2, 2, TextureFormat.RGB24, false);
             if (!ImageConversion.LoadImage(plate, data["plate"], true) || plate.width != w || plate.height != h) {
@@ -423,6 +427,27 @@ namespace UnknownsCollection {
                 Role = role, W = w, H = h, Fps = fps, Frames = frames, Plate = plate, Atlas = atlas,
                 PlateSprite = sprite, Mat = mat, Meshes = meshes,
             });
+        }
+
+        // Same walk as the mesh loop in Build, reading only: per frame a 16-bit tile count, per tile one byte grid cell
+        // and a 16-bit atlas slot. Every cell has to start inside the picture, every slot inside the atlas, and a
+        // frame's quads have to fit a 16-bit index buffer.
+        private static bool SeqValid(byte[] seq, int frames, int w, int h, int tile, int cols, int perRow, int slotRows) {
+            if (seq == null || perRow < 1 || slotRows < 1) return false;
+            int pos = 0;
+            for (int i = 0; i < frames; i++) {
+                if (pos + 2 > seq.Length) return false;
+                int n = seq[pos] | (seq[pos + 1] << 8);
+                pos += 2;
+                if (n * 4 > 65535 || pos + n * 3 > seq.Length) return false;
+                for (int j = 0; j < n; j++, pos += 3) {
+                    int k = seq[pos];
+                    int s = seq[pos + 1] | (seq[pos + 2] << 8);
+                    if ((k % cols) * tile >= w || (k / cols) * tile >= h) return false;
+                    if (s / perRow >= slotRows) return false;
+                }
+            }
+            return true;
         }
 
         private static void Keep(Texture2D t) {

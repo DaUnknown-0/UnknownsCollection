@@ -308,7 +308,11 @@ namespace UnknownsCollection {
                 for (int y = y0; y < y0 + len && y < gh; y++) buf[y * gw + x] = c;
             }
 
-            glitchTex.SetPixels32(buf);
+            // LoadRawTextureData from the pinned managed buffer instead of SetPixels32: that one makes Il2CppInterop copy
+            // the whole frame into a fresh il2cpp array on every call (about 30 frames per crash, 0.5-0.9 MB each).
+            // Color32 is laid out r,g,b,a like RGBA32, rows bottom-up like SetPixels32.
+            var pin = System.Runtime.InteropServices.GCHandle.Alloc(buf, System.Runtime.InteropServices.GCHandleType.Pinned);
+            try { glitchTex.LoadRawTextureData(pin.AddrOfPinnedObject(), n * 4); } finally { pin.Free(); }
             glitchTex.Apply(false);
         }
 

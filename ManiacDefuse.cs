@@ -102,6 +102,8 @@ namespace UnknownsCollection {
                 manualText.text = manual;
                 hintText.text = Tr("hint_wires", (int)WrongWirePenalty);
                 SetStatus(Tr("intro"), Bad);
+                // lobby gag: the author just typed the command, so the chat is open in front of the puzzle; close it
+                if (gag) { try { var chat = HudManager.Instance.Chat; if (chat != null && chat.IsOpenOrOpening) chat.ForceClosed(); } catch { } }
                 try { UCAssets.PlayFuseLoop(0.45f); fuseOn = true; } catch { }
                 UCAssets.PlaySaboteurAlarm(UCAssets.VolSoft);
                 UnknownsCollectionPlugin.Logger?.LogInfo($"[Maniac] defuse minigame open: {seconds:0} s, serial {serial}, answer wire {answer + 1}.");

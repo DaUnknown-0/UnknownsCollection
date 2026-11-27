@@ -207,7 +207,8 @@ namespace UnknownsCollection {
 
         private static void Tick() {
             var me = PlayerControl.LocalPlayer;
-            if (root == null || MeetingHud.Instance == null || me == null || me.Data == null || me.Data.IsDead) { Close(); return; }
+            // the lobby gag runs without a meeting (and a lobby player is never dead)
+            if (root == null || (!lobbyGag && MeetingHud.Instance == null) || me == null || me.Data == null || (!lobbyGag && me.Data.IsDead)) { Close(); return; }
             if (Blocking) CloseChat();
             if ((phase == Phase.Glitch || phase == Phase.Blue) && Time.time >= nextHush) HushMusic();
             switch (phase) {

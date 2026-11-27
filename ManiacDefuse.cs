@@ -82,9 +82,13 @@ namespace UnknownsCollection {
         // ====================================================================
         // Open / close
         // ====================================================================
-        public static void Open(float seconds) {
+        // Lobby command (UCLobbyCommands, maniac.trigger.defuse): the same puzzle outside a meeting, its result goes nowhere.
+        private static bool lobbyGag;
+
+        public static void Open(float seconds, bool gag = false) {
             try {
-                if (IsOpen || HudManager.Instance == null || MeetingHud.Instance == null) return;
+                if (IsOpen || HudManager.Instance == null || (!gag && MeetingHud.Instance == null)) return;
+                lobbyGag = gag;
                 NewPuzzle();
                 Build();
                 if (panel == null) return;
@@ -144,7 +148,7 @@ namespace UnknownsCollection {
         private static void Send(bool ok) {
             if (resultSent) return;
             resultSent = true;
-            Maniac.SendDefuseResult(ok);
+            if (!lobbyGag) Maniac.SendDefuseResult(ok);
         }
 
         // ====================================================================
@@ -238,12 +242,13 @@ namespace UnknownsCollection {
             var me = PlayerControl.LocalPlayer;
             var hud = MeetingHud.Instance;
             if (panel == null || me == null || me.Data == null || me.Data.IsDead) { Close(); return; }   // guessed: nothing left to defuse
-            bool votingOver = hud == null || hud.state == MeetingHud.VoteStates.Results
-                              || hud.state == MeetingHud.VoteStates.Proceeding;
+            // in the lobby (gag) there is no vote: only the puzzle's own timer counts
+            bool votingOver = !lobbyGag && (hud == null || hud.state == MeetingHud.VoteStates.Results
+                              || hud.state == MeetingHud.VoteStates.Proceeding);
             if (Running && votingOver) Lose();
             ApplyCameraFit(panel);
             if (!Running) {
-                if (Time.time >= closeAt || hud == null) Close();
+                if (Time.time >= closeAt || (!lobbyGag && hud == null)) Close();
                 return;
             }
             if (BugCrashScreen.Active) return;   // the Bug's crash covers the screen: the clock waits

@@ -66,9 +66,13 @@ namespace UnknownsCollection {
 
         private static string Tr(string key, params object[] args) => UCLocalization.Tr("uc.ui.bug.crash." + key, args);
 
-        internal static void Play(float seconds) {
+        // Lobby easter egg (UCBluescreenEgg): the same show without consequences, a failed reboot owes no Skip vote.
+        private static bool lobbyGag;
+
+        internal static void Play(float seconds, bool gag = false) {
             try {
                 if (Active) return;
+                lobbyGag = gag;
                 var hud = HudManager.Instance;
                 if (hud == null) return;
                 rebootSeconds = Mathf.Max(3f, seconds);
@@ -413,7 +417,7 @@ namespace UnknownsCollection {
             if (ok) UCAssets.PlaySaboteurDefused();
             else {
                 UCAssets.PlaySaboteurAlarm();
-                BugCrash.RebootFailed();
+                if (!lobbyGag) BugCrash.RebootFailed();
             }
             UnknownsCollectionPlugin.Logger?.LogInfo($"[Bug] crash reboot {(ok ? "done" : "failed")}.");
         }

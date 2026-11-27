@@ -376,7 +376,7 @@ namespace UnknownsCollection {
 
         // ---------------------------------------------------------------- triggers
 
-        private static bool IsOwner(PlayerControl p) {
+        internal static bool IsOwner(PlayerControl p) {
             try {
                 var data = p?.Data;
                 if (data == null) return false;
